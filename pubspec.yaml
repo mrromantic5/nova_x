@@ -25,3 +25,5 @@ flutter:
   assets:
     - assets/images/
     - assets/images/logo.png
+
+# Manual push trigger to initiate GitHub Actions compilation

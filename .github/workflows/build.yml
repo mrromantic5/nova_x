@@ -16,25 +16,30 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+          cache: 'gradle'
           
       - name: Set up Flutter Engine Environment
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.16.0'
           channel: 'stable'
+          cache: true
 
-      - name: Configure Gradle Java Home and Patch SDK Versions
+      - name: Configure Gradle Environment and Patch SDK Versions
         run: |
           # Hard-lock Gradle to use the Java 17 environment path
           echo "org.gradle.java.home=$JAVA_HOME" >> android/gradle.properties
           
           # Patch target SDK configurations for modern plugin compliance
-          sed -i 's/flutter.compileSdkVersion/34/g' android/app/build.gradle
-          sed -i 's/flutter.minSdkVersion/21/g' android/app/build.gradle
-          sed -i 's/flutter.targetSdkVersion/34/g' android/app/build.gradle
+          if [ -f android/app/build.gradle ]; then
+            sed -i 's/flutter.compileSdkVersion/34/g' android/app/build.gradle
+            sed -i 's/flutter.minSdkVersion/21/g' android/app/build.gradle
+            sed -i 's/flutter.targetSdkVersion/34/g' android/app/build.gradle
+          fi
           
       - name: Install Project Dependencies
-        run: flutter pub get
+        run: |
+          flutter clean
+          flutter pub get
         
       - name: Compile Release APK Bundle
         run: flutter build apk --release

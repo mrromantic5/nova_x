@@ -1,0 +1,39 @@
+name: Build Production Android Assets
+on:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Java Development Kit
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          
+      - name: Set up Flutter Engine Environment
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.16.0'
+          channel: 'stable'
+          
+      - name: Install Project Dependencies
+        run: flutter pub get
+        
+      - name: Compile Release APK Bundle
+        run: flutter build apk --release
+        
+      - name: Compile Distribution AAB Package
+        run: flutter build appbundle --release
+        
+      - name: Archive Compiled Binaries
+        uses: actions/upload-artifact@v3
+        with:
+          name: production-builds
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/bundle/release/app-release.aab

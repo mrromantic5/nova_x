@@ -21,6 +21,12 @@ jobs:
         with:
           flutter-version: '3.16.0'
           channel: 'stable'
+
+      - name: Patch Android SDK Versions
+        run: |
+          sed -i 's/flutter.compileSdkVersion/34/g' android/app/build.gradle
+          sed -i 's/flutter.minSdkVersion/21/g' android/app/build.gradle
+          sed -i 's/flutter.targetSdkVersion/34/g' android/app/build.gradle
           
       - name: Install Project Dependencies
         run: flutter pub get

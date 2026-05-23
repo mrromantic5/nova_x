@@ -8,46 +8,38 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
+      - name: Checkout Code
         uses: actions/checkout@v4
       
-      - name: Set up Java Development Kit (JDK 17)
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
           cache: 'gradle'
           
-      - name: Set up Flutter Engine Environment
+      - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
 
-      - name: Configure Gradle Environment and Patch SDK Versions
-        run: |
-          # Hard-lock Gradle to use the Java 17 environment path
-          echo "org.gradle.java.home=$JAVA_HOME" >> android/gradle.properties
+      - name: Fix Gradle Java Home
+        run: echo "org.gradle.java.home=$JAVA_HOME" >> android/gradle.properties
           
-          # Patch target SDK configurations for modern plugin compliance
-          if [ -f android/app/build.gradle ]; then
-            sed -i 's/flutter.compileSdkVersion/34/g' android/app/build.gradle
-            sed -i 's/flutter.minSdkVersion/21/g' android/app/build.gradle
-            sed -i 's/flutter.targetSdkVersion/34/g' android/app/build.gradle
-          fi
+      - name: Patch Android SDK Versions
+        run: sed -i 's/flutter.compileSdkVersion/34/g' android/app/build.gradle && sed -i 's/flutter.minSdkVersion/21/g' android/app/build.gradle && sed -i 's/flutter.targetSdkVersion/34/g' android/app/build.gradle
           
-      - name: Install Project Dependencies
-        run: |
-          flutter clean
-          flutter pub get
+      - name: Clean and Install
+        run: flutter clean && flutter pub get
         
-      - name: Compile Release APK Bundle
+      - name: Build Release APK
         run: flutter build apk --release
         
-      - name: Compile Distribution AAB Package
+      - name: Build Release AAB
         run: flutter build appbundle --release
         
-      - name: Archive Compiled Binaries
+      - name: Upload Binaries
         uses: actions/upload-artifact@v4
         with:
           name: production-builds

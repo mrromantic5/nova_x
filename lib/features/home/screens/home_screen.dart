@@ -14,45 +14,63 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  late int bgIndex;
+  late int _bgIndex;
   final TextEditingController _searchController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    // Generates random index between 1 and 10 for dynamic server backgrounds
-    bgIndex = Random().nextInt(10) + 1;
+    // Random background 1-10 fetched from the api.browser server
+    _bgIndex = Random().nextInt(10) + 1;
+  }
+
+  @override
+  void dispose() {
+    // FIXED: was missing — caused a memory leak each time HomeScreen rebuilt
+    _searchController.dispose();
+    super.dispose();
   }
 
   void _submitSearch(String query) {
-    if (query.trim().isEmpty) return;
+    final q = query.trim();
+    if (q.isEmpty) return;
+    _searchController.clear();
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => BrowserView(initialQuery: query)),
+      MaterialPageRoute(builder: (_) => BrowserView(initialQuery: q)),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      // No AppBar — full-screen immersive layout
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // Dynamic Server Background Wallpaper Engine
+
+          // ── Dynamic background image from api.browser server ─────────────
           Image.network(
-            'https://api.browser.t-lyfe.com.ng/images/background$bgIndex.jpg',
+            'https://api.browser.t-lyfe.com.ng/images/background$_bgIndex.jpg',
             fit: BoxFit.cover,
-            errorBuilder: (context, error, stackTrace) => Container(color: AppTheme.darkBackground),
+            // Dark fallback if the server is unreachable
+            errorBuilder: (_, __, ___) =>
+                Container(color: AppTheme.darkBackground),
+            loadingBuilder: (context, child, progress) {
+              if (progress == null) return child;
+              return Container(color: AppTheme.darkBackground);
+            },
           ),
-          
-          // Glassmorphic Screen Foreground Layout Layer
+
+          // ── Glassmorphic foreground ──────────────────────────────────────
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.all(24.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // App Branding Header Bar (Logo + Title + Action Elements)
+
+                  // ── Header row: logo + title + AI button ─────────────────
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -62,39 +80,43 @@ class _HomeScreenState extends State<HomeScreen> {
                             'assets/images/logo.png',
                             height: 32,
                             width: 32,
-                            errorBuilder: (context, error, stackTrace) {
-                              // Elegant fallback layout if the logo file is physically absent
-                              return const Icon(
-                                Icons.blur_on, 
-                                color: AppTheme.accentCyan, 
-                                size: 32
-                              );
-                            },
+                            errorBuilder: (_, __, ___) => const Icon(
+                              Icons.blur_on,
+                              color: AppTheme.accentCyan,
+                              size: 32,
+                            ),
                           ),
                           const SizedBox(width: 12),
                           Text(
-                            'NOVA X', 
+                            'NOVA X',
                             style: GoogleFonts.spaceGrotesk(
-                              fontSize: 28, 
-                              fontWeight: FontWeight.bold, 
-                              color: Colors.white
-                            )
+                              fontSize: 28,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
                           ),
                         ],
                       ),
+                      // AI assistant shortcut
                       IconButton(
-                        icon: const Icon(Icons.psychology, color: AppTheme.accentCyan, size: 30),
-                        onPressed: () => Navigator.push(
-                          context, 
-                          MaterialPageRoute(builder: (c) => const AiAssistantScreen())
+                        icon: const Icon(
+                          Icons.psychology,
+                          color: AppTheme.accentCyan,
+                          size: 30,
                         ),
-                      )
+                        onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const AiAssistantScreen(),
+                          ),
+                        ),
+                      ),
                     ],
                   ),
-                  
+
                   const SizedBox(height: 60),
-                  
-                  // Central Glassmorphic Search Bar Viewport
+
+                  // ── Glassmorphic search bar ───────────────────────────────
                   ClipRRect(
                     borderRadius: BorderRadius.circular(20),
                     child: BackdropFilter(
@@ -110,13 +132,41 @@ class _HomeScreenState extends State<HomeScreen> {
                           controller: _searchController,
                           style: const TextStyle(color: Colors.white),
                           onSubmitted: _submitSearch,
+                          textInputAction: TextInputAction.go,
+                          keyboardType: TextInputType.url,
+                          autocorrect: false,
                           decoration: InputDecoration(
                             border: InputBorder.none,
-                            hintText: 'Search or type web address',
-                            hintStyle: GoogleFonts.inter(color: Colors.white54),
-                            icon: const Icon(Icons.search, color: AppTheme.accentCyan),
+                            hintText: 'Search or type a web address',
+                            hintStyle:
+                                GoogleFonts.inter(color: Colors.white54),
+                            icon: const Icon(
+                              Icons.search,
+                              color: AppTheme.accentCyan,
+                            ),
+                            suffixIcon: IconButton(
+                              icon: const Icon(
+                                Icons.arrow_forward,
+                                color: AppTheme.accentCyan,
+                              ),
+                              onPressed: () =>
+                                  _submitSearch(_searchController.text),
+                            ),
                           ),
                         ),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // ── Hint text ─────────────────────────────────────────────
+                  Center(
+                    child: Text(
+                      'Powered by NOVA X Engine',
+                      style: GoogleFonts.inter(
+                        color: Colors.white30,
+                        fontSize: 12,
                       ),
                     ),
                   ),

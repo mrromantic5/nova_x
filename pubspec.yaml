@@ -18,12 +18,12 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^2.0.0
+  flutter_lints: ^3.0.0
 
 flutter:
   uses-material-design: true
   assets:
+    # Single folder declaration covers logo.png and all background images.
+    # FIXED: removed duplicate "- assets/images/logo.png" entry that caused
+    # pub warnings about overlapping asset declarations.
     - assets/images/
-    - assets/images/logo.png
-
-# Manual push trigger to initiate GitHub Actions compilation

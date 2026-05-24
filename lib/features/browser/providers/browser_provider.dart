@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
+/// Represents a single browser tab with its metadata.
 class BrowserTab {
   final String id;
   final String url;
@@ -11,7 +12,7 @@ class BrowserTab {
   BrowserTab({
     required this.id,
     required this.url,
-    this.title = "New Tab",
+    this.title    = 'New Tab',
     this.progress = 0.0,
     this.controller,
   });
@@ -24,15 +25,16 @@ class BrowserTab {
     InAppWebViewController? controller,
   }) {
     return BrowserTab(
-      id: id ?? this.id,
-      url: url ?? this.url,
-      title: title ?? this.title,
-      progress: progress ?? this.progress,
+      id:         id         ?? this.id,
+      url:        url        ?? this.url,
+      title:      title      ?? this.title,
+      progress:   progress   ?? this.progress,
       controller: controller ?? this.controller,
     );
   }
 }
 
+/// Riverpod notifier managing the list of open browser tabs.
 class BrowserNotifier extends StateNotifier<List<BrowserTab>> {
   BrowserNotifier() : super([]);
 
@@ -41,31 +43,34 @@ class BrowserNotifier extends StateNotifier<List<BrowserTab>> {
 
   void createNewTab(String url) {
     final id = DateTime.now().millisecondsSinceEpoch.toString();
-    final newTab = BrowserTab(id: id, url: url);
-    state = [...state, newTab];
+    state = [...state, BrowserTab(id: id, url: url)];
     _activeTabId = id;
   }
 
   void closeTab(String id) {
-    state = state.where((tab) => tab.id != id).toList();
+    state = state.where((t) => t.id != id).toList();
     if (_activeTabId == id) {
       _activeTabId = state.isNotEmpty ? state.last.id : null;
     }
   }
 
-  void updateTabUrl(String id, String url, String title) {
+  void updateTab(String id, {String? url, String? title}) {
     state = [
       for (final tab in state)
-        if (tab.id == id) tab.copyWith(url: url, title: title) else tab
+        if (tab.id == id) tab.copyWith(url: url, title: title) else tab,
     ];
   }
 
-  void updateTabProgress(String id, double progress) {
+  void updateProgress(String id, double progress) {
     state = [
       for (final tab in state)
-        if (tab.id == id) tab.copyWith(progress: progress) else tab
+        if (tab.id == id) tab.copyWith(progress: progress) else tab,
     ];
   }
+
+  void setActiveTab(String id) => _activeTabId = id;
 }
 
-final browserProvider = StateNotifierProvider<BrowserNotifier, List<BrowserTab>>((ref) => BrowserNotifier());
+final browserProvider =
+    StateNotifierProvider<BrowserNotifier, List<BrowserTab>>(
+        (_) => BrowserNotifier());

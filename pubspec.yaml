@@ -1,7 +1,7 @@
 name: nova_x
-description: The Future of Browsing
+description: NOVA X — The Future of Browsing
 publish_to: 'none'
-version: 1.0.0+1
+version: 2.0.0+1
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -23,7 +23,4 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    # Single folder declaration covers logo.png and all background images.
-    # FIXED: removed duplicate "- assets/images/logo.png" entry that caused
-    # pub warnings about overlapping asset declarations.
     - assets/images/

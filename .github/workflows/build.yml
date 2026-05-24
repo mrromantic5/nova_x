@@ -1,26 +1,92 @@
-name: Build Android
-on: [push, workflow_dispatch]
+name: Build Production Android Assets
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      # ── 1. Checkout source code ──────────────────────────────────────────
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # ── 2. Java 17 — required by Gradle 7.6+ / AGP 7.4+ ────────────────
+      #       cache:'' prevents setup-java scanning for gradle files that
+      #       don't exist yet and was the root cause of the JDK step errors.
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
-      - uses: subosito/flutter-action@v2
+          cache: ''
+
+      # ── 3. Flutter stable engine with caching ────────────────────────────
+      - name: Set up Flutter Engine Environment
+        uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-      - run: echo "org.gradle.java.home=$JAVA_HOME" >> android/gradle.properties
-      - run: sed -i 's/flutter.compileSdkVersion/34/g' android/app/build.gradle
-      - run: sed -i 's/flutter.minSdkVersion/21/g' android/app/build.gradle
-      - run: sed -i 's/flutter.targetSdkVersion/34/g' android/app/build.gradle
-      - run: flutter clean
-      - run: flutter pub get
-      - run: flutter build apk --release
-      - run: flutter build appbundle --release
-      - uses: actions/upload-artifact@v4
+          cache: true
+
+      # ── 4. Resolve all pub dependencies first ────────────────────────────
+      - name: Install Project Dependencies
+        run: flutter pub get
+
+      # ── 5. Generate the complete android/ platform from scratch ──────────
+      #       This creates the Gradle wrapper (including the binary .jar),
+      #       all launcher-icon mipmaps, AndroidManifest, MainActivity.kt,
+      #       and every required Gradle/Kotlin file automatically.
+      #       Deleting android/ first ensures a clean, conflict-free run
+      #       even if partial android files exist in the repo.
+      - name: Generate Android Platform Files
+        run: |
+          rm -rf android
+          flutter create \
+            --platforms android \
+            --org com.example \
+            --project-name nova_x \
+            .
+
+      # ── 6. Patch the manifest for browser / webview app ──────────────────
+      #       flutter_inappwebview needs INTERNET permission + cleartext HTTP
+      #       traffic support so the browser can load any site (not just HTTPS)
+      - name: Patch Android Manifest for Browser App
+        run: |
+          M="android/app/src/main/AndroidManifest.xml"
+
+          # App display name
+          sed -i 's/android:label="nova_x"/android:label="NOVA X"/' "$M"
+
+          # INTERNET + network-state permissions
+          sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>|' "$M"
+
+          # Allow HTTP (cleartext) traffic + hardware acceleration for WebView
+          sed -i 's|android:icon="@mipmap/ic_launcher">|android:icon="@mipmap/ic_launcher"\n        android:usesCleartextTraffic="true"\n        android:hardwareAccelerated="true">|' "$M"
+
+          echo "── Patched AndroidManifest.xml ──"
+          cat "$M"
+
+      # ── 7. Lock Gradle to the exact Java 17 path ─────────────────────────
+      #       Prevents "SDK build tools require Java N but found Java M" errors
+      - name: Configure Gradle Java Home
+        run: echo "org.gradle.java.home=$JAVA_HOME" >> android/gradle.properties
+
+      # ── 8. Compile release APK (sideload / direct install) ───────────────
+      - name: Compile Release APK Bundle
+        run: flutter build apk --release
+
+      # ── 9. Compile release AAB (Google Play upload format) ───────────────
+      - name: Compile Distribution AAB Package
+        run: flutter build appbundle --release
+
+      # ── 10. Upload both outputs as downloadable workflow artifacts ────────
+      #        upload-artifact@v4 — v3 is fully deprecated and hard-fails now.
+      - name: Archive Compiled Binaries
+        uses: actions/upload-artifact@v4
         with:
-          name: build-outputs
+          name: nova-x-release-${{ github.sha }}
           path: build/app/outputs/
+          retention-days: 14

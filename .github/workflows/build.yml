@@ -20,9 +20,14 @@ jobs:
           java-version: '17'
           cache: ''
 
+      # Pinned to 3.24.5 — last stable release before AGP 9+ DSL-only enforcement.
+      # The unpinned "stable" channel now pulls Flutter 3.29+ which ships AGP 9,
+      # and AGP 9 drops support for the legacy Groovy DSL that flutter.gradle uses,
+      # causing "only the new DSL interface will be read" build failures.
       - name: Set up Flutter Engine Environment
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.24.5'
           channel: 'stable'
           cache: true
 
@@ -41,6 +46,17 @@ jobs:
               "s/getDefaultProguardFile('proguard-android\.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g" \
               {} +
           echo "✓ ProGuard patched"
+
+      # Fix speech_to_text 6.6.2 referencing the dead jcenter() repository.
+      # JCenter was shut down in 2022; replace all occurrences with mavenCentral().
+      - name: Fix speech_to_text JCenter Repository
+        run: |
+          echo "Patching speech_to_text jcenter() → mavenCentral()..."
+          find "$HOME/.pub-cache" -name "build.gradle" \
+            -path "*/speech_to_text*" \
+            -print \
+            -exec sed -i "s/jcenter()/mavenCentral()/g" {} +
+          echo "✓ jcenter patched"
 
       - name: Generate Android Platform Files
         run: |

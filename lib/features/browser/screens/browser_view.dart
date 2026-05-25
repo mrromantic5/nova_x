@@ -1,13 +1,31 @@
+// lib/features/browser/screens/browser_view.dart
+//
+// NOVA X Browser — full browser view
+// New in this version:
+//   • In-app Developer Tools (Elements / Console / Storage / Info)
+//   • Incognito mode (no history, no cookies persisted, cleared on exit)
+//   • Zoom controls (text zoom slider + reset)
+
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:nova_x/core/database/local_db.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
+import '../widgets/devtools_panel.dart';
 
 class BrowserView extends StatefulWidget {
   final String initialQuery;
-  const BrowserView({super.key, required this.initialQuery});
+  /// Set to true to open in private/incognito mode
+  final bool incognito;
+
+  const BrowserView({
+    super.key,
+    required this.initialQuery,
+    this.incognito = false,
+  });
+
   @override
   State<BrowserView> createState() => _BrowserViewState();
 }
@@ -16,35 +34,71 @@ class _BrowserViewState extends State<BrowserView>
     with SingleTickerProviderStateMixin {
   InAppWebViewController? _wvc;
   final TextEditingController _urlCtrl = TextEditingController();
-  bool _editing     = false;
-  bool _canBack     = false;
-  bool _canForward  = false;
-  double _progress  = 0;
+
+  bool   _editing     = false;
+  bool   _canBack     = false;
+  bool   _canForward  = false;
+  double _progress    = 0;
   String _currentUrl  = '';
   String _pageTitle   = 'Loading…';
-  bool _isBookmarked  = false;
-  bool _isSecure      = false;
-  // FIX #7: Desktop mode state
-  bool _desktopMode   = false;
+  bool   _isBookmarked = false;
+  bool   _isSecure    = false;
+  bool   _desktopMode = false;
 
+  // ── DevTools ──────────────────────────────────────────────────────────────
+  final List<Map<String, dynamic>> _consoleLogs = [];
+
+  // ── Zoom ──────────────────────────────────────────────────────────────────
+  double _textZoom    = 100; // 50 – 200
+  bool   _showZoomBar = false;
+
+  // ── UAs ───────────────────────────────────────────────────────────────────
   static const String _desktopUA =
       'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+  // JS that patches console.* to forward logs to Flutter
+  static const String _consoleHook = r'''
+(function() {
+  if (window.__novax_patched) return;
+  window.__novax_patched = true;
+  ['log','warn','error','info','debug'].forEach(function(t) {
+    var orig = console[t].bind(console);
+    console[t] = function() {
+      var msg = Array.prototype.slice.call(arguments).map(function(a) {
+        try {
+          return typeof a === 'object' ? JSON.stringify(a) : String(a);
+        } catch(e) { return '[Object]'; }
+      }).join(' ');
+      try {
+        window.flutter_inappwebview.callHandler(
+          'novaxLog', { type: t, msg: msg, time: new Date().toLocaleTimeString() }
+        );
+      } catch(e) {}
+      orig.apply(console, arguments);
+    };
+  });
+})();
+''';
 
   // ── URL helpers ────────────────────────────────────────────────────────────
   String _buildUrl(String query) {
     final q = query.trim();
     if (q.isEmpty) return 'https://www.google.com';
     if (q.startsWith('http://') || q.startsWith('https://')) return q;
-    final domainRx = RegExp(r'^[a-zA-Z0-9][a-zA-Z0-9\-\.]+\.[a-zA-Z]{2,}(/.*)?$');
+    final domainRx =
+        RegExp(r'^[a-zA-Z0-9][a-zA-Z0-9\-\.]+\.[a-zA-Z]{2,}(/.*)?$');
     if (domainRx.hasMatch(q) && !q.contains(' ')) return 'https://$q';
     return LocalDB.buildSearchUrl(q);
   }
 
   String _hostLabel(String url) => url
-      .replaceFirst('https://', '').replaceFirst('http://', '')
-      .replaceFirst('www.', '').split('/')[0];
+      .replaceFirst('https://', '')
+      .replaceFirst('http://', '')
+      .replaceFirst('www.', '')
+      .split('/')[0];
 
+  // ── Init / dispose ─────────────────────────────────────────────────────────
   @override
   void initState() {
     super.initState();
@@ -52,11 +106,16 @@ class _BrowserViewState extends State<BrowserView>
     _currentUrl   = initial;
     _urlCtrl.text = _hostLabel(initial);
     _isSecure     = initial.startsWith('https://');
-    _isBookmarked = LocalDB.isBookmarked(initial);
+    _isBookmarked = widget.incognito ? false : LocalDB.isBookmarked(initial);
   }
 
   @override
   void dispose() {
+    // Incognito: clear cookies + cache on exit
+    if (widget.incognito && _wvc != null) {
+      _wvc!.clearCache();
+      CookieManager.instance().deleteAllCookies();
+    }
     _urlCtrl.dispose();
     _wvc = null;
     super.dispose();
@@ -64,6 +123,7 @@ class _BrowserViewState extends State<BrowserView>
 
   // ── Actions ────────────────────────────────────────────────────────────────
   Future<void> _toggleBookmark() async {
+    if (widget.incognito) { _snack('Bookmarks are disabled in incognito mode'); return; }
     HapticFeedback.mediumImpact();
     if (_isBookmarked) {
       await LocalDB.removeBookmark(_currentUrl);
@@ -74,7 +134,6 @@ class _BrowserViewState extends State<BrowserView>
     _snack(_isBookmarked ? '★ Bookmark added' : 'Bookmark removed');
   }
 
-  // FIX #7: Proper desktop mode toggle — change UA and reload
   Future<void> _toggleDesktopMode() async {
     setState(() => _desktopMode = !_desktopMode);
     await _wvc?.setSettings(
@@ -86,11 +145,18 @@ class _BrowserViewState extends State<BrowserView>
     _snack(_desktopMode ? '🖥️ Desktop site' : '📱 Mobile site');
   }
 
+  Future<void> _applyTextZoom(double zoom) async {
+    setState(() => _textZoom = zoom);
+    await _wvc?.setSettings(
+      settings: InAppWebViewSettings(textZoom: zoom.toInt()),
+    );
+  }
+
   void _navigateTo(String query) {
     final url = _buildUrl(query);
     _wvc?.loadUrl(urlRequest: URLRequest(url: WebUri(url)));
     setState(() {
-      _editing   = false;
+      _editing    = false;
       _currentUrl = url;
       _urlCtrl.text = _hostLabel(url);
       _isSecure   = url.startsWith('https://');
@@ -107,7 +173,8 @@ class _BrowserViewState extends State<BrowserView>
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(msg, style: GoogleFonts.inter(color: Colors.white)),
       backgroundColor: AppTheme.bgElevated,
-      behavior: SnackBarBehavior.floating, duration: const Duration(seconds: 2),
+      behavior: SnackBarBehavior.floating,
+      duration: const Duration(seconds: 2),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
     ));
   }
@@ -116,13 +183,19 @@ class _BrowserViewState extends State<BrowserView>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.bgDark,
+      backgroundColor: widget.incognito
+          ? const Color(0xFF0D0C1A)   // darker purple tint for incognito
+          : AppTheme.bgDark,
       resizeToAvoidBottomInset: true,
-      body: Column(children: [
-        _buildTopBar(),
-        _buildProgressBar(),
-        Expanded(child: _buildWebView()),
-        _buildBottomBar(),
+      body: Stack(children: [
+        Column(children: [
+          _buildTopBar(),
+          _buildProgressBar(),
+          Expanded(child: _buildWebView()),
+          // Zoom bar (shown above bottom bar when active)
+          if (_showZoomBar) _buildZoomBar(),
+          _buildBottomBar(),
+        ]),
       ]),
     );
   }
@@ -130,7 +203,7 @@ class _BrowserViewState extends State<BrowserView>
   // ── Top bar ────────────────────────────────────────────────────────────────
   Widget _buildTopBar() {
     return Container(
-      color: AppTheme.bgDark,
+      color: widget.incognito ? const Color(0xFF120F2A) : AppTheme.bgDark,
       padding: EdgeInsets.only(
         top: MediaQuery.of(context).padding.top + 8,
         left: 10, right: 10, bottom: 8,
@@ -144,6 +217,7 @@ class _BrowserViewState extends State<BrowserView>
           }
         }),
         const SizedBox(width: 8),
+
         // URL bar
         Expanded(
           child: GestureDetector(
@@ -159,14 +233,25 @@ class _BrowserViewState extends State<BrowserView>
               height: 42,
               padding: const EdgeInsets.symmetric(horizontal: 12),
               decoration: BoxDecoration(
-                color: AppTheme.bgCard,
+                color: widget.incognito
+                    ? const Color(0xFF1C1535)
+                    : AppTheme.bgCard,
                 borderRadius: BorderRadius.circular(22),
-                border: Border.all(color: AppTheme.divider),
+                border: Border.all(
+                  color: widget.incognito
+                      ? AppTheme.accentPurple.withOpacity(0.3)
+                      : AppTheme.divider,
+                ),
               ),
               child: Row(children: [
+                // Incognito spy icon OR lock icon
                 Icon(
-                  _isSecure ? Icons.lock_rounded : Icons.lock_open_rounded,
-                  color: _isSecure ? AppTheme.secure : AppTheme.textHint,
+                  widget.incognito
+                      ? Icons.privacy_tip_outlined
+                      : (_isSecure ? Icons.lock_rounded : Icons.lock_open_rounded),
+                  color: widget.incognito
+                      ? AppTheme.accentPurple
+                      : (_isSecure ? AppTheme.secure : AppTheme.textHint),
                   size: 13,
                 ),
                 const SizedBox(width: 6),
@@ -189,28 +274,51 @@ class _BrowserViewState extends State<BrowserView>
                       : Text(
                           _hostLabel(_currentUrl),
                           style: GoogleFonts.inter(
-                              color: AppTheme.textSecondary,
+                              color: widget.incognito
+                                  ? const Color(0xFFBBABDD)
+                                  : AppTheme.textSecondary,
                               fontSize: 13, fontWeight: FontWeight.w500),
                           overflow: TextOverflow.ellipsis, maxLines: 1,
                         ),
                 ),
-                // Desktop mode indicator
+                // Indicators
                 if (_desktopMode)
-                  const Padding(
-                    padding: EdgeInsets.only(left: 4),
-                    child: Icon(Icons.desktop_windows_outlined,
-                        color: AppTheme.accentCyan, size: 13),
-                  ),
+                  const Icon(Icons.desktop_windows_outlined,
+                      color: AppTheme.accentCyan, size: 13),
+                if (_textZoom != 100) ...[
+                  const SizedBox(width: 4),
+                  Text('${_textZoom.toInt()}%',
+                      style: GoogleFonts.inter(
+                          color: AppTheme.warning, fontSize: 10,
+                          fontWeight: FontWeight.w700)),
+                ],
               ]),
             ),
           ),
         ),
         const SizedBox(width: 8),
-        _topBtn(
-          _isBookmarked ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
-          _toggleBookmark,
-          color: _isBookmarked ? AppTheme.warning : AppTheme.textHint,
-        ),
+
+        // Incognito badge (instead of bookmark in incognito)
+        if (widget.incognito)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+            decoration: BoxDecoration(
+              color: AppTheme.accentPurple.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppTheme.accentPurple.withOpacity(0.4)),
+            ),
+            child: const Icon(Icons.person_off_outlined,
+                color: AppTheme.accentPurple, size: 15),
+          )
+        else
+          _topBtn(
+            _isBookmarked
+                ? Icons.bookmark_rounded
+                : Icons.bookmark_border_rounded,
+            _toggleBookmark,
+            color: _isBookmarked ? AppTheme.warning : AppTheme.textHint,
+          ),
+
         const SizedBox(width: 4),
         _topBtn(Icons.more_vert_rounded, _showMoreMenu),
       ]),
@@ -224,7 +332,9 @@ class _BrowserViewState extends State<BrowserView>
       child: Container(
         width: 36, height: 36,
         decoration: BoxDecoration(
-          color: AppTheme.bgCard,
+          color: widget.incognito
+              ? const Color(0xFF1C1535)
+              : AppTheme.bgCard,
           borderRadius: BorderRadius.circular(10),
         ),
         child: Icon(icon, color: color, size: 17),
@@ -237,7 +347,7 @@ class _BrowserViewState extends State<BrowserView>
     if (_progress >= 1.0 || _progress == 0) return const SizedBox.shrink();
     return LinearProgressIndicator(
       value: _progress,
-      color: AppTheme.accentCyan,
+      color: widget.incognito ? AppTheme.accentPurple : AppTheme.accentCyan,
       backgroundColor: Colors.transparent,
       minHeight: 2,
     );
@@ -248,48 +358,89 @@ class _BrowserViewState extends State<BrowserView>
     return InAppWebView(
       initialUrlRequest: URLRequest(url: WebUri(_currentUrl)),
       initialSettings: InAppWebViewSettings(
-        javaScriptEnabled:           true,
-        domStorageEnabled:           true,
-        databaseEnabled:             true,
-        useWideViewPort:             true,
-        loadWithOverviewMode:        true,
-        supportZoom:                 true,
-        builtInZoomControls:         true,
-        displayZoomControls:         false,
-        allowsInlineMediaPlayback:   true,
+        javaScriptEnabled:            true,
+        domStorageEnabled:            !widget.incognito,
+        databaseEnabled:              !widget.incognito,
+        cacheEnabled:                 !widget.incognito,
+        clearCache:                   widget.incognito,
+        useWideViewPort:              true,
+        loadWithOverviewMode:         true,
+        supportZoom:                  true,
+        builtInZoomControls:          true,
+        displayZoomControls:          false,
+        allowsInlineMediaPlayback:    true,
         mediaPlaybackRequiresUserGesture: false,
-        mixedContentMode: MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
-        allowFileAccess:             true,
-        allowContentAccess:          true,
-        userAgent:                   _desktopMode ? _desktopUA : null,
+        mixedContentMode:             MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
+        allowFileAccess:              true,
+        allowContentAccess:           true,
+        textZoom:                     _textZoom.toInt(),
+        userAgent:                    _desktopMode ? _desktopUA : null,
       ),
-      onWebViewCreated: (c) => _wvc = c,
-      onTitleChanged: (_, title) {
-        if (title != null && mounted) setState(() => _pageTitle = title);
+
+      onWebViewCreated: (c) {
+        _wvc = c;
+        // Register the console log handler BEFORE any page loads
+        c.addJavaScriptHandler(
+          handlerName: 'novaxLog',
+          callback: (args) {
+            if (args.isNotEmpty && mounted) {
+              try {
+                final data = args[0] is Map
+                    ? args[0] as Map<String, dynamic>
+                    : jsonDecode(args[0].toString()) as Map<String, dynamic>;
+                setState(() => _consoleLogs.add({
+                  'type': data['type']?.toString() ?? 'log',
+                  'msg':  data['msg']?.toString()  ?? '',
+                  'time': data['time']?.toString()  ?? '',
+                }));
+              } catch (_) {}
+            }
+            return null;
+          },
+        );
       },
-      onLoadStart: (_, url) {
+
+      onLoadStart: (c, url) async {
         if (url == null || !mounted) return;
         final u = url.toString();
         setState(() {
           _currentUrl = u;
           _isSecure   = u.startsWith('https://');
-          _isBookmarked = LocalDB.isBookmarked(u);
+          _isBookmarked = widget.incognito ? false : LocalDB.isBookmarked(u);
           if (!_editing) _urlCtrl.text = _hostLabel(u);
         });
+        // Inject console patch as early as possible
+        await c.evaluateJavascript(source: _consoleHook);
       },
+
+      onDOMContentLoaded: (c, url) async {
+        // Re-inject in case the DOM replaced the hook
+        await c.evaluateJavascript(source: _consoleHook);
+      },
+
+      onTitleChanged: (_, title) {
+        if (title != null && mounted) setState(() => _pageTitle = title);
+      },
+
       onLoadStop: (c, url) async {
         if (url == null || !mounted) return;
         final u = url.toString();
         _canBack    = await c.canGoBack();
         _canForward = await c.canGoForward();
-        if (mounted) setState(() { _currentUrl = u; });
-        await LocalDB.saveHistoryItem(u, _pageTitle);
+        if (mounted) setState(() => _currentUrl = u);
+        // Don't save history in incognito
+        if (!widget.incognito) await LocalDB.saveHistoryItem(u, _pageTitle);
       },
+
       onProgressChanged: (_, p) {
         if (mounted) setState(() => _progress = p / 100);
       },
-      // FIX #5: Intercept download requests and save to downloads
+
       onDownloadStartRequest: (controller, request) async {
+        if (widget.incognito) {
+          _snack('Downloads are disabled in incognito mode');
+          return;
+        }
         final url  = request.url.toString();
         final name = url.split('/').last.split('?').first;
         await LocalDB.addDownload({
@@ -302,6 +453,7 @@ class _BrowserViewState extends State<BrowserView>
         });
         _snack('Download captured: ${name.isNotEmpty ? name : 'file'}');
       },
+
       onReceivedError: (_, req, __) {
         if (req.isForMainFrame == true && mounted) {
           setState(() => _pageTitle = 'Page unavailable');
@@ -310,10 +462,78 @@ class _BrowserViewState extends State<BrowserView>
     );
   }
 
+  // ── Zoom bar ───────────────────────────────────────────────────────────────
+  Widget _buildZoomBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppTheme.bgElevated,
+        border: Border(
+          top:    BorderSide(color: AppTheme.warning.withOpacity(0.3)),
+          bottom: BorderSide(color: AppTheme.divider),
+        ),
+      ),
+      child: Row(children: [
+        GestureDetector(
+          onTap: () => _applyTextZoom((_textZoom - 10).clamp(50, 200)),
+          child: Container(
+            width: 32, height: 32,
+            decoration: BoxDecoration(
+              color: AppTheme.bgCard,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppTheme.divider),
+            ),
+            child: const Icon(Icons.remove, color: AppTheme.textSecondary, size: 16),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(children: [
+            Slider(
+              value: _textZoom,
+              min: 50, max: 200,
+              divisions: 15,
+              activeColor: AppTheme.warning,
+              inactiveColor: AppTheme.divider,
+              onChanged: _applyTextZoom,
+            ),
+          ]),
+        ),
+        const SizedBox(width: 8),
+        GestureDetector(
+          onTap: () => _applyTextZoom((_textZoom + 10).clamp(50, 200)),
+          child: Container(
+            width: 32, height: 32,
+            decoration: BoxDecoration(
+              color: AppTheme.bgCard,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppTheme.divider),
+            ),
+            child: const Icon(Icons.add, color: AppTheme.textSecondary, size: 16),
+          ),
+        ),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 42,
+          child: Text('${_textZoom.toInt()}%',
+              style: GoogleFonts.inter(
+                  color: AppTheme.warning,
+                  fontSize: 13, fontWeight: FontWeight.w700),
+              textAlign: TextAlign.center),
+        ),
+        const SizedBox(width: 4),
+        GestureDetector(
+          onTap: () { _applyTextZoom(100); setState(() => _showZoomBar = false); },
+          child: const Icon(Icons.close_rounded, color: AppTheme.textHint, size: 18),
+        ),
+      ]),
+    );
+  }
+
   // ── Bottom nav ─────────────────────────────────────────────────────────────
   Widget _buildBottomBar() {
     return Container(
-      color: AppTheme.bgDark,
+      color: widget.incognito ? const Color(0xFF120F2A) : AppTheme.bgDark,
       padding: EdgeInsets.only(
           bottom: MediaQuery.of(context).padding.bottom + 4, top: 4),
       child: Row(
@@ -328,8 +548,11 @@ class _BrowserViewState extends State<BrowserView>
           _bBtn(Icons.home_rounded, 'Home', () => Navigator.pop(context)),
           _bBtn(Icons.refresh_rounded, 'Reload', () => _wvc?.reload()),
           _bBtn(
-            _isBookmarked ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
-            'Save', _toggleBookmark,
+            _isBookmarked
+                ? Icons.bookmark_rounded
+                : Icons.bookmark_border_rounded,
+            'Save',
+            _toggleBookmark,
             color: _isBookmarked ? AppTheme.warning : null,
           ),
         ],
@@ -339,7 +562,10 @@ class _BrowserViewState extends State<BrowserView>
 
   Widget _bBtn(IconData icon, String label, VoidCallback onTap,
       {bool enabled = true, Color? color}) {
-    final c = !enabled ? AppTheme.divider : (color ?? AppTheme.textSecondary);
+    final c = !enabled
+        ? AppTheme.divider
+        : (color ??
+            (widget.incognito ? const Color(0xFF9988CC) : AppTheme.textSecondary));
     return GestureDetector(
       onTap: enabled ? onTap : null,
       child: Padding(
@@ -359,35 +585,139 @@ class _BrowserViewState extends State<BrowserView>
       context: context,
       backgroundColor: Colors.transparent,
       builder: (_) => Container(
-        decoration: const BoxDecoration(
-          color: AppTheme.bgCard,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        decoration: BoxDecoration(
+          color: widget.incognito ? const Color(0xFF130F24) : AppTheme.bgCard,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         ),
         padding: const EdgeInsets.fromLTRB(24, 12, 24, 28),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           Container(
             width: 40, height: 4,
-            margin: const EdgeInsets.only(bottom: 16),
+            margin: const EdgeInsets.only(bottom: 12),
             decoration: BoxDecoration(
-                color: AppTheme.textHint, borderRadius: BorderRadius.circular(2)),
+                color: AppTheme.textHint,
+                borderRadius: BorderRadius.circular(2)),
           ),
-          Text(_hostLabel(_currentUrl),
-              style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11),
-              maxLines: 1, overflow: TextOverflow.ellipsis),
-          const SizedBox(height: 16),
+
+          // Incognito banner
+          if (widget.incognito) ...[
+            Container(
+              padding: const EdgeInsets.all(12),
+              margin: const EdgeInsets.only(bottom: 8),
+              decoration: BoxDecoration(
+                color: AppTheme.accentPurple.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                    color: AppTheme.accentPurple.withOpacity(0.3)),
+              ),
+              child: Row(children: [
+                const Icon(Icons.privacy_tip_outlined,
+                    color: AppTheme.accentPurple, size: 16),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'You\'re browsing privately. History, cookies and cache will be cleared when you close this tab.',
+                    style: GoogleFonts.inter(
+                        color: AppTheme.accentPurple.withOpacity(0.85),
+                        fontSize: 11, height: 1.4),
+                  ),
+                ),
+              ]),
+            ),
+          ],
+
+          // Site info
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(_hostLabel(_currentUrl),
+                style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11),
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+          ),
+
+          // Menu items
           _menuTile(Icons.copy_rounded, 'Copy URL', _copyUrl),
-          _menuTile(Icons.refresh_rounded, 'Reload page', () { Navigator.pop(context); _wvc?.reload(); }),
-          // FIX #7: Desktop mode toggle works now
+
+          _menuTile(Icons.refresh_rounded, 'Reload page', () {
+            Navigator.pop(context); _wvc?.reload();
+          }),
+
           _menuTile(
-            _desktopMode ? Icons.phone_android_rounded : Icons.desktop_windows_outlined,
+            _desktopMode
+                ? Icons.phone_android_rounded
+                : Icons.desktop_windows_outlined,
             _desktopMode ? 'Switch to mobile site' : 'Request desktop site',
             () { Navigator.pop(context); _toggleDesktopMode(); },
             color: _desktopMode ? AppTheme.accentCyan : AppTheme.textSecondary,
           ),
-          _menuTile(Icons.bookmark_border_rounded, 
-            _isBookmarked ? 'Remove bookmark' : 'Add bookmark',
-            () { Navigator.pop(context); _toggleBookmark(); },
-            color: _isBookmarked ? AppTheme.warning : AppTheme.textSecondary,
+
+          if (!widget.incognito)
+            _menuTile(
+              _isBookmarked
+                  ? Icons.bookmark_rounded
+                  : Icons.bookmark_border_rounded,
+              _isBookmarked ? 'Remove bookmark' : 'Add bookmark',
+              () { Navigator.pop(context); _toggleBookmark(); },
+              color: _isBookmarked ? AppTheme.warning : AppTheme.textSecondary,
+            ),
+
+          // ── ZOOM ──────────────────────────────────────────────────────────
+          _menuTile(
+            Icons.zoom_in_rounded,
+            _showZoomBar
+                ? 'Hide zoom controls'
+                : 'Zoom (${_textZoom.toInt()}%)',
+            () {
+              Navigator.pop(context);
+              setState(() => _showZoomBar = !_showZoomBar);
+            },
+            color: _textZoom != 100 ? AppTheme.warning : AppTheme.textSecondary,
+          ),
+
+          // ── DEVELOPER TOOLS ───────────────────────────────────────────────
+          _menuTile(
+            Icons.developer_mode_rounded,
+            'Developer tools',
+            () {
+              Navigator.pop(context);
+              showDevTools(
+                context,
+                wvc:            _wvc,
+                url:            _currentUrl,
+                pageTitle:      _pageTitle,
+                consoleLogs:    _consoleLogs,
+                onClearConsole: () => setState(() => _consoleLogs.clear()),
+              );
+            },
+            color: AppTheme.accentCyan,
+          ),
+
+          // ── NEW INCOGNITO TAB ─────────────────────────────────────────────
+          _menuTile(
+            Icons.person_off_outlined,
+            'New incognito tab',
+            () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => BrowserView(
+                    initialQuery: _currentUrl,
+                    incognito: true,
+                  ),
+                ),
+              );
+            },
+            color: AppTheme.accentPurple,
+          ),
+
+          // ── FIND IN PAGE (bonus) ──────────────────────────────────────────
+          _menuTile(
+            Icons.search_rounded,
+            'Find in page',
+            () {
+              Navigator.pop(context);
+              _showFindInPage();
+            },
           ),
         ]),
       ),
@@ -398,10 +728,81 @@ class _BrowserViewState extends State<BrowserView>
       {Color color = AppTheme.textSecondary}) {
     return ListTile(
       leading: Icon(icon, color: color, size: 20),
-      title: Text(label,
+      title:   Text(label,
           style: GoogleFonts.inter(color: AppTheme.textPrimary, fontSize: 14)),
-      onTap: onTap,
+      onTap:   onTap,
       contentPadding: EdgeInsets.zero,
+      dense: true,
+    );
+  }
+
+  // ── Find in page ───────────────────────────────────────────────────────────
+  void _showFindInPage() {
+    final ctrl = TextEditingController();
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => Padding(
+        padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+          decoration: const BoxDecoration(
+            color: AppTheme.bgCard,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: Row(children: [
+            Expanded(
+              child: TextField(
+                controller: ctrl,
+                autofocus: true,
+                style: GoogleFonts.inter(color: Colors.white),
+                decoration: InputDecoration(
+                  hintText: 'Find in page…',
+                  hintStyle: GoogleFonts.inter(color: AppTheme.textHint),
+                  filled: true, fillColor: AppTheme.bgElevated,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none),
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 10),
+                ),
+                onChanged: (q) async {
+                  if (q.isEmpty) {
+                    await _wvc?.clearMatches();
+                  } else {
+                    await _wvc?.findAllAsync(find: q);
+                  }
+                },
+              ),
+            ),
+            const SizedBox(width: 8),
+            _toolIconBtn(Icons.arrow_upward_rounded,   () => _wvc?.findNext(forward: false)),
+            const SizedBox(width: 6),
+            _toolIconBtn(Icons.arrow_downward_rounded, () => _wvc?.findNext(forward: true)),
+            const SizedBox(width: 6),
+            _toolIconBtn(Icons.close_rounded, () async {
+              await _wvc?.clearMatches();
+              Navigator.pop(context);
+            }),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _toolIconBtn(IconData icon, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 36, height: 36,
+        decoration: BoxDecoration(
+          color: AppTheme.bgElevated,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(icon, color: AppTheme.textSecondary, size: 18),
+      ),
     );
   }
 }

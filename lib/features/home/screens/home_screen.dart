@@ -7,6 +7,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:nova_x/core/database/local_db.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
+import 'package:nova_x/core/services/news_service.dart';
 import '../../browser/screens/browser_view.dart';
 import '../../ai/screens/ai_assistant_screen.dart';
 import '../../bookmarks/screens/bookmarks_screen.dart';
@@ -24,38 +25,55 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin {
   // Controllers
-  final TextEditingController _searchCtrl   = TextEditingController();
-  final FocusNode              _searchFocus  = FocusNode();
-  final ScrollController       _scrollCtrl   = ScrollController();
-  late AnimationController     _animCtrl;
-  late Animation<double>       _fadeAnim;
+  final TextEditingController _searchCtrl  = TextEditingController();
+  final FocusNode             _searchFocus = FocusNode();
+  final ScrollController      _scrollCtrl  = ScrollController();
+  late AnimationController    _animCtrl;
+  late Animation<double>      _fadeAnim;
 
   // State
   final int _bgIndex = Random().nextInt(10) + 1;
-  List<Map<String, dynamic>> _news        = [];
-  List<String>               _suggestions = [];
-  List<String>               _searchHist  = [];
-  bool _loadingNews    = false;
-  bool _showSuggest    = false;
-  bool _isListening    = false;
+
+  // News state — categorised with cache so switching tabs is instant
+  String                         _selectedCategory = 'For You';
+  List<NewsArticle>              _news             = [];
+  final Map<String, List<NewsArticle>> _newsCache  = {};
+  bool _loadingNews = false;
+
+  List<String> _suggestions = [];
+  List<String> _searchHist  = [];
+  bool _showSuggest  = false;
+  bool _isListening  = false;
 
   // Voice search
-  final SpeechToText _speech = SpeechToText();
-  bool _speechAvail = false;
+  final SpeechToText _speech    = SpeechToText();
+  bool               _speechAvail = false;
 
-  // Speed dial — favicon-based icons + ChatXAP
+  // Speed dial
   final List<Map<String, dynamic>> _speedDial = [
-    {'name': 'Google',    'url': 'https://google.com',                   'domain': 'google.com'},
-    {'name': 'YouTube',   'url': 'https://m.youtube.com',                'domain': 'youtube.com'},
-    {'name': 'Facebook',  'url': 'https://m.facebook.com',               'domain': 'facebook.com'},
-    {'name': 'WhatsApp',  'url': 'https://web.whatsapp.com',             'domain': 'whatsapp.com'},
-    {'name': 'Instagram', 'url': 'https://instagram.com',                'domain': 'instagram.com'},
-    {'name': 'ChatXAP',   'url': 'https://c.x.t-lyfe.com.ng/login.html','domain': 'c.x.t-lyfe.com.ng'},
-    {'name': 'X',         'url': 'https://x.com',                        'domain': 'x.com'},
-    {'name': 'TikTok',    'url': 'https://www.tiktok.com',               'domain': 'tiktok.com'},
-    {'name': 'Wikipedia', 'url': 'https://en.m.wikipedia.org',           'domain': 'wikipedia.org'},
-    {'name': 'Gmail',     'url': 'https://mail.google.com',              'domain': 'mail.google.com'},
+    {'name': 'Google',    'url': 'https://google.com',                    'domain': 'google.com'},
+    {'name': 'YouTube',   'url': 'https://m.youtube.com',                 'domain': 'youtube.com'},
+    {'name': 'Facebook',  'url': 'https://m.facebook.com',                'domain': 'facebook.com'},
+    {'name': 'WhatsApp',  'url': 'https://web.whatsapp.com',              'domain': 'whatsapp.com'},
+    {'name': 'Instagram', 'url': 'https://instagram.com',                 'domain': 'instagram.com'},
+    {'name': 'ChatXAP',   'url': 'https://c.x.t-lyfe.com.ng/login.html', 'domain': 'c.x.t-lyfe.com.ng'},
+    {'name': 'X',         'url': 'https://x.com',                         'domain': 'x.com'},
+    {'name': 'TikTok',    'url': 'https://www.tiktok.com',                'domain': 'tiktok.com'},
+    {'name': 'Wikipedia', 'url': 'https://en.m.wikipedia.org',            'domain': 'wikipedia.org'},
+    {'name': 'Gmail',     'url': 'https://mail.google.com',               'domain': 'mail.google.com'},
   ];
+
+  // ── Category accent colours (one per tab) ──────────────────────────────
+  static const Map<String, Color> _catColor = {
+    'For You':       Color(0xFF00D4FF),
+    'World':         Color(0xFF1E7BFF),
+    'Sports':        Color(0xFF00C853),
+    'Tech':          Color(0xFF7C4DFF),
+    'Entertainment': Color(0xFFFF6B6B),
+    'Business':      Color(0xFFFFAB00),
+    'Health':        Color(0xFFFF4081),
+    'Science':       Color(0xFF00BCD4),
+  };
 
   @override
   void initState() {
@@ -91,10 +109,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _toggleListen() async {
-    if (!_speechAvail) {
-      _showSnack('Microphone not available');
-      return;
-    }
+    if (!_speechAvail) { _showSnack('Microphone not available'); return; }
     HapticFeedback.mediumImpact();
     if (_isListening) {
       _speech.stop();
@@ -119,11 +134,7 @@ class _HomeScreenState extends State<HomeScreen>
   // ── Search suggestions ────────────────────────────────────────────────────
   void _onFocusChanged() {
     if (_searchFocus.hasFocus) {
-      setState(() {
-        _showSuggest = true;
-        _searchHist  = LocalDB.getSearchHistory();
-      });
-      // Scroll to search bar
+      setState(() { _showSuggest = true; _searchHist = LocalDB.getSearchHistory(); });
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_scrollCtrl.hasClients) {
           _scrollCtrl.animateTo(80,
@@ -139,17 +150,13 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _onSearchChanged() {
     final q = _searchCtrl.text.trim();
-    if (q.isEmpty) {
-      setState(() => _suggestions = []);
-      return;
-    }
+    if (q.isEmpty) { setState(() => _suggestions = []); return; }
     _fetchSuggestions(q);
   }
 
   Future<void> _fetchSuggestions(String query) async {
     try {
-      final res = await Dio(BaseOptions(
-              connectTimeout: const Duration(seconds: 5)))
+      final res = await Dio(BaseOptions(connectTimeout: const Duration(seconds: 5)))
           .get('https://suggestqueries.google.com/complete/search',
               queryParameters: {'output': 'firefox', 'q': query});
       if (res.data is List && (res.data as List).length >= 2) {
@@ -160,66 +167,29 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ── News ──────────────────────────────────────────────────────────────────
-  Future<void> _fetchNews() async {
+  Future<void> _fetchNews({bool forceRefresh = false}) async {
     if (!mounted) return;
-    setState(() => _loadingNews = true);
 
-    // Try BBC News (most reliable)
-    final sources = [
-      'https://feeds.bbci.co.uk/news/world/rss.xml',
-      'https://rss.nytimes.com/services/xml/rss/nyt/World.xml',
-      'https://news.google.com/rss?hl=en&gl=US&ceid=US:en',
-    ];
-
-    for (final rssUrl in sources) {
-      try {
-        final res = await Dio(BaseOptions(
-                connectTimeout: const Duration(seconds: 8)))
-            .get('https://api.rss2json.com/v1/api.json',
-                queryParameters: {'rss_url': rssUrl, 'count': '8'});
-        if (res.data?['status'] == 'ok') {
-          final items = (res.data['items'] as List?) ?? [];
-          if (items.isNotEmpty && mounted) {
-            setState(() {
-              _news = items.map<Map<String, dynamic>>((i) => {
-                'title':   i['title']     ?? '',
-                'link':    i['link']      ?? '',
-                'thumb':   i['thumbnail'] ?? (i['enclosure'] is Map ? i['enclosure']['link'] ?? '' : ''),
-                'author':  i['author']    ?? 'News',
-              }).where((m) => (m['title'] as String).isNotEmpty).toList();
-              _loadingNews = false;
-            });
-            return;
-          }
-        }
-      } catch (_) {}
+    // Serve from cache instantly (no flicker when switching tabs)
+    if (!forceRefresh && _newsCache.containsKey(_selectedCategory)) {
+      setState(() => _news = _newsCache[_selectedCategory]!);
+      return;
     }
 
-    // Fallback: HackerNews (always works)
-    try {
-      final top = await Dio().get(
-          'https://hacker-news.firebaseio.com/v0/topstories.json');
-      final ids = ((top.data as List).take(6)).toList();
-      final news = <Map<String, dynamic>>[];
-      for (final id in ids) {
-        try {
-          final item = await Dio().get(
-              'https://hacker-news.firebaseio.com/v0/item/$id.json');
-          final d = item.data;
-          if (d?['title'] != null && d?['url'] != null) {
-            news.add({
-              'title':  d['title'],
-              'link':   d['url'],
-              'thumb':  '',
-              'author': d['by'] ?? 'HackerNews',
-            });
-          }
-        } catch (_) {}
-      }
-      if (mounted && news.isNotEmpty) setState(() => _news = news);
-    } catch (_) {}
+    setState(() => _loadingNews = true);
 
-    if (mounted) setState(() => _loadingNews = false);
+    final articles = await NewsService.fetchNews(_selectedCategory);
+
+    if (mounted) {
+      _newsCache[_selectedCategory] = articles;
+      setState(() { _news = articles; _loadingNews = false; });
+    }
+  }
+
+  void _switchCategory(String cat) {
+    if (_selectedCategory == cat) return;
+    setState(() { _selectedCategory = cat; _news = []; });
+    _fetchNews();
   }
 
   // ── Navigation ────────────────────────────────────────────────────────────
@@ -247,13 +217,13 @@ class _HomeScreenState extends State<HomeScreen>
         transitionDuration: const Duration(milliseconds: 280),
       ));
 
-  void _showSnack(String msg) => ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg, style: GoogleFonts.inter(color: Colors.white)),
+  void _showSnack(String msg) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(msg, style: GoogleFonts.inter(color: Colors.white)),
           backgroundColor: AppTheme.bgElevated,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))));
 
-  // ── Greeting ──────────────────────────────────────────────────────────────
   String _greeting() {
     final h = DateTime.now().hour;
     final profile = LocalDB.getProfile();
@@ -268,8 +238,6 @@ class _HomeScreenState extends State<HomeScreen>
   // ═══════════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
-    // FIX #8: resizeToAvoidBottomInset:false prevents keyboard from
-    // pushing the bottom navigation bar up.
     return Scaffold(
       backgroundColor: AppTheme.bgDark,
       resizeToAvoidBottomInset: false,
@@ -294,9 +262,9 @@ class _HomeScreenState extends State<HomeScreen>
                     const SizedBox(height: 24),
                     _buildSection('Quick Access', _buildSpeedDial()),
                     const SizedBox(height: 20),
-                    _buildSection('Features',    _buildFeatureRow()),
+                    _buildSection('Features', _buildFeatureRow()),
                     const SizedBox(height: 20),
-                    _buildSection('Latest News', _buildNewsBody()),
+                    _buildNewsSection(),
                     const SizedBox(height: 12),
                   ]),
                 ),
@@ -305,7 +273,6 @@ class _HomeScreenState extends State<HomeScreen>
             ]),
           ),
         ),
-        // Voice listening overlay
         if (_isListening) _buildListeningOverlay(),
       ]),
     );
@@ -363,11 +330,11 @@ class _HomeScreenState extends State<HomeScreen>
                   color: Colors.white, letterSpacing: 2)),
         ),
         const Spacer(),
-        _hBtn(Icons.psychology_outlined, () => _push(const AiAssistantScreen())),
+        _hBtn(Icons.psychology_outlined,    () => _push(const AiAssistantScreen())),
         const SizedBox(width: 8),
         _hBtn(Icons.person_outline_rounded, () => _push(const ProfileScreen())),
         const SizedBox(width: 8),
-        _hBtn(Icons.settings_outlined, () => _push(const SettingsScreen())),
+        _hBtn(Icons.settings_outlined,      () => _push(const SettingsScreen())),
       ]),
     );
   }
@@ -390,7 +357,6 @@ class _HomeScreenState extends State<HomeScreen>
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // FIX #6: Time-based greeting with username
         Text(_greeting(),
             style: GoogleFonts.spaceGrotesk(
                 color: Colors.white, fontSize: 26, fontWeight: FontWeight.bold)),
@@ -398,14 +364,11 @@ class _HomeScreenState extends State<HomeScreen>
         Text('Where would you like to go today?',
             style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 13)),
         const SizedBox(height: 16),
-
-        // Search bar + suggestions column
         ClipRRect(
           borderRadius: BorderRadius.circular(28),
           child: BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
             child: Column(children: [
-              // ── Search input row ──────────────────────────────────────
               Container(
                 decoration: BoxDecoration(
                   color: const Color(0x22FFFFFF),
@@ -449,7 +412,6 @@ class _HomeScreenState extends State<HomeScreen>
                       ),
                     ),
                   ),
-                  // FIX #9: Voice search mic button
                   GestureDetector(
                     onTap: _toggleListen,
                     child: AnimatedContainer(
@@ -478,14 +440,11 @@ class _HomeScreenState extends State<HomeScreen>
                         borderRadius: BorderRadius.circular(20),
                         boxShadow: AppTheme.glowShadow,
                       ),
-                      child: const Icon(Icons.arrow_forward,
-                          color: Colors.white, size: 16),
+                      child: const Icon(Icons.arrow_forward, color: Colors.white, size: 16),
                     ),
                   ),
                 ]),
               ),
-
-              // ── FIX #3: Search suggestions dropdown ──────────────────
               if (_showSuggest)
                 Container(
                   decoration: BoxDecoration(
@@ -502,7 +461,6 @@ class _HomeScreenState extends State<HomeScreen>
                   ),
                   child: Column(
                     children: [
-                      // Search history (when input is empty)
                       if (_searchCtrl.text.isEmpty && _searchHist.isNotEmpty) ...[
                         Padding(
                           padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
@@ -511,10 +469,8 @@ class _HomeScreenState extends State<HomeScreen>
                             children: [
                               Text('Recent',
                                   style: GoogleFonts.inter(
-                                      color: AppTheme.textHint,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
-                                      letterSpacing: 0.8)),
+                                      color: AppTheme.textHint, fontSize: 11,
+                                      fontWeight: FontWeight.w600, letterSpacing: 0.8)),
                               GestureDetector(
                                 onTap: () async {
                                   await LocalDB.clearSearchHistory();
@@ -538,7 +494,6 @@ class _HomeScreenState extends State<HomeScreen>
                           ),
                         )),
                       ],
-                      // Live suggestions (when typing)
                       if (_searchCtrl.text.isNotEmpty)
                         ..._suggestions.map((s) => _suggestionTile(
                           Icons.trending_up_rounded, s,
@@ -573,10 +528,8 @@ class _HomeScreenState extends State<HomeScreen>
           const SizedBox(width: 12),
           Expanded(
             child: Text(text,
-                style: GoogleFonts.inter(
-                    color: AppTheme.textSecondary, fontSize: 14),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis),
+                style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 14),
+                maxLines: 1, overflow: TextOverflow.ellipsis),
           ),
           if (trailing != null) trailing,
         ]),
@@ -592,14 +545,14 @@ class _HomeScreenState extends State<HomeScreen>
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
         child: Text(title,
             style: GoogleFonts.spaceGrotesk(
-                color: AppTheme.textHint,
-                fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+                color: AppTheme.textHint, fontSize: 11,
+                fontWeight: FontWeight.w700, letterSpacing: 1.2)),
       ),
       child,
     ],
   );
 
-  // ── FIX #1: Speed dial with REAL favicon icons ─────────────────────────
+  // ── Speed dial ─────────────────────────────────────────────────────────────
   Widget _buildSpeedDial() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -607,10 +560,8 @@ class _HomeScreenState extends State<HomeScreen>
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 5,
-          mainAxisSpacing: 14,
-          crossAxisSpacing: 14,
-          childAspectRatio: 0.8,
+          crossAxisCount: 5, mainAxisSpacing: 14,
+          crossAxisSpacing: 14, childAspectRatio: 0.8,
         ),
         itemCount: _speedDial.length,
         itemBuilder: (_, i) => _dialItem(_speedDial[i]),
@@ -619,9 +570,8 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _dialItem(Map<String, dynamic> site) {
-    final domain   = site['domain'] as String;
-    final favicon  = 'https://www.google.com/s2/favicons?domain=$domain&sz=64';
-
+    final domain  = site['domain'] as String;
+    final favicon = 'https://www.google.com/s2/favicons?domain=$domain&sz=64';
     return GestureDetector(
       onTap: () => _go(site['url']),
       child: Column(children: [
@@ -634,10 +584,8 @@ class _HomeScreenState extends State<HomeScreen>
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(15),
-            child: Image.network(
-              favicon,
-              width: 52, height: 52,
-              fit: BoxFit.cover,
+            child: Image.network(favicon,
+              width: 52, height: 52, fit: BoxFit.cover,
               errorBuilder: (_, __, ___) => Center(
                 child: Text((site['name'] as String)[0],
                     style: GoogleFonts.spaceGrotesk(
@@ -652,8 +600,7 @@ class _HomeScreenState extends State<HomeScreen>
             style: GoogleFonts.inter(
                 color: AppTheme.textSecondary, fontSize: 9.5,
                 fontWeight: FontWeight.w500),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+            maxLines: 1, overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center),
       ]),
     );
@@ -662,13 +609,13 @@ class _HomeScreenState extends State<HomeScreen>
   // ── Feature row ────────────────────────────────────────────────────────────
   Widget _buildFeatureRow() {
     final items = [
-      {'icon': Icons.psychology_outlined,    'label': 'AI Chat',    'color': AppTheme.accentCyan,
+      {'icon': Icons.psychology_outlined,     'label': 'AI Chat',   'color': AppTheme.accentCyan,
        'fn': () => _push(const AiAssistantScreen())},
-      {'icon': Icons.bookmark_border_rounded,'label': 'Bookmarks',  'color': const Color(0xFFFFAB00),
+      {'icon': Icons.bookmark_border_rounded, 'label': 'Bookmarks', 'color': const Color(0xFFFFAB00),
        'fn': () => _push(const BookmarksScreen())},
-      {'icon': Icons.download_outlined,      'label': 'Downloads',  'color': AppTheme.primaryBlue,
+      {'icon': Icons.download_outlined,       'label': 'Downloads', 'color': AppTheme.primaryBlue,
        'fn': () => _push(const DownloadsScreen())},
-      {'icon': Icons.history_rounded,        'label': 'History',    'color': AppTheme.accentPurple,
+      {'icon': Icons.history_rounded,         'label': 'History',   'color': AppTheme.accentPurple,
        'fn': () => _push(const HistoryScreen())},
     ];
     return Padding(
@@ -708,20 +655,108 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // ── FIX #2: News with multiple reliable sources ───────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  // NEWS SECTION — Chrome Discover style
+  // ══════════════════════════════════════════════════════════════════════════
+
+  Widget _buildNewsSection() {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      // ── Section header ──────────────────────────────────────────────────
+      Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+        child: Row(children: [
+          Text('Latest News',
+              style: GoogleFonts.spaceGrotesk(
+                  color: AppTheme.textHint, fontSize: 11,
+                  fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+          const Spacer(),
+          GestureDetector(
+            onTap: () {
+              _newsCache.remove(_selectedCategory);
+              _fetchNews(forceRefresh: true);
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: AppTheme.bgCard,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppTheme.divider),
+              ),
+              child: Row(children: [
+                const Icon(Icons.refresh_rounded, color: AppTheme.accentCyan, size: 13),
+                const SizedBox(width: 4),
+                Text('Refresh',
+                    style: GoogleFonts.inter(
+                        color: AppTheme.accentCyan,
+                        fontSize: 10, fontWeight: FontWeight.w600)),
+              ]),
+            ),
+          ),
+        ]),
+      ),
+
+      // ── Category chips ──────────────────────────────────────────────────
+      SizedBox(
+        height: 34,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          itemCount: NewsService.categoryLabels.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 8),
+          itemBuilder: (_, i) {
+            final cat    = NewsService.categoryLabels[i];
+            final active = cat == _selectedCategory;
+            final color  = _catColor[cat] ?? AppTheme.accentCyan;
+            return GestureDetector(
+              onTap: () => _switchCategory(cat),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                decoration: BoxDecoration(
+                  color: active ? color.withOpacity(0.2) : AppTheme.bgCard,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: active ? color : AppTheme.divider,
+                    width: active ? 1.5 : 1,
+                  ),
+                ),
+                child: Text(cat,
+                    style: GoogleFonts.inter(
+                        color: active ? color : AppTheme.textSecondary,
+                        fontSize: 12,
+                        fontWeight: active ? FontWeight.w700 : FontWeight.w500)),
+              ),
+            );
+          },
+        ),
+      ),
+
+      const SizedBox(height: 16),
+
+      // ── News body ───────────────────────────────────────────────────────
+      _buildNewsBody(),
+    ]);
+  }
+
   Widget _buildNewsBody() {
     if (_loadingNews) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 20),
-        child: Center(child: CircularProgressIndicator(
-            color: AppTheme.accentCyan, strokeWidth: 2)),
-      );
+      return Column(children: [
+        const SizedBox(height: 20),
+        Center(child: CircularProgressIndicator(
+            color: _catColor[_selectedCategory] ?? AppTheme.accentCyan,
+            strokeWidth: 2)),
+        const SizedBox(height: 12),
+        Text('Fetching ${_selectedCategory.toLowerCase()} news…',
+            style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 12)),
+        const SizedBox(height: 20),
+      ]);
     }
+
     if (_news.isEmpty) {
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20),
         child: GestureDetector(
-          onTap: _fetchNews,
+          onTap: () => _fetchNews(forceRefresh: true),
           child: Container(
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
@@ -730,7 +765,7 @@ class _HomeScreenState extends State<HomeScreen>
               border: Border.all(color: AppTheme.divider),
             ),
             child: Row(children: [
-              const Icon(Icons.refresh_rounded, color: AppTheme.textHint, size: 18),
+              const Icon(Icons.cloud_off_rounded, color: AppTheme.textHint, size: 18),
               const SizedBox(width: 12),
               Text('Tap to reload news',
                   style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 14)),
@@ -739,41 +774,187 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       );
     }
-    return ListView.separated(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      itemCount: _news.length,
-      separatorBuilder: (_, __) => const Divider(color: AppTheme.divider, height: 1),
-      itemBuilder: (_, i) => _newsCard(_news[i]),
+
+    return Column(children: [
+      // Hero card — first article, full-width image
+      if (_news.first.imageUrl.isNotEmpty)
+        _buildHeroCard(_news.first),
+
+      // Remaining articles — compact card style
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Column(
+          children: List.generate(
+            _news.length > 1 ? _news.length - 1 : 0,
+            (i) {
+              final article = _news[i + 1];
+              return Column(children: [
+                if (i == 0 && _news.first.imageUrl.isNotEmpty)
+                  const SizedBox(height: 4),
+                _buildCompactCard(article),
+                if (i < _news.length - 2)
+                  Divider(color: AppTheme.divider.withOpacity(0.6), height: 1),
+              ]);
+            },
+          ),
+        ),
+      ),
+    ]);
+  }
+
+  // ── Hero card (large image + title + source) ───────────────────────────────
+  Widget _buildHeroCard(NewsArticle article) {
+    final color = _catColor[_selectedCategory] ?? AppTheme.accentCyan;
+    return GestureDetector(
+      onTap: () => _go(article.url),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+        child: Container(
+          decoration: BoxDecoration(
+            color: AppTheme.bgCard,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: AppTheme.divider),
+            boxShadow: AppTheme.cardShadow,
+          ),
+          clipBehavior: Clip.hardEdge,
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            // Image
+            Stack(children: [
+              SizedBox(
+                height: 200,
+                width: double.infinity,
+                child: Image.network(
+                  article.imageUrl,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Container(
+                    height: 200,
+                    color: AppTheme.bgElevated,
+                    child: Center(
+                      child: Icon(Icons.image_not_supported_outlined,
+                          color: AppTheme.textHint, size: 36)),
+                  ),
+                ),
+              ),
+              // Gradient overlay on image
+              Positioned.fill(
+                child: Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Colors.transparent, AppTheme.bgCard.withOpacity(0.7)],
+                      stops: const [0.5, 1.0],
+                    ),
+                  ),
+                ),
+              ),
+              // Category badge on image
+              Positioned(
+                top: 12, left: 12,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.9),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(_selectedCategory,
+                      style: GoogleFonts.inter(
+                          color: Colors.white, fontSize: 10,
+                          fontWeight: FontWeight.w700)),
+                ),
+              ),
+            ]),
+
+            // Title + meta
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(article.title,
+                    style: GoogleFonts.spaceGrotesk(
+                        color: AppTheme.textPrimary, fontSize: 15,
+                        fontWeight: FontWeight.w700, height: 1.4),
+                    maxLines: 3, overflow: TextOverflow.ellipsis),
+                if (article.description.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(article.description,
+                      style: GoogleFonts.inter(
+                          color: AppTheme.textSecondary, fontSize: 12, height: 1.4),
+                      maxLines: 2, overflow: TextOverflow.ellipsis),
+                ],
+                const SizedBox(height: 10),
+                Row(children: [
+                  Container(
+                    width: 6, height: 6,
+                    decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(article.source,
+                        style: GoogleFonts.inter(
+                            color: color, fontSize: 11, fontWeight: FontWeight.w600),
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ),
+                  if (article.timeAgo.isNotEmpty) ...[
+                    const SizedBox(width: 8),
+                    Text(article.timeAgo,
+                        style: GoogleFonts.inter(
+                            color: AppTheme.textHint, fontSize: 11)),
+                  ],
+                  const SizedBox(width: 8),
+                  Icon(Icons.open_in_new_rounded, color: AppTheme.textHint, size: 13),
+                ]),
+              ]),
+            ),
+          ]),
+        ),
+      ),
     );
   }
 
-  Widget _newsCard(Map<String, dynamic> item) {
-    final thumb = item['thumb'] as String? ?? '';
+  // ── Compact card (thumbnail right, title + source left) ───────────────────
+  Widget _buildCompactCard(NewsArticle article) {
+    final thumb = article.imageUrl;
     return GestureDetector(
-      onTap: () => _go(item['link']),
+      onTap: () => _go(article.url),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 12),
+        padding: const EdgeInsets.symmetric(vertical: 13),
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          // Text content
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(item['title'],
+              // Source + time row
+              Row(children: [
+                Flexible(
+                  child: Text(article.source,
+                      style: GoogleFonts.inter(
+                          color: _catColor[_selectedCategory] ?? AppTheme.accentCyan,
+                          fontSize: 10.5, fontWeight: FontWeight.w600),
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                ),
+                if (article.timeAgo.isNotEmpty) ...[
+                  Text('  ·  ${article.timeAgo}',
+                      style: GoogleFonts.inter(
+                          color: AppTheme.textHint, fontSize: 10.5)),
+                ],
+              ]),
+              const SizedBox(height: 5),
+              Text(article.title,
                   style: GoogleFonts.inter(
                       color: AppTheme.textPrimary, fontSize: 13.5,
-                      fontWeight: FontWeight.w500, height: 1.45),
+                      fontWeight: FontWeight.w500, height: 1.4),
                   maxLines: 2, overflow: TextOverflow.ellipsis),
-              const SizedBox(height: 5),
-              Text(item['author'],
-                  style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 10.5)),
             ]),
           ),
+
+          // Thumbnail
           if (thumb.isNotEmpty) ...[
-            const SizedBox(width: 12),
+            const SizedBox(width: 14),
             ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: Image.network(thumb, width: 68, height: 54, fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const SizedBox.shrink()),
+              borderRadius: BorderRadius.circular(12),
+              child: Image.network(
+                thumb, width: 78, height: 62, fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              ),
             ),
           ],
         ]),
@@ -793,11 +974,11 @@ class _HomeScreenState extends State<HomeScreen>
         boxShadow: AppTheme.cardShadow,
       ),
       child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-        _navBtn(Icons.home_rounded,       'Home',      null,                        true),
+        _navBtn(Icons.home_rounded,       'Home',      null,                              true),
         _navBtn(Icons.bookmark_rounded,   'Saved',     () => _push(const BookmarksScreen()), false),
         _navBtn(Icons.download_rounded,   'Downloads', () => _push(const DownloadsScreen()),  false),
         _navBtn(Icons.history_rounded,    'History',   () => _push(const HistoryScreen()),    false),
-        _navBtn(Icons.more_horiz_rounded, 'Menu',      _showMenu,                   false),
+        _navBtn(Icons.more_horiz_rounded, 'Menu',      _showMenu,                         false),
       ]),
     );
   }
@@ -818,13 +999,14 @@ class _HomeScreenState extends State<HomeScreen>
           Text(label,
               style: GoogleFonts.inter(
                   color: active ? Colors.white : AppTheme.textHint,
-                  fontSize: 9, fontWeight: active ? FontWeight.w700 : FontWeight.w400)),
+                  fontSize: 9,
+                  fontWeight: active ? FontWeight.w700 : FontWeight.w400)),
         ]),
       ),
     );
   }
 
-  // ── Voice listening overlay ────────────────────────────────────────────────
+  // ── Listening overlay ──────────────────────────────────────────────────────
   Widget _buildListeningOverlay() {
     return Positioned(
       bottom: 100, left: 0, right: 0,
@@ -849,7 +1031,7 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // ── Slide-up menu sheet ────────────────────────────────────────────────────
+  // ── Menu sheet ─────────────────────────────────────────────────────────────
   void _showMenu() {
     showModalBottomSheet(
       context: context,
@@ -868,21 +1050,21 @@ class _MenuSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final items = [
-      {'icon': Icons.psychology_outlined,    'label': 'AI Chat',   'color': AppTheme.accentCyan,
+      {'icon': Icons.psychology_outlined,     'label': 'AI Chat',   'color': AppTheme.accentCyan,
        'fn': () { Navigator.pop(context); onPush(const AiAssistantScreen()); }},
-      {'icon': Icons.bookmark_border_rounded,'label': 'Bookmarks', 'color': const Color(0xFFFFAB00),
+      {'icon': Icons.bookmark_border_rounded, 'label': 'Bookmarks', 'color': const Color(0xFFFFAB00),
        'fn': () { Navigator.pop(context); onPush(const BookmarksScreen()); }},
-      {'icon': Icons.download_outlined,      'label': 'Downloads', 'color': AppTheme.primaryBlue,
+      {'icon': Icons.download_outlined,       'label': 'Downloads', 'color': AppTheme.primaryBlue,
        'fn': () { Navigator.pop(context); onPush(const DownloadsScreen()); }},
-      {'icon': Icons.history_rounded,        'label': 'History',   'color': AppTheme.accentPurple,
+      {'icon': Icons.history_rounded,         'label': 'History',   'color': AppTheme.accentPurple,
        'fn': () { Navigator.pop(context); onPush(const HistoryScreen()); }},
-      {'icon': Icons.person_outline_rounded, 'label': 'Profile',   'color': const Color(0xFFFF6B6B),
+      {'icon': Icons.person_outline_rounded,  'label': 'Profile',   'color': const Color(0xFFFF6B6B),
        'fn': () { Navigator.pop(context); onPush(const ProfileScreen()); }},
-      {'icon': Icons.settings_outlined,      'label': 'Settings',  'color': AppTheme.success,
+      {'icon': Icons.settings_outlined,       'label': 'Settings',  'color': AppTheme.success,
        'fn': () { Navigator.pop(context); onPush(const SettingsScreen()); }},
-      {'icon': Icons.info_outline_rounded,   'label': 'About',     'color': AppTheme.textHint,
+      {'icon': Icons.info_outline_rounded,    'label': 'About',     'color': AppTheme.textHint,
        'fn': () { Navigator.pop(context); _about(context); }},
-      {'icon': Icons.share_outlined,         'label': 'Share',     'color': AppTheme.primaryBlue,
+      {'icon': Icons.share_outlined,          'label': 'Share',     'color': AppTheme.primaryBlue,
        'fn': () { Navigator.pop(context); Clipboard.setData(const ClipboardData(text: 'NOVA X Browser')); }},
     ];
 
@@ -942,7 +1124,8 @@ class _MenuSheet extends StatelessWidget {
       title: Text('NOVA X Browser',
           style: GoogleFonts.spaceGrotesk(
               color: AppTheme.textPrimary, fontWeight: FontWeight.bold)),
-      content: Text('Version 2.1.0\nBuilt with ❤️ by Tech Lyfe Team.\nCEO: Kobby (Mr. Romantic)',
+      content: Text(
+          'Version 2.1.0\nBuilt with ❤️ by Tech Lyfe Team.\nCEO: Kobby (Mr. Romantic)',
           style: GoogleFonts.inter(color: AppTheme.textSecondary, height: 1.5)),
       actions: [TextButton(
         onPressed: () => Navigator.pop(_),

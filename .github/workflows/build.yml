@@ -20,10 +20,7 @@ jobs:
           java-version: '17'
           cache: ''
 
-      # Pinned to 3.24.5 — last stable release before AGP 9+ DSL-only enforcement.
-      # The unpinned "stable" channel now pulls Flutter 3.29+ which ships AGP 9,
-      # and AGP 9 drops support for the legacy Groovy DSL that flutter.gradle uses,
-      # causing "only the new DSL interface will be read" build failures.
+      # Pinned to 3.24.5 — last stable before AGP 9+ DSL-only enforcement.
       - name: Set up Flutter Engine Environment
         uses: subosito/flutter-action@v2
         with:
@@ -48,7 +45,6 @@ jobs:
           echo "✓ ProGuard patched"
 
       # Fix speech_to_text 6.6.2 referencing the dead jcenter() repository.
-      # JCenter was shut down in 2022; replace all occurrences with mavenCentral().
       - name: Fix speech_to_text JCenter Repository
         run: |
           echo "Patching speech_to_text jcenter() → mavenCentral()..."
@@ -66,6 +62,20 @@ jobs:
             --org com.example \
             --project-name nova_x \
             .
+
+      # audioplayers_android requires compileSdk 35; flutter create generates 34.
+      # Patch both compileSdkVersion and targetSdkVersion up to 35.
+      - name: Bump Android compileSdk to 35
+        run: |
+          echo "Patching compileSdkVersion → 35..."
+          sed -i \
+            's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 35/' \
+            android/app/build.gradle
+          sed -i \
+            's/targetSdkVersion flutter\.targetSdkVersion/targetSdkVersion 35/' \
+            android/app/build.gradle
+          echo "✓ SDK bumped"
+          grep -E "compileSdk|targetSdk" android/app/build.gradle
 
       # Patch AndroidManifest with all required permissions for v2.1
       - name: Patch Android Manifest

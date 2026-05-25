@@ -10,13 +10,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ── 1. Checkout source code ──────────────────────────────────────────
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # ── 2. Java 17 — required by Gradle 7.6+ / AGP 7.4+ ────────────────
-      #       cache:'' prevents setup-java scanning for gradle files that
-      #       don't exist yet (was the root cause of the JDK step failures).
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
@@ -24,40 +20,28 @@ jobs:
           java-version: '17'
           cache: ''
 
-      # ── 3. Flutter stable engine with caching ────────────────────────────
       - name: Set up Flutter Engine Environment
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
 
-      # ── 4. Resolve all pub dependencies ──────────────────────────────────
       - name: Install Project Dependencies
         run: flutter pub get
 
-      # ── 5. Fix flutter_inappwebview ProGuard compatibility ────────────────
-      #       ROOT CAUSE OF CURRENT FAILURE:
-      #       flutter_inappwebview_android-1.1.3 hard-codes
-      #       getDefaultProguardFile('proguard-android.txt') in its own
-      #       build.gradle. AGP 8+ (which Flutter stable now generates)
-      #       no longer accepts proguard-android.txt and throws a hard error.
-      #       Fix: patch the reference in the pub cache BEFORE Gradle reads it.
-      #       This is a known upstream bug in the plugin — not in your code.
+      # Fix flutter_inappwebview_android using deprecated proguard-android.txt
+      # which AGP 8+ no longer accepts — patch it in the pub cache before build.
       - name: Fix flutter_inappwebview ProGuard AGP 8 Compatibility
         run: |
-          echo "Scanning pub cache for flutter_inappwebview_android build.gradle..."
+          echo "Patching flutter_inappwebview ProGuard..."
           find "$HOME/.pub-cache" -name "build.gradle" \
             -path "*/flutter_inappwebview_android*" \
             -print \
             -exec sed -i \
               "s/getDefaultProguardFile('proguard-android\.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g" \
               {} +
-          echo "✓ ProGuard reference patched to proguard-android-optimize.txt"
+          echo "✓ ProGuard patched"
 
-      # ── 6. Generate the complete android/ platform from scratch ──────────
-      #       Creates Gradle wrapper (binary .jar included), mipmap icons,
-      #       AndroidManifest, MainActivity.kt and all Gradle/Kotlin files.
-      #       rm -rf android first ensures a clean conflict-free run.
       - name: Generate Android Platform Files
         run: |
           rm -rf android
@@ -67,43 +51,35 @@ jobs:
             --project-name nova_x \
             .
 
-      # ── 7. Patch AndroidManifest for browser / webview functionality ──────
-      #       flutter_inappwebview needs INTERNET permission + cleartext HTTP
-      #       so the browser can load any site, not just HTTPS.
-      - name: Patch Android Manifest for Browser App
+      # Patch AndroidManifest with all required permissions for v2.1
+      - name: Patch Android Manifest
         run: |
           M="android/app/src/main/AndroidManifest.xml"
 
-          # App display name
+          # App label
           sed -i 's/android:label="nova_x"/android:label="NOVA X"/' "$M"
 
-          # INTERNET + network-state permissions
-          sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>|' "$M"
+          # All required permissions (INTERNET + network + mic for voice search)
+          sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>|' "$M"
 
-          # Allow cleartext HTTP traffic + hardware acceleration for WebView
+          # Allow cleartext HTTP + hardware acceleration for WebView
           sed -i 's|android:icon="@mipmap/ic_launcher">|android:icon="@mipmap/ic_launcher"\n        android:usesCleartextTraffic="true"\n        android:hardwareAccelerated="true">|' "$M"
 
-          echo "── Patched AndroidManifest.xml ──"
+          echo "── Patched AndroidManifest ──"
           cat "$M"
 
-      # ── 8. Lock Gradle to the exact Java 17 path ─────────────────────────
-      #       Prevents "SDK build tools require Java N but found Java M" errors
       - name: Configure Gradle Java Home
         run: echo "org.gradle.java.home=$JAVA_HOME" >> android/gradle.properties
 
-      # ── 9. Compile release APK (direct install / sideload) ───────────────
       - name: Compile Release APK Bundle
         run: flutter build apk --release
 
-      # ── 10. Compile release AAB (Google Play Store format) ───────────────
       - name: Compile Distribution AAB Package
         run: flutter build appbundle --release
 
-      # ── 11. Upload both outputs as downloadable workflow artifacts ────────
-      #        upload-artifact@v4 — v3 is deprecated and now hard-fails.
       - name: Archive Compiled Binaries
         uses: actions/upload-artifact@v4
         with:
-          name: nova-x-release-${{ github.sha }}
+          name: nova-x-v2.1-release-${{ github.sha }}
           path: build/app/outputs/
           retention-days: 14

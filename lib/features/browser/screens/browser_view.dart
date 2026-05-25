@@ -413,11 +413,6 @@ class _BrowserViewState extends State<BrowserView>
         await c.evaluateJavascript(source: _consoleHook);
       },
 
-      onDOMContentLoaded: (c, url) async {
-        // Re-inject in case the DOM replaced the hook
-        await c.evaluateJavascript(source: _consoleHook);
-      },
-
       onTitleChanged: (_, title) {
         if (title != null && mounted) setState(() => _pageTitle = title);
       },
@@ -428,6 +423,8 @@ class _BrowserViewState extends State<BrowserView>
         _canBack    = await c.canGoBack();
         _canForward = await c.canGoForward();
         if (mounted) setState(() => _currentUrl = u);
+        // Re-inject console hook (catches any page that replaced window context)
+        await c.evaluateJavascript(source: _consoleHook);
         // Don't save history in incognito
         if (!widget.incognito) await LocalDB.saveHistoryItem(u, _pageTitle);
       },

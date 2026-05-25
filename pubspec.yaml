@@ -14,8 +14,9 @@ dependencies:
   google_fonts: ^6.1.0
   shared_preferences: ^2.2.2
   dio: ^5.4.0
-  speech_to_text: ^6.6.2      # Voice search input
-  audioplayers: ^5.2.1         # TTS audio playback
+  speech_to_text: ^6.6.2   # needs js ^0.7.1
+  audioplayers: ^6.1.0      # FIXED: upgraded 5.x→6.x to use js ^0.7.1
+                             # (5.x required js ^0.6.4 — conflicts with speech_to_text)
 
 dev_dependencies:
   flutter_test:

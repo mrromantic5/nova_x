@@ -370,7 +370,8 @@ class _DevToolsPanelState extends State<_DevToolsPanel>
     if (spaceIdx >= 0) {
       // Attributes
       final attrs = rest.substring(spaceIdx);
-      final attrRx = RegExp(r'(\s+[\w-:]+)(=)("[^"]*"|\'[^\']*\')?');
+      // Use triple-quote raw string so single quotes inside don't end the literal
+      final attrRx = RegExp(r"""(\s+[\w-:]+)(=)("[^"]*"|'[^']*')?""");
       int cursor = 0;
       for (final m in attrRx.allMatches(attrs)) {
         if (m.start > cursor) {

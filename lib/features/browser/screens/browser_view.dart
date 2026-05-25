@@ -8,7 +8,6 @@ import 'package:nova_x/core/theme/app_theme.dart';
 class BrowserView extends StatefulWidget {
   final String initialQuery;
   const BrowserView({super.key, required this.initialQuery});
-
   @override
   State<BrowserView> createState() => _BrowserViewState();
 }
@@ -21,50 +20,49 @@ class _BrowserViewState extends State<BrowserView>
   bool _canBack     = false;
   bool _canForward  = false;
   double _progress  = 0;
-  String _currentUrl   = '';
-  String _pageTitle    = 'Loading…';
-  bool _isBookmarked   = false;
-  bool _isSecure       = false;
+  String _currentUrl  = '';
+  String _pageTitle   = 'Loading…';
+  bool _isBookmarked  = false;
+  bool _isSecure      = false;
+  // FIX #7: Desktop mode state
+  bool _desktopMode   = false;
 
-  late AnimationController _progressAnimCtrl;
+  static const String _desktopUA =
+      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
+      '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
-  // ── URL logic ────────────────────────────────────────────────────────────
+  // ── URL helpers ────────────────────────────────────────────────────────────
   String _buildUrl(String query) {
     final q = query.trim();
     if (q.isEmpty) return 'https://www.google.com';
     if (q.startsWith('http://') || q.startsWith('https://')) return q;
-    final domainRx = RegExp(
-        r'^[a-zA-Z0-9][a-zA-Z0-9\-\.]+\.[a-zA-Z]{2,}(/.*)?$');
+    final domainRx = RegExp(r'^[a-zA-Z0-9][a-zA-Z0-9\-\.]+\.[a-zA-Z]{2,}(/.*)?$');
     if (domainRx.hasMatch(q) && !q.contains(' ')) return 'https://$q';
     return LocalDB.buildSearchUrl(q);
   }
 
   String _hostLabel(String url) => url
-      .replaceFirst('https://', '')
-      .replaceFirst('http://', '')
-      .replaceFirst('www.', '')
-      .split('/')[0];
+      .replaceFirst('https://', '').replaceFirst('http://', '')
+      .replaceFirst('www.', '').split('/')[0];
 
   @override
   void initState() {
     super.initState();
-    _progressAnimCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 200));
     final initial = _buildUrl(widget.initialQuery);
-    _currentUrl    = initial;
-    _urlCtrl.text  = _hostLabel(initial);
-    _isSecure      = initial.startsWith('https://');
-    _isBookmarked  = LocalDB.isBookmarked(initial);
+    _currentUrl   = initial;
+    _urlCtrl.text = _hostLabel(initial);
+    _isSecure     = initial.startsWith('https://');
+    _isBookmarked = LocalDB.isBookmarked(initial);
   }
 
   @override
   void dispose() {
     _urlCtrl.dispose();
-    _progressAnimCtrl.dispose();
     _wvc = null;
     super.dispose();
   }
 
+  // ── Actions ────────────────────────────────────────────────────────────────
   Future<void> _toggleBookmark() async {
     HapticFeedback.mediumImpact();
     if (_isBookmarked) {
@@ -73,7 +71,19 @@ class _BrowserViewState extends State<BrowserView>
       await LocalDB.addBookmark(_currentUrl, _pageTitle);
     }
     if (mounted) setState(() => _isBookmarked = !_isBookmarked);
-    _showSnack(_isBookmarked ? '★ Bookmark added' : 'Bookmark removed');
+    _snack(_isBookmarked ? '★ Bookmark added' : 'Bookmark removed');
+  }
+
+  // FIX #7: Proper desktop mode toggle — change UA and reload
+  Future<void> _toggleDesktopMode() async {
+    setState(() => _desktopMode = !_desktopMode);
+    await _wvc?.setSettings(
+      settings: InAppWebViewSettings(
+        userAgent: _desktopMode ? _desktopUA : null,
+      ),
+    );
+    await _wvc?.reload();
+    _snack(_desktopMode ? '🖥️ Desktop site' : '📱 Mobile site');
   }
 
   void _navigateTo(String query) {
@@ -83,44 +93,23 @@ class _BrowserViewState extends State<BrowserView>
       _editing   = false;
       _currentUrl = url;
       _urlCtrl.text = _hostLabel(url);
-      _isSecure  = url.startsWith('https://');
+      _isSecure   = url.startsWith('https://');
     });
     FocusScope.of(context).unfocus();
   }
 
-  void _showSnack(String msg) {
+  void _copyUrl() {
+    Clipboard.setData(ClipboardData(text: _currentUrl));
+    _snack('URL copied');
+  }
+
+  void _snack(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(msg, style: GoogleFonts.inter(color: Colors.white)),
       backgroundColor: AppTheme.bgElevated,
-      behavior: SnackBarBehavior.floating,
-      duration: const Duration(seconds: 2),
+      behavior: SnackBarBehavior.floating, duration: const Duration(seconds: 2),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
     ));
-  }
-
-  void _copyUrl() {
-    Clipboard.setData(ClipboardData(text: _currentUrl));
-    _showSnack('URL copied');
-  }
-
-  void _showMoreMenu() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _BrowserMenuSheet(
-        url: _currentUrl,
-        onCopy: _copyUrl,
-        onRefresh: () { Navigator.pop(context); _wvc?.reload(); },
-        onDesktop: () {
-          Navigator.pop(context);
-          _wvc?.loadUrl(urlRequest: URLRequest(
-            url: WebUri(_currentUrl),
-            headers: {'User-Agent':
-              'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'},
-          ));
-        },
-      ),
-    );
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -128,6 +117,7 @@ class _BrowserViewState extends State<BrowserView>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppTheme.bgDark,
+      resizeToAvoidBottomInset: true,
       body: Column(children: [
         _buildTopBar(),
         _buildProgressBar(),
@@ -137,26 +127,22 @@ class _BrowserViewState extends State<BrowserView>
     );
   }
 
-  // ── Top URL bar ────────────────────────────────────────────────────────
+  // ── Top bar ────────────────────────────────────────────────────────────────
   Widget _buildTopBar() {
     return Container(
       color: AppTheme.bgDark,
       padding: EdgeInsets.only(
         top: MediaQuery.of(context).padding.top + 8,
-        left: 12,
-        right: 12,
-        bottom: 8,
+        left: 10, right: 10, bottom: 8,
       ),
       child: Row(children: [
-        // Back
-        _topBtn(Icons.arrow_back_ios_new_rounded,
-            () async {
-              if (await _wvc?.canGoBack() ?? false) {
-                _wvc?.goBack();
-              } else {
-                Navigator.pop(context);
-              }
-            }),
+        _topBtn(Icons.arrow_back_ios_new_rounded, () async {
+          if (await _wvc?.canGoBack() ?? false) {
+            _wvc?.goBack();
+          } else {
+            Navigator.pop(context);
+          }
+        }),
         const SizedBox(width: 8),
         // URL bar
         Expanded(
@@ -166,13 +152,12 @@ class _BrowserViewState extends State<BrowserView>
                 _editing = true;
                 _urlCtrl.text = _currentUrl;
                 _urlCtrl.selection = TextSelection(
-                    baseOffset: 0,
-                    extentOffset: _urlCtrl.text.length);
+                    baseOffset: 0, extentOffset: _urlCtrl.text.length);
               });
             },
             child: Container(
               height: 42,
-              padding: const EdgeInsets.symmetric(horizontal: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
               decoration: BoxDecoration(
                 color: AppTheme.bgCard,
                 borderRadius: BorderRadius.circular(22),
@@ -182,17 +167,16 @@ class _BrowserViewState extends State<BrowserView>
                 Icon(
                   _isSecure ? Icons.lock_rounded : Icons.lock_open_rounded,
                   color: _isSecure ? AppTheme.secure : AppTheme.textHint,
-                  size: 14,
+                  size: 13,
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 Expanded(
                   child: _editing
                       ? TextField(
                           controller: _urlCtrl,
                           autofocus: true,
-                          style: GoogleFonts.inter(
-                              color: Colors.white, fontSize: 13),
-                          onSubmitted: (v) => _navigateTo(v),
+                          style: GoogleFonts.inter(color: Colors.white, fontSize: 13),
+                          onSubmitted: _navigateTo,
                           textInputAction: TextInputAction.go,
                           keyboardType: TextInputType.url,
                           autocorrect: false,
@@ -206,27 +190,28 @@ class _BrowserViewState extends State<BrowserView>
                           _hostLabel(_currentUrl),
                           style: GoogleFonts.inter(
                               color: AppTheme.textSecondary,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500),
-                          overflow: TextOverflow.ellipsis,
-                          maxLines: 1,
+                              fontSize: 13, fontWeight: FontWeight.w500),
+                          overflow: TextOverflow.ellipsis, maxLines: 1,
                         ),
                 ),
+                // Desktop mode indicator
+                if (_desktopMode)
+                  const Padding(
+                    padding: EdgeInsets.only(left: 4),
+                    child: Icon(Icons.desktop_windows_outlined,
+                        color: AppTheme.accentCyan, size: 13),
+                  ),
               ]),
             ),
           ),
         ),
         const SizedBox(width: 8),
-        // Bookmark
         _topBtn(
-          _isBookmarked
-              ? Icons.bookmark_rounded
-              : Icons.bookmark_border_rounded,
+          _isBookmarked ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
           _toggleBookmark,
           color: _isBookmarked ? AppTheme.warning : AppTheme.textHint,
         ),
         const SizedBox(width: 4),
-        // More
         _topBtn(Icons.more_vert_rounded, _showMoreMenu),
       ]),
     );
@@ -237,17 +222,17 @@ class _BrowserViewState extends State<BrowserView>
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 38, height: 38,
+        width: 36, height: 36,
         decoration: BoxDecoration(
           color: AppTheme.bgCard,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(10),
         ),
-        child: Icon(icon, color: color, size: 18),
+        child: Icon(icon, color: color, size: 17),
       ),
     );
   }
 
-  // ── Progress bar ──────────────────────────────────────────────────────
+  // ── Progress bar ──────────────────────────────────────────────────────────
   Widget _buildProgressBar() {
     if (_progress >= 1.0 || _progress == 0) return const SizedBox.shrink();
     return LinearProgressIndicator(
@@ -258,25 +243,25 @@ class _BrowserViewState extends State<BrowserView>
     );
   }
 
-  // ── WebView ─────────────────────────────────────────────────────────────
+  // ── WebView ────────────────────────────────────────────────────────────────
   Widget _buildWebView() {
     return InAppWebView(
-      initialUrlRequest:
-          URLRequest(url: WebUri(_currentUrl)),
+      initialUrlRequest: URLRequest(url: WebUri(_currentUrl)),
       initialSettings: InAppWebViewSettings(
-        javaScriptEnabled:            true,
-        domStorageEnabled:            true,
-        databaseEnabled:              true,
-        useWideViewPort:              true,
-        loadWithOverviewMode:         true,
-        supportZoom:                  true,
-        builtInZoomControls:          true,
-        displayZoomControls:          false,
-        allowsInlineMediaPlayback:    true,
+        javaScriptEnabled:           true,
+        domStorageEnabled:           true,
+        databaseEnabled:             true,
+        useWideViewPort:             true,
+        loadWithOverviewMode:        true,
+        supportZoom:                 true,
+        builtInZoomControls:         true,
+        displayZoomControls:         false,
+        allowsInlineMediaPlayback:   true,
         mediaPlaybackRequiresUserGesture: false,
         mixedContentMode: MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
-        allowFileAccess:              true,
-        allowContentAccess:           true,
+        allowFileAccess:             true,
+        allowContentAccess:          true,
+        userAgent:                   _desktopMode ? _desktopUA : null,
       ),
       onWebViewCreated: (c) => _wvc = c,
       onTitleChanged: (_, title) {
@@ -286,8 +271,8 @@ class _BrowserViewState extends State<BrowserView>
         if (url == null || !mounted) return;
         final u = url.toString();
         setState(() {
-          _currentUrl   = u;
-          _isSecure     = u.startsWith('https://');
+          _currentUrl = u;
+          _isSecure   = u.startsWith('https://');
           _isBookmarked = LocalDB.isBookmarked(u);
           if (!_editing) _urlCtrl.text = _hostLabel(u);
         });
@@ -295,18 +280,27 @@ class _BrowserViewState extends State<BrowserView>
       onLoadStop: (c, url) async {
         if (url == null || !mounted) return;
         final u = url.toString();
-        setState(() {
-          _canBack    = false; // updated below
-          _canForward = false;
-          _currentUrl = u;
-        });
         _canBack    = await c.canGoBack();
         _canForward = await c.canGoForward();
-        if (mounted) setState(() {});
+        if (mounted) setState(() { _currentUrl = u; });
         await LocalDB.saveHistoryItem(u, _pageTitle);
       },
       onProgressChanged: (_, p) {
         if (mounted) setState(() => _progress = p / 100);
+      },
+      // FIX #5: Intercept download requests and save to downloads
+      onDownloadStartRequest: (controller, request) async {
+        final url  = request.url.toString();
+        final name = url.split('/').last.split('?').first;
+        await LocalDB.addDownload({
+          'url':       url,
+          'filename':  name.isNotEmpty ? name : 'download',
+          'mime':      request.mimeType ?? 'unknown',
+          'size':      request.contentLength ?? 0,
+          'timestamp': DateTime.now().toIso8601String(),
+          'status':    'intercepted',
+        });
+        _snack('Download captured: ${name.isNotEmpty ? name : 'file'}');
       },
       onReceivedError: (_, req, __) {
         if (req.isForMainFrame == true && mounted) {
@@ -316,114 +310,98 @@ class _BrowserViewState extends State<BrowserView>
     );
   }
 
-  // ── Bottom navigation ─────────────────────────────────────────────────
+  // ── Bottom nav ─────────────────────────────────────────────────────────────
   Widget _buildBottomBar() {
     return Container(
       color: AppTheme.bgDark,
       padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).padding.bottom + 4,
-        top: 4,
-      ),
+          bottom: MediaQuery.of(context).padding.bottom + 4, top: 4),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          _bottomBtn(Icons.arrow_back_ios_new_rounded, 'Back', () async {
+          _bBtn(Icons.arrow_back_ios_new_rounded, 'Back', () async {
             if (await _wvc?.canGoBack() ?? false) _wvc?.goBack();
           }, enabled: _canBack),
-          _bottomBtn(Icons.arrow_forward_ios_rounded, 'Fwd', () async {
+          _bBtn(Icons.arrow_forward_ios_rounded, 'Fwd', () async {
             if (await _wvc?.canGoForward() ?? false) _wvc?.goForward();
           }, enabled: _canForward),
-          _bottomBtn(Icons.home_rounded, 'Home',
-              () => Navigator.pop(context)),
-          _bottomBtn(Icons.refresh_rounded, 'Reload',
-              () => _wvc?.reload()),
-          _bottomBtn(
-            _isBookmarked
-                ? Icons.bookmark_rounded
-                : Icons.bookmark_border_rounded,
-            'Save',
-            _toggleBookmark,
-            activeColor: _isBookmarked ? AppTheme.warning : null,
+          _bBtn(Icons.home_rounded, 'Home', () => Navigator.pop(context)),
+          _bBtn(Icons.refresh_rounded, 'Reload', () => _wvc?.reload()),
+          _bBtn(
+            _isBookmarked ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
+            'Save', _toggleBookmark,
+            color: _isBookmarked ? AppTheme.warning : null,
           ),
         ],
       ),
     );
   }
 
-  Widget _bottomBtn(IconData icon, String label, VoidCallback onTap,
-      {bool enabled = true, Color? activeColor}) {
-    final color = !enabled
-        ? AppTheme.divider
-        : (activeColor ?? AppTheme.textSecondary);
+  Widget _bBtn(IconData icon, String label, VoidCallback onTap,
+      {bool enabled = true, Color? color}) {
+    final c = !enabled ? AppTheme.divider : (color ?? AppTheme.textSecondary);
     return GestureDetector(
       onTap: enabled ? onTap : null,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, color: color, size: 22),
+          Icon(icon, color: c, size: 20),
           const SizedBox(height: 2),
-          Text(label,
-              style: GoogleFonts.inter(color: color, fontSize: 9)),
+          Text(label, style: GoogleFonts.inter(color: c, fontSize: 9)),
         ]),
       ),
     );
   }
-}
 
-// ══════════════════════════════════════════════════════════════════════════════
-// Browser more-options sheet
-// ══════════════════════════════════════════════════════════════════════════════
-class _BrowserMenuSheet extends StatelessWidget {
-  final String url;
-  final VoidCallback onCopy;
-  final VoidCallback onRefresh;
-  final VoidCallback onDesktop;
-
-  const _BrowserMenuSheet({
-    required this.url,
-    required this.onCopy,
-    required this.onRefresh,
-    required this.onDesktop,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final items = [
-      {'icon': Icons.copy_rounded,        'label': 'Copy URL',      'fn': onCopy},
-      {'icon': Icons.refresh_rounded,     'label': 'Reload',        'fn': onRefresh},
-      {'icon': Icons.desktop_windows_outlined, 'label': 'Desktop site', 'fn': onDesktop},
-    ];
-    return Container(
-      decoration: const BoxDecoration(
-        color: AppTheme.bgCard,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      padding: const EdgeInsets.fromLTRB(24, 12, 24, 28),
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Container(
-          width: 40, height: 4,
-          margin: const EdgeInsets.only(bottom: 20),
-          decoration: BoxDecoration(
-            color: AppTheme.textHint,
-            borderRadius: BorderRadius.circular(2),
-          ),
+  // ── More menu ──────────────────────────────────────────────────────────────
+  void _showMoreMenu() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => Container(
+        decoration: const BoxDecoration(
+          color: AppTheme.bgCard,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
-        Text(url,
-            style: GoogleFonts.inter(
-                color: AppTheme.textHint, fontSize: 11),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis),
-        const SizedBox(height: 20),
-        ...items.map((item) => ListTile(
-              leading: Icon(item['icon'] as IconData,
-                  color: AppTheme.accentCyan, size: 20),
-              title: Text(item['label'] as String,
-                  style: GoogleFonts.inter(
-                      color: AppTheme.textPrimary, fontSize: 14)),
-              onTap: item['fn'] as VoidCallback,
-              contentPadding: EdgeInsets.zero,
-            )),
-      ]),
+        padding: const EdgeInsets.fromLTRB(24, 12, 24, 28),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+            width: 40, height: 4,
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(
+                color: AppTheme.textHint, borderRadius: BorderRadius.circular(2)),
+          ),
+          Text(_hostLabel(_currentUrl),
+              style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11),
+              maxLines: 1, overflow: TextOverflow.ellipsis),
+          const SizedBox(height: 16),
+          _menuTile(Icons.copy_rounded, 'Copy URL', _copyUrl),
+          _menuTile(Icons.refresh_rounded, 'Reload page', () { Navigator.pop(context); _wvc?.reload(); }),
+          // FIX #7: Desktop mode toggle works now
+          _menuTile(
+            _desktopMode ? Icons.phone_android_rounded : Icons.desktop_windows_outlined,
+            _desktopMode ? 'Switch to mobile site' : 'Request desktop site',
+            () { Navigator.pop(context); _toggleDesktopMode(); },
+            color: _desktopMode ? AppTheme.accentCyan : AppTheme.textSecondary,
+          ),
+          _menuTile(Icons.bookmark_border_rounded, 
+            _isBookmarked ? 'Remove bookmark' : 'Add bookmark',
+            () { Navigator.pop(context); _toggleBookmark(); },
+            color: _isBookmarked ? AppTheme.warning : AppTheme.textSecondary,
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _menuTile(IconData icon, String label, VoidCallback onTap,
+      {Color color = AppTheme.textSecondary}) {
+    return ListTile(
+      leading: Icon(icon, color: color, size: 20),
+      title: Text(label,
+          style: GoogleFonts.inter(color: AppTheme.textPrimary, fontSize: 14)),
+      onTap: onTap,
+      contentPadding: EdgeInsets.zero,
     );
   }
 }

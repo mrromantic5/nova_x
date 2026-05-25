@@ -1,7 +1,7 @@
 name: nova_x
 description: NOVA X — The Future of Browsing
 publish_to: 'none'
-version: 2.0.0+1
+version: 2.1.0+1
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -14,6 +14,8 @@ dependencies:
   google_fonts: ^6.1.0
   shared_preferences: ^2.2.2
   dio: ^5.4.0
+  speech_to_text: ^6.6.2      # Voice search input
+  audioplayers: ^5.2.1         # TTS audio playback
 
 dev_dependencies:
   flutter_test:

@@ -9,13 +9,11 @@ class LocalDB {
   }
 
   // ── History ──────────────────────────────────────────────────────────────
-
   static Future<void> saveHistoryItem(String url, String title) async {
     try {
       final list = _prefs.getStringList('browser_history') ?? [];
       final item = jsonEncode({
-        'url':       url,
-        'title':     title.isNotEmpty ? title : url,
+        'url': url, 'title': title.isNotEmpty ? title : url,
         'timestamp': DateTime.now().toIso8601String(),
       });
       list.add(item);
@@ -29,33 +27,25 @@ class LocalDB {
     final result = <Map<String, dynamic>>[];
     for (final e in raw) {
       try {
-        final decoded = jsonDecode(e);
-        if (decoded is Map<String, dynamic>) result.add(decoded);
+        final d = jsonDecode(e);
+        if (d is Map<String, dynamic>) result.add(d);
       } catch (_) {}
     }
     return result.reversed.toList();
   }
 
-  static Future<void> clearHistory() async {
-    await _prefs.remove('browser_history');
-  }
+  static Future<void> clearHistory() async => _prefs.remove('browser_history');
 
   // ── Bookmarks ─────────────────────────────────────────────────────────────
-
   static Future<void> addBookmark(String url, String title) async {
     try {
       final list = _prefs.getStringList('bookmarks') ?? [];
-      // Avoid duplicates
-      final alreadyExists = list.any((b) {
-        try { return (jsonDecode(b) as Map)['url'] == url; }
-        catch (_) { return false; }
+      final exists = list.any((b) {
+        try { return (jsonDecode(b) as Map)['url'] == url; } catch (_) { return false; }
       });
-      if (alreadyExists) return;
-      list.add(jsonEncode({
-        'url':       url,
-        'title':     title.isNotEmpty ? title : url,
-        'timestamp': DateTime.now().toIso8601String(),
-      }));
+      if (exists) return;
+      list.add(jsonEncode({'url': url, 'title': title.isNotEmpty ? title : url,
+          'timestamp': DateTime.now().toIso8601String()}));
       await _prefs.setStringList('bookmarks', list);
     } catch (_) {}
   }
@@ -64,8 +54,7 @@ class LocalDB {
     try {
       final list = _prefs.getStringList('bookmarks') ?? [];
       list.removeWhere((b) {
-        try { return (jsonDecode(b) as Map)['url'] == url; }
-        catch (_) { return false; }
+        try { return (jsonDecode(b) as Map)['url'] == url; } catch (_) { return false; }
       });
       await _prefs.setStringList('bookmarks', list);
     } catch (_) {}
@@ -76,8 +65,8 @@ class LocalDB {
     final result = <Map<String, dynamic>>[];
     for (final e in raw) {
       try {
-        final decoded = jsonDecode(e);
-        if (decoded is Map<String, dynamic>) result.add(decoded);
+        final d = jsonDecode(e);
+        if (d is Map<String, dynamic>) result.add(d);
       } catch (_) {}
     }
     return result.reversed.toList();
@@ -86,24 +75,75 @@ class LocalDB {
   static bool isBookmarked(String url) {
     final list = _prefs.getStringList('bookmarks') ?? [];
     return list.any((b) {
-      try { return (jsonDecode(b) as Map)['url'] == url; }
-      catch (_) { return false; }
+      try { return (jsonDecode(b) as Map)['url'] == url; } catch (_) { return false; }
     });
   }
 
-  static Future<void> clearBookmarks() async {
-    await _prefs.remove('bookmarks');
+  static Future<void> clearBookmarks() async => _prefs.remove('bookmarks');
+
+  // ── Search History ─────────────────────────────────────────────────────────
+  static Future<void> addSearchQuery(String query) async {
+    if (query.trim().isEmpty) return;
+    final list = _prefs.getStringList('search_history') ?? [];
+    list.remove(query); // remove duplicate
+    list.insert(0, query);
+    await _prefs.setStringList('search_history', list.take(30).toList());
   }
+
+  static List<String> getSearchHistory() =>
+      _prefs.getStringList('search_history') ?? [];
+
+  static Future<void> clearSearchHistory() async =>
+      _prefs.remove('search_history');
+
+  static Future<void> removeSearchQuery(String query) async {
+    final list = _prefs.getStringList('search_history') ?? [];
+    list.remove(query);
+    await _prefs.setStringList('search_history', list);
+  }
+
+  // ── User Profile ──────────────────────────────────────────────────────────
+  static Future<void> saveProfile(Map<String, dynamic> profile) async {
+    await _prefs.setString('user_profile', jsonEncode(profile));
+  }
+
+  static Map<String, dynamic> getProfile() {
+    final raw = _prefs.getString('user_profile');
+    if (raw == null) return {};
+    try { return jsonDecode(raw) as Map<String, dynamic>; } catch (_) { return {}; }
+  }
+
+  static Future<void> clearProfile() async => _prefs.remove('user_profile');
+
+  // ── Downloads ─────────────────────────────────────────────────────────────
+  static Future<void> addDownload(Map<String, dynamic> download) async {
+    try {
+      final list = _prefs.getStringList('downloads') ?? [];
+      list.insert(0, jsonEncode(download));
+      await _prefs.setStringList('downloads', list.take(100).toList());
+    } catch (_) {}
+  }
+
+  static List<Map<String, dynamic>> getDownloads() {
+    final raw = _prefs.getStringList('downloads') ?? [];
+    final result = <Map<String, dynamic>>[];
+    for (final e in raw) {
+      try {
+        final d = jsonDecode(e);
+        if (d is Map<String, dynamic>) result.add(d);
+      } catch (_) {}
+    }
+    return result;
+  }
+
+  static Future<void> clearDownloads() async => _prefs.remove('downloads');
 
   // ── Settings ──────────────────────────────────────────────────────────────
+  static Future<void> setSearchEngine(String engine) async =>
+      _prefs.setString('search_engine', engine);
 
-  static Future<void> setSearchEngine(String engine) async {
-    await _prefs.setString('search_engine', engine);
-  }
-
-  static String getSearchEngine() {
-    return _prefs.getString('search_engine') ?? 'google';
-  }
+  static String getSearchEngine() =>
+      _prefs.getString('search_engine') ?? 'google';
 
   static String buildSearchUrl(String query) {
     final q = Uri.encodeComponent(query);
@@ -115,15 +155,9 @@ class LocalDB {
     }
   }
 
-  // ── Auth token ────────────────────────────────────────────────────────────
-
-  static Future<void> saveToken(String token) async {
-    await _prefs.setString('auth_token', token);
-  }
-
+  // Auth
+  static Future<void> saveToken(String token) async =>
+      _prefs.setString('auth_token', token);
   static String? getToken() => _prefs.getString('auth_token');
-
-  static Future<void> clearToken() async {
-    await _prefs.remove('auth_token');
-  }
+  static Future<void> clearToken() async => _prefs.remove('auth_token');
 }

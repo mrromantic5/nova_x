@@ -40,44 +40,6 @@ jobs:
           done
           echo "ProGuard fix done"
 
-      - name: Generate Android Platform Files
-        run: |
-          rm -rf android
-          flutter create --platforms android --org com.example --project-name nova_x .
-
-      - name: Inject Flutter SDK Properties via Gradle Init Script
-        run: |
-          mkdir -p "$HOME/.gradle"
-          echo 'allprojects {'                                         > "$HOME/.gradle/init.gradle"
-          echo '    repositories {'                                   >> "$HOME/.gradle/init.gradle"
-          echo '        google()'                                     >> "$HOME/.gradle/init.gradle"
-          echo '        mavenCentral()'                               >> "$HOME/.gradle/init.gradle"
-          echo '    }'                                                >> "$HOME/.gradle/init.gradle"
-          echo '    beforeEvaluate { proj ->'                        >> "$HOME/.gradle/init.gradle"
-          echo '        proj.ext.set("flutter", ['                   >> "$HOME/.gradle/init.gradle"
-          echo '            compileSdkVersion: 35,'                  >> "$HOME/.gradle/init.gradle"
-          echo '            targetSdkVersion : 35,'                  >> "$HOME/.gradle/init.gradle"
-          echo '            minSdkVersion    : 21,'                  >> "$HOME/.gradle/init.gradle"
-          echo '            ndkVersion       : "25.1.8937393"'       >> "$HOME/.gradle/init.gradle"
-          echo '        ])'                                           >> "$HOME/.gradle/init.gradle"
-          echo '    }'                                                >> "$HOME/.gradle/init.gradle"
-          echo '}'                                                    >> "$HOME/.gradle/init.gradle"
-          echo "init.gradle written:"
-          cat "$HOME/.gradle/init.gradle"
-
-      - name: Bump Android compileSdk to 35
-        run: |
-          APP_GRADLE="android/app/build.gradle"
-          sed -i \
-            -e 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 35/g' \
-            -e 's/targetSdkVersion flutter\.targetSdkVersion/targetSdkVersion 35/g' \
-            -e 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 35/g' \
-            -e 's/targetSdk = flutter\.targetSdkVersion/targetSdk = 35/g' \
-            -e 's/compileSdk flutter\.compileSdkVersion/compileSdk 35/g' \
-            -e 's/targetSdk flutter\.targetSdkVersion/targetSdk 35/g' \
-            "$APP_GRADLE"
-          cat "$APP_GRADLE"
-
       - name: Patch Android Manifest
         run: |
           M="android/app/src/main/AndroidManifest.xml"

@@ -33,15 +33,20 @@ jobs:
 
       # Fix flutter_inappwebview_android using deprecated proguard-android.txt
       # which AGP 8+ no longer accepts.
+      # chmod +w is required: pub-cache files are read-only by default and
+      # sed -i silently fails (exit 0) on read-only files, leaving the build broken.
       - name: Fix flutter_inappwebview ProGuard AGP 8 Compatibility
         run: |
           echo "Patching flutter_inappwebview ProGuard..."
-          find "$HOME/.pub-cache" -name "build.gradle" \
+          CACHE_ROOT="${PUB_CACHE:-$HOME/.pub-cache}"
+          find "$CACHE_ROOT" -name "build.gradle" \
             -path "*/flutter_inappwebview_android*" \
-            -print \
-            -exec sed -i \
+            -print | while read -r f; do
+            chmod +w "$f"
+            sed -i \
               "s/getDefaultProguardFile('proguard-android\.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g" \
-              {} +
+              "$f"
+          done
           echo "✓ ProGuard patched"
 
       # Fix speech_to_text jcenter (kept for safety, harmless on v7)
@@ -71,20 +76,12 @@ jobs:
       # Fix speech_to_text 7.x AFTER flutter create (so pub get inside
       # flutter create cannot undo the patch).
       #
-      # Three bugs were present in earlier patch attempts:
-      #   1. Wrong Python regex: r'flutter\\.x' matches 'flutter\.x' (with
-      #      literal backslash), NOT 'flutter.x'. The dot in the file has no
-      #      backslash, so the pattern never matched and the patch was silently
-      #      skipped every time.
-      #   2. Wrong pub cache path: the Python script used pathlib.Path.home()/
-      #      '.pub-cache' and ignored the $PUB_CACHE environment variable that
-      #      subosito/flutter-action sets to a different location.
-      #   3. Patch ran before flutter create, which re-ran pub get and
-      #      re-extracted the original unpatched package files.
-      #
-      # This replacement uses sed (no regex escaping pitfalls) and respects
-      # $PUB_CACHE. It also fails loudly if the target file is not found so
-      # the problem is immediately visible in the CI log.
+      # ROOT CAUSE OF PREVIOUS FAILURES:
+      #   pub-cache files are installed as read-only (chmod 444).
+      #   sed -i on a read-only file exits with code 1 BUT the shell does not
+      #   propagate that error when sed is inside a compound command — so the
+      #   step reports success while the file stays completely unpatched.
+      #   Adding chmod +w before sed -i is the only required fix.
       - name: Fix speech_to_text Flutter SDK Property References
         run: |
           # Honour $PUB_CACHE if flutter-action set it; fall back to default.
@@ -114,8 +111,12 @@ jobs:
           echo "--- BEFORE ---"
           cat "$STT_GRADLE"
 
-          # sed 's/flutter\.x/N/g'  →  \. in sed = escaped dot = literal dot.
-          # No backslash confusion: this is a sed expression, not Python regex.
+          # CRITICAL: make the file writable before sed.
+          # pub-cache files are read-only (444). sed -i silently fails on them —
+          # exits 1 but the step still shows green because it is not the last
+          # command. Without this chmod the file is NEVER patched.
+          chmod +w "$STT_GRADLE"
+
           sed -i \
             -e 's/flutter\.compileSdkVersion/35/g' \
             -e 's/flutter\.targetSdkVersion/35/g'  \
@@ -124,6 +125,13 @@ jobs:
 
           echo "--- AFTER ---"
           cat "$STT_GRADLE"
+
+          # Hard verification — fail loudly if any flutter.* SDK refs remain.
+          if grep -qE 'flutter\.(compileSdkVersion|targetSdkVersion|minSdkVersion)' "$STT_GRADLE"; then
+            echo "FATAL: patch did not apply — flutter SDK refs still present in $STT_GRADLE"
+            exit 1
+          fi
+
           echo "✓ speech_to_text SDK refs patched"
 
       # audioplayers_android requires compileSdk 35; flutter create generates 34.

@@ -1,10 +1,11 @@
 // lib/core/database/local_db.dart
 //
 // NOVA X local persistence layer — SharedPreferences-backed
-// Added in v2.1:
+// v2.1 additions:
 //   • Profile image path storage
 //   • NOVA X Business CRUD (max 2 per user)
 //   • Business search helper
+//   • Search engine preference
 
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -12,17 +13,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 class LocalDB {
   static late SharedPreferences _p;
 
-  // ── Keys ──────────────────────────────────────────────────────────────────
-  static const _kProfile     = 'nx_profile';
-  static const _kProfileImg  = 'nx_profile_image';
-  static const _kSearch      = 'nx_search_history';
-  static const _kHistory     = 'nx_history';
-  static const _kBookmarks   = 'nx_bookmarks';
-  static const _kDownloads   = 'nx_downloads';
-  static const _kBusinesses  = 'nx_businesses';
+  // ── Keys ───────────────────────────────────────────────────────────────────
+  static const _kProfile       = 'nx_profile';
+  static const _kProfileImg    = 'nx_profile_image';
+  static const _kSearch        = 'nx_search_history';
+  static const _kHistory       = 'nx_history';
+  static const _kBookmarks     = 'nx_bookmarks';
+  static const _kDownloads     = 'nx_downloads';
+  static const _kBusinesses    = 'nx_businesses';
+  static const _kSearchEngine  = 'nx_search_engine';
 
-  // ── Init ──────────────────────────────────────────────────────────────────
-  static Future<void> init() async {
+  // ── Init ── called from main.dart as `await LocalDB.initialize()` ──────────
+  static Future<void> initialize() async {
     _p = await SharedPreferences.getInstance();
   }
 
@@ -32,7 +34,9 @@ class LocalDB {
   static Map<String, dynamic> getProfile() {
     final raw = _p.getString(_kProfile);
     if (raw == null) return {'name': '', 'email': '', 'avatarColor': 'cyan'};
-    try { return jsonDecode(raw) as Map<String, dynamic>; } catch (_) {
+    try {
+      return jsonDecode(raw) as Map<String, dynamic>;
+    } catch (_) {
       return {'name': '', 'email': '', 'avatarColor': 'cyan'};
     }
   }
@@ -46,8 +50,17 @@ class LocalDB {
   static Future<void> saveProfileImagePath(String path) async =>
       _p.setString(_kProfileImg, path);
 
-  static Future<void> clearProfileImage() async =>
-      _p.remove(_kProfileImg);
+  static Future<void> clearProfileImage() async => _p.remove(_kProfileImg);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SEARCH ENGINE PREFERENCE
+  // ═══════════════════════════════════════════════════════════════════════════
+  /// Returns stored engine key: 'google' | 'bing' | 'duckduckgo' | 'yahoo'
+  static String getSearchEngine() =>
+      _p.getString(_kSearchEngine) ?? 'google';
+
+  static Future<void> setSearchEngine(String engine) async =>
+      _p.setString(_kSearchEngine, engine);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // SEARCH HISTORY
@@ -68,13 +81,25 @@ class LocalDB {
 
   static Future<void> clearSearchHistory() async => _p.remove(_kSearch);
 
+  /// Builds the correct search URL using the stored search engine.
+  /// Passes direct URLs through unchanged; bare domain names get https://.
   static String buildSearchUrl(String q) {
     final trimmed = q.trim();
-    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
-    final domain = RegExp(r'^[a-zA-Z0-9][a-zA-Z0-9\-\.]+\.[a-zA-Z]{2,}(/.*)?$');
-    if (domain.hasMatch(trimmed) && !trimmed.contains(' ')) return 'https://$trimmed';
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      return trimmed;
+    }
+    final domainRx =
+        RegExp(r'^[a-zA-Z0-9][a-zA-Z0-9\-\.]+\.[a-zA-Z]{2,}(/.*)?$');
+    if (domainRx.hasMatch(trimmed) && !trimmed.contains(' ')) {
+      return 'https://$trimmed';
+    }
     final encoded = Uri.encodeComponent(trimmed);
-    return 'https://www.google.com/search?q=$encoded';
+    return switch (getSearchEngine()) {
+      'bing'       => 'https://www.bing.com/search?q=$encoded',
+      'duckduckgo' => 'https://duckduckgo.com/?q=$encoded',
+      'yahoo'      => 'https://search.yahoo.com/search?p=$encoded',
+      _            => 'https://www.google.com/search?q=$encoded',
+    };
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -82,7 +107,13 @@ class LocalDB {
   // ═══════════════════════════════════════════════════════════════════════════
   static List<Map<String, dynamic>> getHistory() {
     return (_p.getStringList(_kHistory) ?? [])
-        .map((s) { try { return jsonDecode(s) as Map<String, dynamic>; } catch (_) { return <String, dynamic>{}; } })
+        .map((s) {
+          try {
+            return jsonDecode(s) as Map<String, dynamic>;
+          } catch (_) {
+            return <String, dynamic>{};
+          }
+        })
         .where((m) => m.isNotEmpty)
         .toList();
   }
@@ -95,7 +126,8 @@ class LocalDB {
       'title': title.isNotEmpty ? title : url,
       'time':  DateTime.now().toIso8601String(),
     });
-    await _p.setStringList(_kHistory, list.take(200).map(jsonEncode).toList());
+    await _p.setStringList(
+        _kHistory, list.take(200).map(jsonEncode).toList());
   }
 
   static Future<void> clearHistory() async => _p.remove(_kHistory);
@@ -105,7 +137,13 @@ class LocalDB {
   // ═══════════════════════════════════════════════════════════════════════════
   static List<Map<String, dynamic>> getBookmarks() {
     return (_p.getStringList(_kBookmarks) ?? [])
-        .map((s) { try { return jsonDecode(s) as Map<String, dynamic>; } catch (_) { return <String, dynamic>{}; } })
+        .map((s) {
+          try {
+            return jsonDecode(s) as Map<String, dynamic>;
+          } catch (_) {
+            return <String, dynamic>{};
+          }
+        })
         .where((m) => m.isNotEmpty)
         .toList();
   }
@@ -137,7 +175,13 @@ class LocalDB {
   // ═══════════════════════════════════════════════════════════════════════════
   static List<Map<String, dynamic>> getDownloads() {
     return (_p.getStringList(_kDownloads) ?? [])
-        .map((s) { try { return jsonDecode(s) as Map<String, dynamic>; } catch (_) { return <String, dynamic>{}; } })
+        .map((s) {
+          try {
+            return jsonDecode(s) as Map<String, dynamic>;
+          } catch (_) {
+            return <String, dynamic>{};
+          }
+        })
         .where((m) => m.isNotEmpty)
         .toList();
   }
@@ -145,7 +189,8 @@ class LocalDB {
   static Future<void> addDownload(Map<String, dynamic> item) async {
     final list = getDownloads();
     list.insert(0, item);
-    await _p.setStringList(_kDownloads, list.take(100).map(jsonEncode).toList());
+    await _p.setStringList(
+        _kDownloads, list.take(100).map(jsonEncode).toList());
   }
 
   static Future<void> clearDownloads() async => _p.remove(_kDownloads);
@@ -154,22 +199,31 @@ class LocalDB {
   // NOVA X BUSINESS  (max 2 per user)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  /// All businesses from all users
+  /// All businesses across all users
   static List<Map<String, dynamic>> getAllBusinesses() {
     return (_p.getStringList(_kBusinesses) ?? [])
-        .map((s) { try { return jsonDecode(s) as Map<String, dynamic>; } catch (_) { return <String, dynamic>{}; } })
+        .map((s) {
+          try {
+            return jsonDecode(s) as Map<String, dynamic>;
+          } catch (_) {
+            return <String, dynamic>{};
+          }
+        })
         .where((m) => m.isNotEmpty)
         .toList();
   }
 
   /// Businesses belonging to [ownerEmail]
   static List<Map<String, dynamic>> getUserBusinesses(String ownerEmail) =>
-      getAllBusinesses().where((b) => b['owner'] == ownerEmail).toList();
+      getAllBusinesses()
+          .where((b) => b['owner'] == ownerEmail)
+          .toList();
 
   /// Returns false if user already has 2 businesses
   static Future<bool> addBusiness(Map<String, dynamic> biz) async {
-    final all       = getAllBusinesses();
-    final userCount = all.where((b) => b['owner'] == biz['owner']).length;
+    final all = getAllBusinesses();
+    final userCount =
+        all.where((b) => b['owner'] == biz['owner']).length;
     if (userCount >= 2) return false;
 
     biz['id']        = DateTime.now().millisecondsSinceEpoch.toString();
@@ -180,19 +234,20 @@ class LocalDB {
   }
 
   static Future<void> deleteBusiness(String id) async {
-    final all = getAllBusinesses()..removeWhere((b) => b['id'] == id);
+    final all = getAllBusinesses()
+      ..removeWhere((b) => b['id'] == id);
     await _p.setStringList(_kBusinesses, all.map(jsonEncode).toList());
   }
 
-  static Future<void> clearAllBusinesses() async => _p.remove(_kBusinesses);
+  static Future<void> clearAllBusinesses() async =>
+      _p.remove(_kBusinesses);
 
   /// Returns first business whose name contains [query] (case-insensitive)
   static Map<String, dynamic>? searchBusiness(String query) {
     final q = query.toLowerCase().trim();
     if (q.isEmpty) return null;
-    final all = getAllBusinesses();
     try {
-      return all.firstWhere(
+      return getAllBusinesses().firstWhere(
         (b) => (b['name'] as String? ?? '').toLowerCase().contains(q),
       );
     } catch (_) {
@@ -210,12 +265,11 @@ class LocalDB {
     await clearDownloads();
     await clearProfileImage();
     await _p.remove(_kProfile);
+    // Note: deliberately keeps businesses and search engine preference
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // STATS helpers
-  // ─────────────────────────────────────────────────────────────────────────
-  static int get bookmarkCount  => getBookmarks().length;
-  static int get historyCount   => getHistory().length;
-  static int get downloadCount  => getDownloads().length;
+  // ── Stats helpers ──────────────────────────────────────────────────────────
+  static int get bookmarkCount => getBookmarks().length;
+  static int get historyCount  => getHistory().length;
+  static int get downloadCount => getDownloads().length;
 }

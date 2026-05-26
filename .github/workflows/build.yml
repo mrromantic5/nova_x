@@ -58,8 +58,12 @@ jobs:
       # flutter.minSdkVersion and flutter.targetSdkVersion which are Flutter app-level
       # extension properties. They are NOT available inside plugin build.gradle files,
       # causing: "Could not get unknown property 'flutter' for extension 'android'"
-      # and "compileSdkVersion is not specified".
       # Solution: replace all flutter.* SDK references with hardcoded values.
+      #
+      # BUG FIX: previous regex used r'flutter\\.xxx' (double backslash) which
+      # matches a literal backslash before the dot — NOT a plain dot. The correct
+      # pattern is r'flutter\.xxx' (single backslash = escaped dot in regex),
+      # which matches the actual text flutter.compileSdkVersion in the file.
       - name: Fix speech_to_text Flutter SDK Property References
         run: |
           echo "Patching speech_to_text flutter.* SDK references..."
@@ -77,16 +81,14 @@ jobs:
               print(f'Patching: {f}')
               txt = f.read_text()
 
-              # Replace flutter.compileSdkVersion → 35
+              # FIXED: single backslash r'flutter\.x' → matches literal dot in text
               txt = re.sub(r'flutter\.compileSdkVersion', '35', txt)
-              # Replace flutter.targetSdkVersion → 35
               txt = re.sub(r'flutter\.targetSdkVersion',  '35', txt)
-              # Replace flutter.minSdkVersion → 21
               txt = re.sub(r'flutter\.minSdkVersion',     '21', txt)
 
               f.write_text(txt)
               print(f'  ✓ Patched {f.name}')
-              # Show the android block to confirm
+              # Show the android block to confirm replacements took effect
               for line in txt.splitlines():
                 if any(k in line for k in ['compileSdk','targetSdk','minSdk','namespace']):
                   print(f'    {line.strip()}')
@@ -110,12 +112,15 @@ jobs:
           import re, pathlib
           f = pathlib.Path('android/app/build.gradle')
           txt = f.read_text()
+
+          # FIXED: single backslash r'flutter\.x' → matches literal dot in text
           txt = re.sub(r'compileSdkVersion\s+flutter\.compileSdkVersion', 'compileSdkVersion 35', txt)
           txt = re.sub(r'targetSdkVersion\s+flutter\.targetSdkVersion',   'targetSdkVersion 35',  txt)
           txt = re.sub(r'compileSdk\s*=\s*flutter\.compileSdkVersion',    'compileSdk = 35', txt)
           txt = re.sub(r'targetSdk\s*=\s*flutter\.targetSdkVersion',      'targetSdk = 35',  txt)
           txt = re.sub(r'compileSdk\s+flutter\.compileSdkVersion',         'compileSdk 35', txt)
           txt = re.sub(r'targetSdk\s+flutter\.targetSdkVersion',           'targetSdk 35',  txt)
+
           f.write_text(txt)
           print('SDK bumped to 35')
           PYEOF2

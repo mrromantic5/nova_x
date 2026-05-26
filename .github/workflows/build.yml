@@ -20,7 +20,6 @@ jobs:
           java-version: '17'
           cache: ''
 
-      # Pinned to 3.24.5 — last stable before AGP 9+ DSL-only enforcement.
       - name: Set up Flutter Engine Environment
         uses: subosito/flutter-action@v2
         with:
@@ -31,112 +30,60 @@ jobs:
       - name: Install Project Dependencies
         run: flutter pub get
 
-      # Fix flutter_inappwebview using deprecated proguard-android.txt (AGP 8+ removed it).
-      # Uses Python (not sed -i) to overwrite the file in-place — sed -i creates a temp
-      # file in the same directory and needs DIRECTORY write permission; pub-cache
-      # directories are chmod 555 so sed -i silently fails every time.
       - name: Fix flutter_inappwebview ProGuard AGP 8 Compatibility
         run: |
           CACHE_ROOT="${PUB_CACHE:-$HOME/.pub-cache}"
-          find "$CACHE_ROOT" -name "build.gradle" \
-            -path "*/flutter_inappwebview_android*" | while read -r f; do
-            chmod +w "$f"
-            python3 -c "
-import sys
-path = sys.argv[1]
-with open(path) as fh: c = fh.read()
-c = c.replace(\"getDefaultProguardFile('proguard-android.txt')\",
-              \"getDefaultProguardFile('proguard-android-optimize.txt')\")
-with open(path, 'w') as fh: fh.write(c)
-print('Patched:', path)
-" "$f"
+          find "$CACHE_ROOT" -name "build.gradle" -path "*/flutter_inappwebview_android*" | while read -r f; do
+            chmod +w "$(dirname "$f")" "$f"
+            sed -i "s/getDefaultProguardFile('proguard-android.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g" "$f"
+            echo "Patched: $f"
           done
-          echo "✓ ProGuard patched"
+          echo "ProGuard fix done"
 
-      # Regenerate the android/ platform folder fresh from Flutter 3.24.5.
       - name: Generate Android Platform Files
         run: |
           rm -rf android
-          flutter create \
-            --platforms android \
-            --org com.example \
-            --project-name nova_x \
-            .
+          flutter create --platforms android --org com.example --project-name nova_x .
 
-      # ROOT FIX for "Could not get unknown property 'flutter'" in speech_to_text.
-      #
-      # WHY PATCHING PUB-CACHE NEVER WORKED:
-      #   pub-cache sets files to 444 and directories to 555.
-      #   sed -i creates a temp file in the SAME DIRECTORY before renaming it over the
-      #   original — so it needs DIRECTORY write permission (555 = denied), not just file
-      #   write permission. chmod +w on the file alone is not enough. All three previous
-      #   fix attempts failed for this reason.
-      #
-      # THE CORRECT FIX — Gradle init script:
-      #   ~/.gradle/init.gradle runs before ANY project's build.gradle is evaluated.
-      #   It injects flutter.compileSdkVersion / targetSdkVersion / minSdkVersion as
-      #   project extra-properties on every subproject. When speech_to_text's build.gradle
-      #   references `flutter.compileSdkVersion` inside its android{} block, Groovy looks
-      #   up `flutter` first in the android extension (not found for library projects),
-      #   then falls back to the project's extra properties — where our value is waiting.
-      #   No pub-cache file is touched. No permission issues. Works every time.
       - name: Inject Flutter SDK Properties via Gradle Init Script
         run: |
           mkdir -p "$HOME/.gradle"
-          cat > "$HOME/.gradle/init.gradle" << 'GROOVY'
-allprojects {
-    // Ensure all subprojects can resolve deps without jcenter (deprecated/down).
-    repositories {
-        google()
-        mavenCentral()
-    }
-
-    // Inject flutter.* SDK properties before any build.gradle is evaluated.
-    // speech_to_text 7.x and other Flutter plugins reference flutter.compileSdkVersion
-    // etc. inside their android{} blocks. For library subprojects, Flutter's own Gradle
-    // plugin does not apply, so these properties are undefined — causing the build to
-    // fail with "Could not get unknown property 'flutter'". Setting them as project
-    // ext properties provides the fallback that Groovy's property resolution uses.
-    beforeEvaluate { proj ->
-        proj.ext.set('flutter', [
-            compileSdkVersion: 35,
-            targetSdkVersion : 35,
-            minSdkVersion    : 21,
-            ndkVersion       : '25.1.8937393'
-        ])
-    }
-}
-GROOVY
-          echo "✓ init.gradle written"
+          echo 'allprojects {'                                         > "$HOME/.gradle/init.gradle"
+          echo '    repositories {'                                   >> "$HOME/.gradle/init.gradle"
+          echo '        google()'                                     >> "$HOME/.gradle/init.gradle"
+          echo '        mavenCentral()'                               >> "$HOME/.gradle/init.gradle"
+          echo '    }'                                                >> "$HOME/.gradle/init.gradle"
+          echo '    beforeEvaluate { proj ->'                        >> "$HOME/.gradle/init.gradle"
+          echo '        proj.ext.set("flutter", ['                   >> "$HOME/.gradle/init.gradle"
+          echo '            compileSdkVersion: 35,'                  >> "$HOME/.gradle/init.gradle"
+          echo '            targetSdkVersion : 35,'                  >> "$HOME/.gradle/init.gradle"
+          echo '            minSdkVersion    : 21,'                  >> "$HOME/.gradle/init.gradle"
+          echo '            ndkVersion       : "25.1.8937393"'       >> "$HOME/.gradle/init.gradle"
+          echo '        ])'                                           >> "$HOME/.gradle/init.gradle"
+          echo '    }'                                                >> "$HOME/.gradle/init.gradle"
+          echo '}'                                                    >> "$HOME/.gradle/init.gradle"
+          echo "init.gradle written:"
           cat "$HOME/.gradle/init.gradle"
 
-      # audioplayers_android requires compileSdk 35; flutter create generates 34.
       - name: Bump Android compileSdk to 35
         run: |
           APP_GRADLE="android/app/build.gradle"
           sed -i \
             -e 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 35/g' \
-            -e 's/targetSdkVersion flutter\.targetSdkVersion/targetSdkVersion 35/g'   \
-            -e 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 35/g'          \
-            -e 's/targetSdk = flutter\.targetSdkVersion/targetSdk = 35/g'             \
-            -e 's/compileSdk flutter\.compileSdkVersion/compileSdk 35/g'              \
-            -e 's/targetSdk flutter\.targetSdkVersion/targetSdk 35/g'                \
+            -e 's/targetSdkVersion flutter\.targetSdkVersion/targetSdkVersion 35/g' \
+            -e 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 35/g' \
+            -e 's/targetSdk = flutter\.targetSdkVersion/targetSdk = 35/g' \
+            -e 's/compileSdk flutter\.compileSdkVersion/compileSdk 35/g' \
+            -e 's/targetSdk flutter\.targetSdkVersion/targetSdk 35/g' \
             "$APP_GRADLE"
-          echo "✓ compileSdk bumped to 35"
           cat "$APP_GRADLE"
 
-      # Patch AndroidManifest with all required permissions for v2.1
       - name: Patch Android Manifest
         run: |
           M="android/app/src/main/AndroidManifest.xml"
-
           sed -i 's/android:label="nova_x"/android:label="NOVA X"/' "$M"
-
           sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>|' "$M"
-
           sed -i 's|android:icon="@mipmap/ic_launcher">|android:icon="@mipmap/ic_launcher"\n        android:usesCleartextTraffic="true"\n        android:hardwareAccelerated="true">|' "$M"
-
-          echo "── Patched AndroidManifest ──"
           cat "$M"
 
       - name: Configure Gradle Java Home

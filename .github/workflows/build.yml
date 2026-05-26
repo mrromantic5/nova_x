@@ -64,7 +64,6 @@ jobs:
             .
 
       # audioplayers_android requires compileSdk 35; flutter create generates 34.
-      # Patch both compileSdkVersion and targetSdkVersion up to 35.
       - name: Bump Android compileSdk to 35
         run: |
           echo "Patching compileSdk to 35 (handles all Flutter gradle formats)..."
@@ -74,16 +73,21 @@ jobs:
           txt = f.read_text()
           txt = re.sub(r'compileSdkVersion\s+flutter\.compileSdkVersion', 'compileSdkVersion 35', txt)
           txt = re.sub(r'targetSdkVersion\s+flutter\.targetSdkVersion',   'targetSdkVersion 35',  txt)
-          txt = re.sub(r'compileSdk\s*=\s*flutter\.compileSdkVersion',   'compileSdk = 35', txt)
-          txt = re.sub(r'targetSdk\s*=\s*flutter\.targetSdkVersion',     'targetSdk = 35',  txt)
-          txt = re.sub(r'compileSdk\s+flutter\.compileSdkVersion',        'compileSdk 35', txt)
-          txt = re.sub(r'targetSdk\s+flutter\.targetSdkVersion',          'targetSdk 35',  txt)
+          txt = re.sub(r'compileSdk\s*=\s*flutter\.compileSdkVersion',    'compileSdk = 35', txt)
+          txt = re.sub(r'targetSdk\s*=\s*flutter\.targetSdkVersion',      'targetSdk = 35',  txt)
+          txt = re.sub(r'compileSdk\s+flutter\.compileSdkVersion',         'compileSdk 35', txt)
+          txt = re.sub(r'targetSdk\s+flutter\.targetSdkVersion',           'targetSdk 35',  txt)
           f.write_text(txt)
           print('SDK bumped to 35')
           PYEOF2
           grep -E "compileSdk|targetSdk" android/app/build.gradle
 
       # Patch AndroidManifest with all required permissions for v2.1
+      # Includes:
+      #   - INTERNET + network state          (browser core)
+      #   - RECORD_AUDIO + MODIFY_AUDIO       (voice search / speech_to_text)
+      #   - READ_MEDIA_IMAGES                 (image_picker on Android 13+)
+      #   - READ_EXTERNAL_STORAGE maxSdk=32   (image_picker on Android 12 and below)
       - name: Patch Android Manifest
         run: |
           M="android/app/src/main/AndroidManifest.xml"
@@ -91,8 +95,8 @@ jobs:
           # App label
           sed -i 's/android:label="nova_x"/android:label="NOVA X"/' "$M"
 
-          # All required permissions (INTERNET + network + mic for voice search)
-          sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>|' "$M"
+          # Inject all permissions after the opening <manifest> tag
+          sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>|' "$M"
 
           # Allow cleartext HTTP + hardware acceleration for WebView
           sed -i 's|android:icon="@mipmap/ic_launcher">|android:icon="@mipmap/ic_launcher"\n        android:usesCleartextTraffic="true"\n        android:hardwareAccelerated="true">|' "$M"

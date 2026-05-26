@@ -48,53 +48,17 @@ jobs:
       - name: Fix speech_to_text JCenter Repository
         run: |
           echo "Patching speech_to_text jcenter() → mavenCentral()..."
-          find "$HOME/.pub-cache" -name "build.gradle" \
+          find "${PUB_CACHE:-$HOME/.pub-cache}" -name "build.gradle" \
             -path "*/speech_to_text*" \
             -print \
             -exec sed -i "s/jcenter()/mavenCentral()/g" {} +
           echo "✓ jcenter patched"
 
-      # Fix speech_to_text 7.x — its build.gradle references flutter.compileSdkVersion,
-      # flutter.minSdkVersion and flutter.targetSdkVersion which are Flutter app-level
-      # extension properties. They are NOT available inside plugin build.gradle files,
-      # causing: "Could not get unknown property 'flutter' for extension 'android'"
-      # Solution: replace all flutter.* SDK references with hardcoded values.
-      #
-      # BUG FIX: previous regex used r'flutter\\.xxx' (double backslash) which
-      # matches a literal backslash before the dot — NOT a plain dot. The correct
-      # pattern is r'flutter\.xxx' (single backslash = escaped dot in regex),
-      # which matches the actual text flutter.compileSdkVersion in the file.
-      - name: Fix speech_to_text Flutter SDK Property References
-        run: |
-          echo "Patching speech_to_text flutter.* SDK references..."
-          python3 << 'PYEOF'
-          import pathlib, re
-
-          # Find all speech_to_text build.gradle files in pub cache
-          pub_cache = pathlib.Path.home() / '.pub-cache'
-          gradle_files = list(pub_cache.glob('**/speech_to_text*/android/build.gradle'))
-
-          if not gradle_files:
-            print('No speech_to_text build.gradle found — skipping')
-          else:
-            for f in gradle_files:
-              print(f'Patching: {f}')
-              txt = f.read_text()
-
-              # FIXED: single backslash r'flutter\.x' → matches literal dot in text
-              txt = re.sub(r'flutter\.compileSdkVersion', '35', txt)
-              txt = re.sub(r'flutter\.targetSdkVersion',  '35', txt)
-              txt = re.sub(r'flutter\.minSdkVersion',     '21', txt)
-
-              f.write_text(txt)
-              print(f'  ✓ Patched {f.name}')
-              # Show the android block to confirm replacements took effect
-              for line in txt.splitlines():
-                if any(k in line for k in ['compileSdk','targetSdk','minSdk','namespace']):
-                  print(f'    {line.strip()}')
-          PYEOF
-          echo "✓ speech_to_text SDK refs patched"
-
+      # Regenerate the android/ platform folder fresh from Flutter 3.24.5.
+      # NOTE: flutter create internally runs flutter pub get, which can
+      # re-extract pub cache packages and undo any patches applied before
+      # this step. The speech_to_text patch is therefore placed AFTER this
+      # step intentionally.
       - name: Generate Android Platform Files
         run: |
           rm -rf android
@@ -104,27 +68,83 @@ jobs:
             --project-name nova_x \
             .
 
+      # Fix speech_to_text 7.x AFTER flutter create (so pub get inside
+      # flutter create cannot undo the patch).
+      #
+      # Three bugs were present in earlier patch attempts:
+      #   1. Wrong Python regex: r'flutter\\.x' matches 'flutter\.x' (with
+      #      literal backslash), NOT 'flutter.x'. The dot in the file has no
+      #      backslash, so the pattern never matched and the patch was silently
+      #      skipped every time.
+      #   2. Wrong pub cache path: the Python script used pathlib.Path.home()/
+      #      '.pub-cache' and ignored the $PUB_CACHE environment variable that
+      #      subosito/flutter-action sets to a different location.
+      #   3. Patch ran before flutter create, which re-ran pub get and
+      #      re-extracted the original unpatched package files.
+      #
+      # This replacement uses sed (no regex escaping pitfalls) and respects
+      # $PUB_CACHE. It also fails loudly if the target file is not found so
+      # the problem is immediately visible in the CI log.
+      - name: Fix speech_to_text Flutter SDK Property References
+        run: |
+          # Honour $PUB_CACHE if flutter-action set it; fall back to default.
+          CACHE_ROOT="${PUB_CACHE:-$HOME/.pub-cache}"
+          echo "Using pub cache root: $CACHE_ROOT"
+
+          # Locate speech_to_text's android/build.gradle (any version).
+          STT_GRADLE=$(find "$CACHE_ROOT" \
+            -name "build.gradle" \
+            -path "*/speech_to_text*/android/*" \
+            2>/dev/null | head -1)
+
+          if [ -z "$STT_GRADLE" ]; then
+            echo "ERROR: speech_to_text build.gradle not found under $CACHE_ROOT"
+            echo "Searching entire filesystem as fallback..."
+            STT_GRADLE=$(find / -name "build.gradle" \
+              -path "*/speech_to_text*/android/*" \
+              2>/dev/null | head -1)
+          fi
+
+          if [ -z "$STT_GRADLE" ]; then
+            echo "FATAL: speech_to_text build.gradle not found anywhere — aborting."
+            exit 1
+          fi
+
+          echo "Patching: $STT_GRADLE"
+          echo "--- BEFORE ---"
+          cat "$STT_GRADLE"
+
+          # sed 's/flutter\.x/N/g'  →  \. in sed = escaped dot = literal dot.
+          # No backslash confusion: this is a sed expression, not Python regex.
+          sed -i \
+            -e 's/flutter\.compileSdkVersion/35/g' \
+            -e 's/flutter\.targetSdkVersion/35/g'  \
+            -e 's/flutter\.minSdkVersion/21/g'      \
+            "$STT_GRADLE"
+
+          echo "--- AFTER ---"
+          cat "$STT_GRADLE"
+          echo "✓ speech_to_text SDK refs patched"
+
       # audioplayers_android requires compileSdk 35; flutter create generates 34.
+      # Uses sed — no Python heredoc escaping issues.
       - name: Bump Android compileSdk to 35
         run: |
-          echo "Patching compileSdk to 35 (handles all Flutter gradle formats)..."
-          python3 << 'PYEOF2'
-          import re, pathlib
-          f = pathlib.Path('android/app/build.gradle')
-          txt = f.read_text()
-
-          # FIXED: single backslash r'flutter\.x' → matches literal dot in text
-          txt = re.sub(r'compileSdkVersion\s+flutter\.compileSdkVersion', 'compileSdkVersion 35', txt)
-          txt = re.sub(r'targetSdkVersion\s+flutter\.targetSdkVersion',   'targetSdkVersion 35',  txt)
-          txt = re.sub(r'compileSdk\s*=\s*flutter\.compileSdkVersion',    'compileSdk = 35', txt)
-          txt = re.sub(r'targetSdk\s*=\s*flutter\.targetSdkVersion',      'targetSdk = 35',  txt)
-          txt = re.sub(r'compileSdk\s+flutter\.compileSdkVersion',         'compileSdk 35', txt)
-          txt = re.sub(r'targetSdk\s+flutter\.targetSdkVersion',           'targetSdk 35',  txt)
-
-          f.write_text(txt)
-          print('SDK bumped to 35')
-          PYEOF2
-          grep -E "compileSdk|targetSdk" android/app/build.gradle
+          echo "Patching android/app/build.gradle compileSdk → 35..."
+          APP_GRADLE="android/app/build.gradle"
+          echo "--- BEFORE ---"
+          cat "$APP_GRADLE"
+          sed -i \
+            -e 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 35/g' \
+            -e 's/targetSdkVersion flutter\.targetSdkVersion/targetSdkVersion 35/g'   \
+            -e 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 35/g'          \
+            -e 's/targetSdk = flutter\.targetSdkVersion/targetSdk = 35/g'             \
+            -e 's/compileSdk flutter\.compileSdkVersion/compileSdk 35/g'              \
+            -e 's/targetSdk flutter\.targetSdkVersion/targetSdk 35/g'                \
+            "$APP_GRADLE"
+          echo "--- AFTER ---"
+          cat "$APP_GRADLE"
+          echo "✓ compileSdk bumped to 35"
 
       # Patch AndroidManifest with all required permissions for v2.1
       #   - INTERNET + ACCESS_NETWORK_STATE   (browser core)
@@ -135,13 +155,10 @@ jobs:
         run: |
           M="android/app/src/main/AndroidManifest.xml"
 
-          # App label
           sed -i 's/android:label="nova_x"/android:label="NOVA X"/' "$M"
 
-          # All permissions injected after opening <manifest> tag
           sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>|' "$M"
 
-          # Cleartext HTTP + hardware acceleration for WebView
           sed -i 's|android:icon="@mipmap/ic_launcher">|android:icon="@mipmap/ic_launcher"\n        android:usesCleartextTraffic="true"\n        android:hardwareAccelerated="true">|' "$M"
 
           echo "── Patched AndroidManifest ──"

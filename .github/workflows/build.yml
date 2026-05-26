@@ -32,7 +32,7 @@ jobs:
         run: flutter pub get
 
       # Fix flutter_inappwebview_android using deprecated proguard-android.txt
-      # which AGP 8+ no longer accepts — patch it in the pub cache before build.
+      # which AGP 8+ no longer accepts.
       - name: Fix flutter_inappwebview ProGuard AGP 8 Compatibility
         run: |
           echo "Patching flutter_inappwebview ProGuard..."
@@ -44,7 +44,7 @@ jobs:
               {} +
           echo "✓ ProGuard patched"
 
-      # Fix speech_to_text 6.6.2 referencing the dead jcenter() repository.
+      # Fix speech_to_text jcenter (kept for safety, harmless on v7)
       - name: Fix speech_to_text JCenter Repository
         run: |
           echo "Patching speech_to_text jcenter() → mavenCentral()..."
@@ -53,6 +53,45 @@ jobs:
             -print \
             -exec sed -i "s/jcenter()/mavenCentral()/g" {} +
           echo "✓ jcenter patched"
+
+      # Fix speech_to_text 7.x — its build.gradle references flutter.compileSdkVersion,
+      # flutter.minSdkVersion and flutter.targetSdkVersion which are Flutter app-level
+      # extension properties. They are NOT available inside plugin build.gradle files,
+      # causing: "Could not get unknown property 'flutter' for extension 'android'"
+      # and "compileSdkVersion is not specified".
+      # Solution: replace all flutter.* SDK references with hardcoded values.
+      - name: Fix speech_to_text Flutter SDK Property References
+        run: |
+          echo "Patching speech_to_text flutter.* SDK references..."
+          python3 << 'PYEOF'
+          import pathlib, re
+
+          # Find all speech_to_text build.gradle files in pub cache
+          pub_cache = pathlib.Path.home() / '.pub-cache'
+          gradle_files = list(pub_cache.glob('**/speech_to_text*/android/build.gradle'))
+
+          if not gradle_files:
+            print('No speech_to_text build.gradle found — skipping')
+          else:
+            for f in gradle_files:
+              print(f'Patching: {f}')
+              txt = f.read_text()
+
+              # Replace flutter.compileSdkVersion → 35
+              txt = re.sub(r'flutter\.compileSdkVersion', '35', txt)
+              # Replace flutter.targetSdkVersion → 35
+              txt = re.sub(r'flutter\.targetSdkVersion',  '35', txt)
+              # Replace flutter.minSdkVersion → 21
+              txt = re.sub(r'flutter\.minSdkVersion',     '21', txt)
+
+              f.write_text(txt)
+              print(f'  ✓ Patched {f.name}')
+              # Show the android block to confirm
+              for line in txt.splitlines():
+                if any(k in line for k in ['compileSdk','targetSdk','minSdk','namespace']):
+                  print(f'    {line.strip()}')
+          PYEOF
+          echo "✓ speech_to_text SDK refs patched"
 
       - name: Generate Android Platform Files
         run: |
@@ -83,11 +122,10 @@ jobs:
           grep -E "compileSdk|targetSdk" android/app/build.gradle
 
       # Patch AndroidManifest with all required permissions for v2.1
-      # Includes:
-      #   - INTERNET + network state          (browser core)
+      #   - INTERNET + ACCESS_NETWORK_STATE   (browser core)
       #   - RECORD_AUDIO + MODIFY_AUDIO       (voice search / speech_to_text)
-      #   - READ_MEDIA_IMAGES                 (image_picker on Android 13+)
-      #   - READ_EXTERNAL_STORAGE maxSdk=32   (image_picker on Android 12 and below)
+      #   - READ_MEDIA_IMAGES                 (image_picker Android 13+)
+      #   - READ_EXTERNAL_STORAGE maxSdk=32   (image_picker Android 12 and below)
       - name: Patch Android Manifest
         run: |
           M="android/app/src/main/AndroidManifest.xml"
@@ -95,10 +133,10 @@ jobs:
           # App label
           sed -i 's/android:label="nova_x"/android:label="NOVA X"/' "$M"
 
-          # Inject all permissions after the opening <manifest> tag
+          # All permissions injected after opening <manifest> tag
           sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>|' "$M"
 
-          # Allow cleartext HTTP + hardware acceleration for WebView
+          # Cleartext HTTP + hardware acceleration for WebView
           sed -i 's|android:icon="@mipmap/ic_launcher">|android:icon="@mipmap/ic_launcher"\n        android:usesCleartextTraffic="true"\n        android:hardwareAccelerated="true">|' "$M"
 
           echo "── Patched AndroidManifest ──"

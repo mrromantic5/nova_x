@@ -1,3 +1,5 @@
+// lib/features/home/screens/home_screen.dart
+import 'dart:io';
 import 'dart:math';
 import 'dart:ui';
 import 'package:dio/dio.dart';
@@ -15,6 +17,7 @@ import '../../history/screens/history_screen.dart';
 import '../../settings/screens/settings_screen.dart';
 import '../../profile/screens/profile_screen.dart';
 import '../../downloads/screens/downloads_screen.dart';
+import '../../business/screens/business_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -24,32 +27,48 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin {
-  // Controllers
   final TextEditingController _searchCtrl  = TextEditingController();
   final FocusNode             _searchFocus = FocusNode();
   final ScrollController      _scrollCtrl  = ScrollController();
   late AnimationController    _animCtrl;
   late Animation<double>      _fadeAnim;
 
-  // State
   final int _bgIndex = Random().nextInt(10) + 1;
 
-  // News state — categorised with cache so switching tabs is instant
-  String                         _selectedCategory = 'For You';
-  List<NewsArticle>              _news             = [];
-  final Map<String, List<NewsArticle>> _newsCache  = {};
+  // Profile
+  String? _profileImgPath;
+  String  _profileName = '';
+
+  // News
+  String                           _selectedCategory = 'For You';
+  List<NewsArticle>                _news             = [];
+  final Map<String, List<NewsArticle>> _newsCache    = {};
   bool _loadingNews = false;
 
+  // Search
   List<String> _suggestions = [];
   List<String> _searchHist  = [];
   bool _showSuggest  = false;
   bool _isListening  = false;
 
-  // Voice search
-  final SpeechToText _speech    = SpeechToText();
+  // Voice
+  final SpeechToText _speech      = SpeechToText();
   bool               _speechAvail = false;
 
-  // Speed dial
+  // Dynamic subtitle — seeded by day+hour-slot so stable per session
+  late final String _subtitle;
+
+  static const Map<String, Color> _catColor = {
+    'For You':       Color(0xFF00D4FF),
+    'World':         Color(0xFF1E7BFF),
+    'Sports':        Color(0xFF00C853),
+    'Tech':          Color(0xFF7C4DFF),
+    'Entertainment': Color(0xFFFF6B6B),
+    'Business':      Color(0xFFFFAB00),
+    'Health':        Color(0xFFFF4081),
+    'Science':       Color(0xFF00BCD4),
+  };
+
   final List<Map<String, dynamic>> _speedDial = [
     {'name': 'Google',    'url': 'https://google.com',                    'domain': 'google.com'},
     {'name': 'YouTube',   'url': 'https://m.youtube.com',                 'domain': 'youtube.com'},
@@ -63,25 +82,69 @@ class _HomeScreenState extends State<HomeScreen>
     {'name': 'Gmail',     'url': 'https://mail.google.com',               'domain': 'mail.google.com'},
   ];
 
-  // ── Category accent colours (one per tab) ──────────────────────────────
-  static const Map<String, Color> _catColor = {
-    'For You':       Color(0xFF00D4FF),
-    'World':         Color(0xFF1E7BFF),
-    'Sports':        Color(0xFF00C853),
-    'Tech':          Color(0xFF7C4DFF),
-    'Entertainment': Color(0xFFFF6B6B),
-    'Business':      Color(0xFFFFAB00),
-    'Health':        Color(0xFFFF4081),
-    'Science':       Color(0xFF00BCD4),
-  };
+  // ── Dynamic subtitle ───────────────────────────────────────────────────────
+  String _buildSubtitle() {
+    final h   = DateTime.now().hour;
+    final day = DateTime.now().day;
+    final rng = Random(day * 8 + h ~/ 3);
+    List<String> msgs;
+    if (h >= 5 && h < 12) {
+      msgs = [
+        'Where would you like to go today?',
+        "How's your morning going? ☕",
+        'Any plans this morning?',
+        'Ready to explore the web? 🚀',
+        'Start your day with something great!',
+        'Coffee and browsing — perfect combo ☕',
+        "Morning! What's on your mind?",
+        'Rise and browse! 🌄',
+      ];
+    } else if (h >= 12 && h < 17) {
+      msgs = [
+        'Having a productive afternoon? 💪',
+        'Where would you like to go today?',
+        "Afternoon browse? Let's go!",
+        "What's on your agenda today?",
+        'Keep the momentum going! 🔥',
+        'Halfway through the day — explore!',
+        "What did you miss this morning?",
+        'Power through! The web awaits 💻',
+      ];
+    } else if (h >= 17 && h < 21) {
+      msgs = [
+        'Wind down with some browsing 🌆',
+        "What's on your evening agenda?",
+        'Evening already? Time flies! ⏰',
+        'Relax and explore the web 🌅',
+        "What's interesting tonight?",
+        'Treat yourself to some browsing time 🌇',
+        'Unwind and discover something new!',
+        "Evening vibes — let's surf 🌊",
+      ];
+    } else {
+      msgs = [
+        'Burning the midnight oil? 🌙',
+        'Late night browsing session? 🦉',
+        'Night owl mode activated! 🌙',
+        'The web never sleeps 💫',
+        "What are you curious about tonight? ✨",
+        "Shh… the world is sleeping 🤫",
+        'Stars are out — so is the internet 🌟',
+        "Still up? Let's explore 🔦",
+      ];
+    }
+    return msgs[rng.nextInt(msgs.length)];
+  }
 
   @override
   void initState() {
     super.initState();
+    _subtitle = _buildSubtitle();
     _animCtrl = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 800));
     _fadeAnim = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
     _animCtrl.forward();
+    _loadProfile();
     _initSpeech();
     _fetchNews();
     _searchHist = LocalDB.getSearchHistory();
@@ -101,19 +164,23 @@ class _HomeScreenState extends State<HomeScreen>
     super.dispose();
   }
 
-  // ── Speech ────────────────────────────────────────────────────────────────
+  void _loadProfile() {
+    final p = LocalDB.getProfile();
+    _profileName    = p['name']  as String? ?? '';
+    _profileImgPath = LocalDB.getProfileImagePath();
+    if (mounted) setState(() {});
+  }
+
   Future<void> _initSpeech() async {
     _speechAvail = await _speech.initialize(
-      onError: (_) => setState(() => _isListening = false),
-    );
+        onError: (_) => setState(() => _isListening = false));
   }
 
   Future<void> _toggleListen() async {
     if (!_speechAvail) { _showSnack('Microphone not available'); return; }
     HapticFeedback.mediumImpact();
     if (_isListening) {
-      _speech.stop();
-      setState(() => _isListening = false);
+      _speech.stop(); setState(() => _isListening = false);
     } else {
       setState(() { _isListening = true; _showSuggest = false; });
       _searchFocus.unfocus();
@@ -124,22 +191,18 @@ class _HomeScreenState extends State<HomeScreen>
             _go(r.recognizedWords);
           }
         },
-        localeId: 'en_US',
-        cancelOnError: true,
-        partialResults: false,
+        localeId: 'en_US', cancelOnError: true, partialResults: false,
       );
     }
   }
 
-  // ── Search suggestions ────────────────────────────────────────────────────
   void _onFocusChanged() {
     if (_searchFocus.hasFocus) {
       setState(() { _showSuggest = true; _searchHist = LocalDB.getSearchHistory(); });
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_scrollCtrl.hasClients) {
           _scrollCtrl.animateTo(80,
-              duration: const Duration(milliseconds: 350),
-              curve: Curves.easeOut);
+              duration: const Duration(milliseconds: 350), curve: Curves.easeOut);
         }
       });
     } else {
@@ -166,20 +229,14 @@ class _HomeScreenState extends State<HomeScreen>
     } catch (_) {}
   }
 
-  // ── News ──────────────────────────────────────────────────────────────────
   Future<void> _fetchNews({bool forceRefresh = false}) async {
     if (!mounted) return;
-
-    // Serve from cache instantly (no flicker when switching tabs)
     if (!forceRefresh && _newsCache.containsKey(_selectedCategory)) {
       setState(() => _news = _newsCache[_selectedCategory]!);
       return;
     }
-
     setState(() => _loadingNews = true);
-
     final articles = await NewsService.fetchNews(_selectedCategory);
-
     if (mounted) {
       _newsCache[_selectedCategory] = articles;
       setState(() { _news = articles; _loadingNews = false; });
@@ -192,13 +249,21 @@ class _HomeScreenState extends State<HomeScreen>
     _fetchNews();
   }
 
-  // ── Navigation ────────────────────────────────────────────────────────────
   void _go(String query) {
     final q = query.trim();
     if (q.isEmpty) return;
+    // Business name lookup — redirect to business website
+    final biz = LocalDB.searchBusiness(q);
+    if (biz != null && (biz['website'] as String? ?? '').isNotEmpty) {
+      LocalDB.addSearchQuery(q);
+      _searchCtrl.clear(); _searchFocus.unfocus();
+      setState(() { _showSuggest = false; _suggestions = []; });
+      Navigator.push(context, MaterialPageRoute(
+          builder: (_) => BrowserView(initialQuery: biz['website'] as String)));
+      return;
+    }
     LocalDB.addSearchQuery(q);
-    _searchCtrl.clear();
-    _searchFocus.unfocus();
+    _searchCtrl.clear(); _searchFocus.unfocus();
     setState(() { _showSuggest = false; _suggestions = []; });
     HapticFeedback.lightImpact();
     Navigator.push(context,
@@ -209,13 +274,12 @@ class _HomeScreenState extends State<HomeScreen>
       PageRouteBuilder(
         pageBuilder: (_, a, __) => screen,
         transitionsBuilder: (_, a, __, child) => SlideTransition(
-          position: Tween<Offset>(
-                  begin: const Offset(1, 0), end: Offset.zero)
+          position: Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)
               .animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)),
           child: child,
         ),
         transitionDuration: const Duration(milliseconds: 280),
-      ));
+      )).then((_) => _loadProfile());
 
   void _showSnack(String msg) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -226,13 +290,23 @@ class _HomeScreenState extends State<HomeScreen>
 
   String _greeting() {
     final h = DateTime.now().hour;
-    final profile = LocalDB.getProfile();
-    final name = (profile['name'] as String? ?? '').split(' ').first;
-    final display = name.isNotEmpty ? ', $name' : '';
-    if (h >= 5  && h < 12) return '☀️ Good morning$display!';
-    if (h >= 12 && h < 17) return '🌤️ Good afternoon$display!';
-    if (h >= 17 && h < 21) return '🌆 Good evening$display!';
-    return '🌙 Good night$display!';
+    final name = _profileName.split(' ').first;
+    final disp = name.isNotEmpty ? ', $name' : '';
+    if (h >= 5  && h < 12) return '☀️ Good morning$disp!';
+    if (h >= 12 && h < 17) return '🌤️ Good afternoon$disp!';
+    if (h >= 17 && h < 21) return '🌆 Good evening$disp!';
+    return '🌙 Good night$disp!';
+  }
+
+  Color _avatarColor() {
+    final p = LocalDB.getProfile();
+    return switch (p['avatarColor'] ?? 'cyan') {
+      'red'    => const Color(0xFFFF6B6B),
+      'orange' => const Color(0xFFFFAB00),
+      'purple' => AppTheme.accentPurple,
+      'green'  => AppTheme.success,
+      _        => AppTheme.accentCyan,
+    };
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -254,9 +328,7 @@ class _HomeScreenState extends State<HomeScreen>
                   controller: _scrollCtrl,
                   physics: const BouncingScrollPhysics(),
                   padding: const EdgeInsets.only(bottom: 16),
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     const SizedBox(height: 20),
                     _buildGreetingAndSearch(),
                     const SizedBox(height: 24),
@@ -278,66 +350,90 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // ── Background ────────────────────────────────────────────────────────────
-  Widget _buildBackground() {
-    return Positioned.fill(child: Stack(children: [
-      Image.network(
-        'https://api.browser.t-lyfe.com.ng/images/background$_bgIndex.jpg',
-        fit: BoxFit.cover, width: double.infinity, height: double.infinity,
-        errorBuilder: (_, __, ___) =>
-            Container(decoration: const BoxDecoration(gradient: AppTheme.bgGradient)),
+  Widget _buildBackground() => Positioned.fill(child: Stack(children: [
+    Image.network(
+      'https://api.browser.t-lyfe.com.ng/images/background$_bgIndex.jpg',
+      fit: BoxFit.cover, width: double.infinity, height: double.infinity,
+      errorBuilder: (_, __, ___) =>
+          Container(decoration: const BoxDecoration(gradient: AppTheme.bgGradient)),
+    ),
+    Container(decoration: const BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topCenter, end: Alignment.bottomCenter,
+        colors: [Color(0xD507101E), Color(0x9507101E), Color(0xEE07101E)],
+        stops: [0.0, 0.45, 1.0],
       ),
-      Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter, end: Alignment.bottomCenter,
-            colors: [Color(0xD507101E), Color(0x9507101E), Color(0xEE07101E)],
-            stops: [0.0, 0.45, 1.0],
-          ),
-        ),
-      ),
-    ]));
-  }
+    )),
+  ]));
 
-  // ── Header ────────────────────────────────────────────────────────────────
+  // ── Header ─────────────────────────────────────────────────────────────────
   Widget _buildHeader() {
+    final imgPath = _profileImgPath;
+    final color   = _avatarColor();
+    final initial = _profileName.isNotEmpty ? _profileName[0].toUpperCase() : 'N';
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
       child: Row(children: [
+        // Profile avatar
         GestureDetector(
           onTap: () => _push(const ProfileScreen()),
           child: Container(
-            width: 38, height: 38,
+            width: 40, height: 40,
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(10),
-              boxShadow: AppTheme.glowShadow,
+              shape: BoxShape.circle,
+              border: Border.all(color: color, width: 2),
+              boxShadow: [BoxShadow(color: color.withOpacity(0.35),
+                  blurRadius: 10, spreadRadius: 1)],
             ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: Image.asset('assets/images/logo.png',
-                  errorBuilder: (_, __, ___) => Container(
-                    decoration: const BoxDecoration(gradient: AppTheme.primaryGradient),
-                    child: const Icon(Icons.language, color: Colors.white, size: 20))),
+            child: ClipOval(
+              child: imgPath != null
+                  ? Image.file(File(imgPath), fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _avatarPlaceholder(color, initial))
+                  : _avatarPlaceholder(color, initial),
             ),
           ),
         ),
         const SizedBox(width: 10),
         ShaderMask(
           shaderCallback: (b) => AppTheme.primaryGradient.createShader(b),
-          child: Text('NOVA X',
-              style: GoogleFonts.spaceGrotesk(
-                  fontSize: 22, fontWeight: FontWeight.w800,
-                  color: Colors.white, letterSpacing: 2)),
+          child: Text('NOVA X', style: GoogleFonts.spaceGrotesk(
+              fontSize: 22, fontWeight: FontWeight.w800,
+              color: Colors.white, letterSpacing: 2)),
         ),
         const Spacer(),
-        _hBtn(Icons.psychology_outlined,    () => _push(const AiAssistantScreen())),
+        _hBtn(Icons.psychology_outlined, () => _push(const AiAssistantScreen())),
         const SizedBox(width: 8),
-        _hBtn(Icons.person_outline_rounded, () => _push(const ProfileScreen())),
+        // Incognito
+        GestureDetector(
+          onTap: () {
+            HapticFeedback.mediumImpact();
+            Navigator.push(context, MaterialPageRoute(
+                builder: (_) => const BrowserView(
+                    initialQuery: 'https://www.google.com', incognito: true)));
+          },
+          child: Container(
+            width: 36, height: 36,
+            decoration: BoxDecoration(
+              color: AppTheme.accentPurple.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppTheme.accentPurple.withOpacity(0.35)),
+            ),
+            child: const Icon(Icons.person_off_outlined,
+                color: AppTheme.accentPurple, size: 18),
+          ),
+        ),
         const SizedBox(width: 8),
-        _hBtn(Icons.settings_outlined,      () => _push(const SettingsScreen())),
+        _hBtn(Icons.settings_outlined, () => _push(const SettingsScreen())),
       ]),
     );
   }
+
+  Widget _avatarPlaceholder(Color color, String initial) => Container(
+    color: color.withOpacity(0.15),
+    child: Center(child: Text(initial, style: GoogleFonts.spaceGrotesk(
+        color: color, fontSize: 18, fontWeight: FontWeight.w800))),
+  );
 
   Widget _hBtn(IconData icon, VoidCallback onTap) => GestureDetector(
     onTap: onTap,
@@ -352,17 +448,16 @@ class _HomeScreenState extends State<HomeScreen>
     ),
   );
 
-  // ── Greeting + Search ─────────────────────────────────────────────────────
+  // ── Greeting + Search ──────────────────────────────────────────────────────
   Widget _buildGreetingAndSearch() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(_greeting(),
-            style: GoogleFonts.spaceGrotesk(
-                color: Colors.white, fontSize: 26, fontWeight: FontWeight.bold)),
+        Text(_greeting(), style: GoogleFonts.spaceGrotesk(
+            color: Colors.white, fontSize: 26, fontWeight: FontWeight.bold)),
         const SizedBox(height: 4),
-        Text('Where would you like to go today?',
-            style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 13)),
+        Text(_subtitle, style: GoogleFonts.inter(
+            color: AppTheme.textHint, fontSize: 13)),
         const SizedBox(height: 16),
         ClipRRect(
           borderRadius: BorderRadius.circular(28),
@@ -382,11 +477,9 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                 child: Row(children: [
-                  Icon(
-                    _isListening ? Icons.hearing : Icons.search,
-                    color: _isListening ? Colors.redAccent : AppTheme.accentCyan,
-                    size: 22,
-                  ),
+                  Icon(_isListening ? Icons.hearing : Icons.search,
+                      color: _isListening ? Colors.redAccent : AppTheme.accentCyan,
+                      size: 22),
                   const SizedBox(width: 10),
                   Expanded(
                     child: TextField(
@@ -401,7 +494,7 @@ class _HomeScreenState extends State<HomeScreen>
                         border: InputBorder.none,
                         hintText: _isListening
                             ? 'Listening… speak now'
-                            : 'Search or type a URL…',
+                            : 'Search, URL or business name…',
                         hintStyle: GoogleFonts.inter(
                             color: _isListening
                                 ? Colors.redAccent.withOpacity(0.7)
@@ -419,15 +512,13 @@ class _HomeScreenState extends State<HomeScreen>
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
                         color: _isListening
-                            ? Colors.red.withOpacity(0.2)
-                            : Colors.transparent,
+                            ? Colors.red.withOpacity(0.2) : Colors.transparent,
                         shape: BoxShape.circle,
                       ),
                       child: Icon(
-                        _isListening ? Icons.mic : Icons.mic_none_rounded,
-                        color: _isListening ? Colors.redAccent : AppTheme.textHint,
-                        size: 20,
-                      ),
+                          _isListening ? Icons.mic : Icons.mic_none_rounded,
+                          color: _isListening ? Colors.redAccent : AppTheme.textHint,
+                          size: 20),
                     ),
                   ),
                   const SizedBox(width: 4),
@@ -440,7 +531,8 @@ class _HomeScreenState extends State<HomeScreen>
                         borderRadius: BorderRadius.circular(20),
                         boxShadow: AppTheme.glowShadow,
                       ),
-                      child: const Icon(Icons.arrow_forward, color: Colors.white, size: 16),
+                      child: const Icon(Icons.arrow_forward,
+                          color: Colors.white, size: 16),
                     ),
                   ),
                 ]),
@@ -459,57 +551,53 @@ class _HomeScreenState extends State<HomeScreen>
                       bottom: BorderSide(color: AppTheme.glassBorder),
                     ),
                   ),
-                  child: Column(
-                    children: [
-                      if (_searchCtrl.text.isEmpty && _searchHist.isNotEmpty) ...[
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text('Recent',
-                                  style: GoogleFonts.inter(
-                                      color: AppTheme.textHint, fontSize: 11,
-                                      fontWeight: FontWeight.w600, letterSpacing: 0.8)),
-                              GestureDetector(
-                                onTap: () async {
-                                  await LocalDB.clearSearchHistory();
-                                  setState(() => _searchHist = []);
-                                },
-                                child: Text('Clear',
-                                    style: GoogleFonts.inter(
-                                        color: AppTheme.danger, fontSize: 11)),
-                              ),
-                            ],
-                          ),
+                  child: Column(children: [
+                    if (_searchCtrl.text.isEmpty && _searchHist.isNotEmpty) ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text('Recent', style: GoogleFonts.inter(
+                                color: AppTheme.textHint, fontSize: 11,
+                                fontWeight: FontWeight.w600, letterSpacing: 0.8)),
+                            GestureDetector(
+                              onTap: () async {
+                                await LocalDB.clearSearchHistory();
+                                setState(() => _searchHist = []);
+                              },
+                              child: Text('Clear', style: GoogleFonts.inter(
+                                  color: AppTheme.danger, fontSize: 11)),
+                            ),
+                          ],
                         ),
-                        ..._searchHist.take(5).map((h) => _suggestionTile(
-                          Icons.history_rounded, h,
-                          trailing: GestureDetector(
-                            onTap: () async {
-                              await LocalDB.removeSearchQuery(h);
-                              setState(() => _searchHist = LocalDB.getSearchHistory());
-                            },
-                            child: const Icon(Icons.close, color: AppTheme.textHint, size: 14),
-                          ),
-                        )),
-                      ],
-                      if (_searchCtrl.text.isNotEmpty)
-                        ..._suggestions.map((s) => _suggestionTile(
-                          Icons.trending_up_rounded, s,
-                          trailing: GestureDetector(
-                            onTap: () {
-                              _searchCtrl.text = s;
-                              _searchCtrl.selection = TextSelection.fromPosition(
-                                  TextPosition(offset: s.length));
-                            },
-                            child: const Icon(Icons.north_west_rounded,
-                                color: AppTheme.textHint, size: 14),
-                          ),
-                        )),
-                      const SizedBox(height: 8),
+                      ),
+                      ..._searchHist.take(5).map((h) => _sugTile(
+                        Icons.history_rounded, h,
+                        trailing: GestureDetector(
+                          onTap: () async {
+                            await LocalDB.removeSearchQuery(h);
+                            setState(() => _searchHist = LocalDB.getSearchHistory());
+                          },
+                          child: const Icon(Icons.close, color: AppTheme.textHint, size: 14),
+                        ),
+                      )),
                     ],
-                  ),
+                    if (_searchCtrl.text.isNotEmpty)
+                      ..._suggestions.map((s) => _sugTile(
+                        Icons.trending_up_rounded, s,
+                        trailing: GestureDetector(
+                          onTap: () {
+                            _searchCtrl.text = s;
+                            _searchCtrl.selection = TextSelection.fromPosition(
+                                TextPosition(offset: s.length));
+                          },
+                          child: const Icon(Icons.north_west_rounded,
+                              color: AppTheme.textHint, size: 14),
+                        ),
+                      )),
+                    const SizedBox(height: 8),
+                  ]),
                 ),
             ]),
           ),
@@ -518,115 +606,109 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Widget _suggestionTile(IconData icon, String text, {Widget? trailing}) {
-    return GestureDetector(
-      onTap: () => _go(text),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Row(children: [
-          Icon(icon, color: AppTheme.textHint, size: 16),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(text,
-                style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 14),
-                maxLines: 1, overflow: TextOverflow.ellipsis),
-          ),
-          if (trailing != null) trailing,
-        ]),
-      ),
-    );
-  }
+  Widget _sugTile(IconData icon, String text, {Widget? trailing}) =>
+      GestureDetector(
+        onTap: () => _go(text),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(children: [
+            Icon(icon, color: AppTheme.textHint, size: 16),
+            const SizedBox(width: 12),
+            Expanded(child: Text(text, style: GoogleFonts.inter(
+                color: AppTheme.textSecondary, fontSize: 14),
+                maxLines: 1, overflow: TextOverflow.ellipsis)),
+            if (trailing != null) trailing,
+          ]),
+        ),
+      );
 
-  // ── Section wrapper ────────────────────────────────────────────────────────
   Widget _buildSection(String title, Widget child) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       Padding(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-        child: Text(title,
-            style: GoogleFonts.spaceGrotesk(
-                color: AppTheme.textHint, fontSize: 11,
-                fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+        child: Text(title, style: GoogleFonts.spaceGrotesk(
+            color: AppTheme.textHint, fontSize: 11,
+            fontWeight: FontWeight.w700, letterSpacing: 1.2)),
       ),
       child,
     ],
   );
 
-  // ── Speed dial ─────────────────────────────────────────────────────────────
-  Widget _buildSpeedDial() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: GridView.builder(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 5, mainAxisSpacing: 14,
-          crossAxisSpacing: 14, childAspectRatio: 0.8,
-        ),
-        itemCount: _speedDial.length,
-        itemBuilder: (_, i) => _dialItem(_speedDial[i]),
+  // ── Speed dial ──────────────────────────────────────────────────────────────
+  Widget _buildSpeedDial() => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 20),
+    child: GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 5, mainAxisSpacing: 14,
+        crossAxisSpacing: 14, childAspectRatio: 0.8,
       ),
-    );
-  }
-
-  Widget _dialItem(Map<String, dynamic> site) {
-    final domain  = site['domain'] as String;
-    final favicon = 'https://www.google.com/s2/favicons?domain=$domain&sz=64';
-    return GestureDetector(
-      onTap: () => _go(site['url']),
-      child: Column(children: [
-        Container(
-          width: 52, height: 52,
-          decoration: BoxDecoration(
-            color: AppTheme.bgCard,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: AppTheme.divider),
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(15),
-            child: Image.network(favicon,
-              width: 52, height: 52, fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Center(
-                child: Text((site['name'] as String)[0],
+      itemCount: _speedDial.length,
+      itemBuilder: (_, i) {
+        final site   = _speedDial[i];
+        final domain = site['domain'] as String;
+        return GestureDetector(
+          onTap: () => _go(site['url'] as String),
+          child: Column(children: [
+            Container(
+              width: 52, height: 52,
+              decoration: BoxDecoration(
+                color: AppTheme.bgCard,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppTheme.divider),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(15),
+                child: Image.network(
+                  'https://www.google.com/s2/favicons?domain=$domain&sz=64',
+                  width: 52, height: 52, fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Center(child: Text(
+                    (site['name'] as String)[0],
                     style: GoogleFonts.spaceGrotesk(
                         color: AppTheme.accentCyan,
-                        fontSize: 20, fontWeight: FontWeight.w800)),
+                        fontSize: 20, fontWeight: FontWeight.w800))),
+                ),
               ),
             ),
-          ),
-        ),
-        const SizedBox(height: 6),
-        Text(site['name'],
-            style: GoogleFonts.inter(
-                color: AppTheme.textSecondary, fontSize: 9.5,
-                fontWeight: FontWeight.w500),
-            maxLines: 1, overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center),
-      ]),
-    );
-  }
+            const SizedBox(height: 6),
+            Text(site['name'] as String,
+                style: GoogleFonts.inter(
+                    color: AppTheme.textSecondary, fontSize: 9.5,
+                    fontWeight: FontWeight.w500),
+                maxLines: 1, overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center),
+          ]),
+        );
+      },
+    ),
+  );
 
-  // ── Feature row ────────────────────────────────────────────────────────────
+  // ── Features row: AI Chat | Bookmarks | Downloads | Business ──────────────
   Widget _buildFeatureRow() {
     final items = [
-      {'icon': Icons.psychology_outlined,     'label': 'AI Chat',   'color': AppTheme.accentCyan,
+      {'icon': Icons.psychology_outlined,      'label': 'AI Chat',
+       'color': AppTheme.accentCyan,
        'fn': () => _push(const AiAssistantScreen())},
-      {'icon': Icons.bookmark_border_rounded, 'label': 'Bookmarks', 'color': const Color(0xFFFFAB00),
+      {'icon': Icons.bookmark_border_rounded,  'label': 'Bookmarks',
+       'color': const Color(0xFFFFAB00),
        'fn': () => _push(const BookmarksScreen())},
-      {'icon': Icons.download_outlined,       'label': 'Downloads', 'color': AppTheme.primaryBlue,
+      {'icon': Icons.download_outlined,        'label': 'Downloads',
+       'color': AppTheme.primaryBlue,
        'fn': () => _push(const DownloadsScreen())},
-      {'icon': Icons.history_rounded,         'label': 'History',   'color': AppTheme.accentPurple,
-       'fn': () => _push(const HistoryScreen())},
+      {'icon': Icons.business_center_outlined, 'label': 'Business',
+       'color': AppTheme.accentPurple,
+       'fn': () => _push(const BusinessScreen())},
     ];
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Row(
         children: List.generate(items.length, (i) {
-          final item  = items[i];
-          final color = item['color'] as Color;
+          final color = items[i]['color'] as Color;
           return Expanded(
             child: GestureDetector(
-              onTap: item['fn'] as VoidCallback,
+              onTap: items[i]['fn'] as VoidCallback,
               child: Container(
                 margin: EdgeInsets.only(right: i < items.length - 1 ? 10 : 0),
                 padding: const EdgeInsets.symmetric(vertical: 14),
@@ -639,9 +721,9 @@ class _HomeScreenState extends State<HomeScreen>
                   border: Border.all(color: color.withOpacity(0.25)),
                 ),
                 child: Column(children: [
-                  Icon(item['icon'] as IconData, color: color, size: 22),
+                  Icon(items[i]['icon'] as IconData, color: color, size: 22),
                   const SizedBox(height: 6),
-                  Text(item['label'] as String,
+                  Text(items[i]['label'] as String,
                       style: GoogleFonts.inter(
                           color: AppTheme.textSecondary,
                           fontSize: 9.5, fontWeight: FontWeight.w600),
@@ -656,25 +738,20 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // NEWS SECTION — Chrome Discover style
+  // NEWS
   // ══════════════════════════════════════════════════════════════════════════
-
-  Widget _buildNewsSection() {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      // ── Section header ──────────────────────────────────────────────────
+  Widget _buildNewsSection() => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
       Padding(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
         child: Row(children: [
-          Text('Latest News',
-              style: GoogleFonts.spaceGrotesk(
-                  color: AppTheme.textHint, fontSize: 11,
-                  fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+          Text('Latest News', style: GoogleFonts.spaceGrotesk(
+              color: AppTheme.textHint, fontSize: 11,
+              fontWeight: FontWeight.w700, letterSpacing: 1.2)),
           const Spacer(),
           GestureDetector(
-            onTap: () {
-              _newsCache.remove(_selectedCategory);
-              _fetchNews(forceRefresh: true);
-            },
+            onTap: () { _newsCache.remove(_selectedCategory); _fetchNews(forceRefresh: true); },
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
@@ -685,17 +762,13 @@ class _HomeScreenState extends State<HomeScreen>
               child: Row(children: [
                 const Icon(Icons.refresh_rounded, color: AppTheme.accentCyan, size: 13),
                 const SizedBox(width: 4),
-                Text('Refresh',
-                    style: GoogleFonts.inter(
-                        color: AppTheme.accentCyan,
-                        fontSize: 10, fontWeight: FontWeight.w600)),
+                Text('Refresh', style: GoogleFonts.inter(
+                    color: AppTheme.accentCyan, fontSize: 10, fontWeight: FontWeight.w600)),
               ]),
             ),
           ),
         ]),
       ),
-
-      // ── Category chips ──────────────────────────────────────────────────
       SizedBox(
         height: 34,
         child: ListView.separated(
@@ -716,97 +789,79 @@ class _HomeScreenState extends State<HomeScreen>
                   color: active ? color.withOpacity(0.2) : AppTheme.bgCard,
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(
-                    color: active ? color : AppTheme.divider,
-                    width: active ? 1.5 : 1,
-                  ),
+                      color: active ? color : AppTheme.divider,
+                      width: active ? 1.5 : 1),
                 ),
-                child: Text(cat,
-                    style: GoogleFonts.inter(
-                        color: active ? color : AppTheme.textSecondary,
-                        fontSize: 12,
-                        fontWeight: active ? FontWeight.w700 : FontWeight.w500)),
+                child: Text(cat, style: GoogleFonts.inter(
+                    color: active ? color : AppTheme.textSecondary,
+                    fontSize: 12,
+                    fontWeight: active ? FontWeight.w700 : FontWeight.w500)),
               ),
             );
           },
         ),
       ),
-
       const SizedBox(height: 16),
-
-      // ── News body ───────────────────────────────────────────────────────
       _buildNewsBody(),
-    ]);
-  }
+    ],
+  );
 
   Widget _buildNewsBody() {
-    if (_loadingNews) {
-      return Column(children: [
-        const SizedBox(height: 20),
-        Center(child: CircularProgressIndicator(
-            color: _catColor[_selectedCategory] ?? AppTheme.accentCyan,
-            strokeWidth: 2)),
-        const SizedBox(height: 12),
-        Text('Fetching ${_selectedCategory.toLowerCase()} news…',
-            style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 12)),
-        const SizedBox(height: 20),
-      ]);
-    }
+    if (_loadingNews) return Column(children: [
+      const SizedBox(height: 20),
+      Center(child: CircularProgressIndicator(
+          color: _catColor[_selectedCategory] ?? AppTheme.accentCyan, strokeWidth: 2)),
+      const SizedBox(height: 12),
+      Text('Fetching news…',
+          style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 12)),
+      const SizedBox(height: 20),
+    ]);
 
-    if (_news.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: GestureDetector(
-          onTap: () => _fetchNews(forceRefresh: true),
-          child: Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: AppTheme.bgCard.withOpacity(0.7),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppTheme.divider),
-            ),
-            child: Row(children: [
-              const Icon(Icons.cloud_off_rounded, color: AppTheme.textHint, size: 18),
-              const SizedBox(width: 12),
-              Text('Tap to reload news',
-                  style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 14)),
-            ]),
+    if (_news.isEmpty) return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: GestureDetector(
+        onTap: () => _fetchNews(forceRefresh: true),
+        child: Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: AppTheme.bgCard.withOpacity(0.7),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppTheme.divider),
           ),
+          child: Row(children: [
+            const Icon(Icons.cloud_off_rounded, color: AppTheme.textHint, size: 18),
+            const SizedBox(width: 12),
+            Text('Tap to reload news',
+                style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 14)),
+          ]),
         ),
-      );
-    }
+      ),
+    );
 
     return Column(children: [
-      // Hero card — first article, full-width image
-      if (_news.first.imageUrl.isNotEmpty)
-        _buildHeroCard(_news.first),
-
-      // Remaining articles — compact card style
+      if (_news.first.imageUrl.isNotEmpty) _heroNewsCard(_news.first),
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: Column(
-          children: List.generate(
-            _news.length > 1 ? _news.length - 1 : 0,
-            (i) {
-              final article = _news[i + 1];
-              return Column(children: [
-                if (i == 0 && _news.first.imageUrl.isNotEmpty)
-                  const SizedBox(height: 4),
-                _buildCompactCard(article),
-                if (i < _news.length - 2)
-                  Divider(color: AppTheme.divider.withOpacity(0.6), height: 1),
-              ]);
-            },
-          ),
-        ),
+        child: Column(children: List.generate(
+          _news.length > 1 ? _news.length - 1 : 0,
+          (i) {
+            final a = _news[i + 1];
+            return Column(children: [
+              if (i == 0 && _news.first.imageUrl.isNotEmpty) const SizedBox(height: 4),
+              _compactNewsCard(a),
+              if (i < _news.length - 2)
+                Divider(color: AppTheme.divider.withOpacity(0.6), height: 1),
+            ]);
+          },
+        )),
       ),
     ]);
   }
 
-  // ── Hero card (large image + title + source) ───────────────────────────────
-  Widget _buildHeroCard(NewsArticle article) {
+  Widget _heroNewsCard(NewsArticle a) {
     final color = _catColor[_selectedCategory] ?? AppTheme.accentCyan;
     return GestureDetector(
-      onTap: () => _go(article.url),
+      onTap: () => _go(a.url),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
         child: Container(
@@ -818,87 +873,55 @@ class _HomeScreenState extends State<HomeScreen>
           ),
           clipBehavior: Clip.hardEdge,
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            // Image
             Stack(children: [
               SizedBox(
-                height: 200,
-                width: double.infinity,
-                child: Image.network(
-                  article.imageUrl,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
-                    height: 200,
+                height: 200, width: double.infinity,
+                child: Image.network(a.imageUrl, fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Container(height: 200,
                     color: AppTheme.bgElevated,
-                    child: Center(
-                      child: Icon(Icons.image_not_supported_outlined,
-                          color: AppTheme.textHint, size: 36)),
-                  ),
-                ),
+                    child: Center(child: Icon(Icons.image_not_supported_outlined,
+                        color: AppTheme.textHint, size: 36)))),
               ),
-              // Gradient overlay on image
-              Positioned.fill(
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [Colors.transparent, AppTheme.bgCard.withOpacity(0.7)],
-                      stops: const [0.5, 1.0],
-                    ),
-                  ),
-                ),
-              ),
-              // Category badge on image
-              Positioned(
-                top: 12, left: 12,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: color.withOpacity(0.9),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(_selectedCategory,
-                      style: GoogleFonts.inter(
-                          color: Colors.white, fontSize: 10,
-                          fontWeight: FontWeight.w700)),
-                ),
-              ),
+              Positioned.fill(child: Container(decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter, end: Alignment.bottomCenter,
+                  colors: [Colors.transparent, AppTheme.bgCard.withOpacity(0.7)],
+                  stops: const [0.5, 1.0],
+                )))),
+              Positioned(top: 12, left: 12, child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.9),
+                  borderRadius: BorderRadius.circular(20)),
+                child: Text(_selectedCategory, style: GoogleFonts.inter(
+                    color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700)),
+              )),
             ]),
-
-            // Title + meta
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(article.title,
-                    style: GoogleFonts.spaceGrotesk(
-                        color: AppTheme.textPrimary, fontSize: 15,
-                        fontWeight: FontWeight.w700, height: 1.4),
+                Text(a.title, style: GoogleFonts.spaceGrotesk(
+                    color: AppTheme.textPrimary, fontSize: 15,
+                    fontWeight: FontWeight.w700, height: 1.4),
                     maxLines: 3, overflow: TextOverflow.ellipsis),
-                if (article.description.isNotEmpty) ...[
+                if (a.description.isNotEmpty) ...[
                   const SizedBox(height: 6),
-                  Text(article.description,
-                      style: GoogleFonts.inter(
-                          color: AppTheme.textSecondary, fontSize: 12, height: 1.4),
+                  Text(a.description, style: GoogleFonts.inter(
+                      color: AppTheme.textSecondary, fontSize: 12, height: 1.4),
                       maxLines: 2, overflow: TextOverflow.ellipsis),
                 ],
                 const SizedBox(height: 10),
                 Row(children: [
-                  Container(
-                    width: 6, height: 6,
-                    decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-                  ),
+                  Container(width: 6, height: 6,
+                      decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
                   const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(article.source,
-                        style: GoogleFonts.inter(
-                            color: color, fontSize: 11, fontWeight: FontWeight.w600),
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
-                  ),
-                  if (article.timeAgo.isNotEmpty) ...[
+                  Expanded(child: Text(a.source, style: GoogleFonts.inter(
+                      color: color, fontSize: 11, fontWeight: FontWeight.w600),
+                      maxLines: 1, overflow: TextOverflow.ellipsis)),
+                  if (a.timeAgo.isNotEmpty) ...[
                     const SizedBox(width: 8),
-                    Text(article.timeAgo,
-                        style: GoogleFonts.inter(
-                            color: AppTheme.textHint, fontSize: 11)),
+                    Text(a.timeAgo, style: GoogleFonts.inter(
+                        color: AppTheme.textHint, fontSize: 11)),
                   ],
                   const SizedBox(width: 8),
                   Icon(Icons.open_in_new_rounded, color: AppTheme.textHint, size: 13),
@@ -911,163 +934,137 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // ── Compact card (thumbnail right, title + source left) ───────────────────
-  Widget _buildCompactCard(NewsArticle article) {
-    final thumb = article.imageUrl;
-    return GestureDetector(
-      onTap: () => _go(article.url),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 13),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          // Text content
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              // Source + time row
-              Row(children: [
-                Flexible(
-                  child: Text(article.source,
-                      style: GoogleFonts.inter(
-                          color: _catColor[_selectedCategory] ?? AppTheme.accentCyan,
-                          fontSize: 10.5, fontWeight: FontWeight.w600),
-                      maxLines: 1, overflow: TextOverflow.ellipsis),
-                ),
-                if (article.timeAgo.isNotEmpty) ...[
-                  Text('  ·  ${article.timeAgo}',
-                      style: GoogleFonts.inter(
-                          color: AppTheme.textHint, fontSize: 10.5)),
-                ],
-              ]),
-              const SizedBox(height: 5),
-              Text(article.title,
-                  style: GoogleFonts.inter(
-                      color: AppTheme.textPrimary, fontSize: 13.5,
-                      fontWeight: FontWeight.w500, height: 1.4),
-                  maxLines: 2, overflow: TextOverflow.ellipsis),
-            ]),
+  Widget _compactNewsCard(NewsArticle a) => GestureDetector(
+    onTap: () => _go(a.url),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(vertical: 13),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Flexible(child: Text(a.source, style: GoogleFonts.inter(
+                color: _catColor[_selectedCategory] ?? AppTheme.accentCyan,
+                fontSize: 10.5, fontWeight: FontWeight.w600),
+                maxLines: 1, overflow: TextOverflow.ellipsis)),
+            if (a.timeAgo.isNotEmpty)
+              Text('  ·  ${a.timeAgo}', style: GoogleFonts.inter(
+                  color: AppTheme.textHint, fontSize: 10.5)),
+          ]),
+          const SizedBox(height: 5),
+          Text(a.title, style: GoogleFonts.inter(
+              color: AppTheme.textPrimary, fontSize: 13.5,
+              fontWeight: FontWeight.w500, height: 1.4),
+              maxLines: 2, overflow: TextOverflow.ellipsis),
+        ])),
+        if (a.imageUrl.isNotEmpty) ...[
+          const SizedBox(width: 14),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Image.network(a.imageUrl, width: 78, height: 62,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink()),
           ),
-
-          // Thumbnail
-          if (thumb.isNotEmpty) ...[
-            const SizedBox(width: 14),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Image.network(
-                thumb, width: 78, height: 62, fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-              ),
-            ),
-          ],
-        ]),
-      ),
-    );
-  }
-
-  // ── Bottom navigation ──────────────────────────────────────────────────────
-  Widget _buildBottomNav() {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(20, 0, 20, 14),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-      decoration: BoxDecoration(
-        color: AppTheme.bgCard,
-        borderRadius: BorderRadius.circular(32),
-        border: Border.all(color: AppTheme.divider),
-        boxShadow: AppTheme.cardShadow,
-      ),
-      child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-        _navBtn(Icons.home_rounded,       'Home',      null,                              true),
-        _navBtn(Icons.bookmark_rounded,   'Saved',     () => _push(const BookmarksScreen()), false),
-        _navBtn(Icons.download_rounded,   'Downloads', () => _push(const DownloadsScreen()),  false),
-        _navBtn(Icons.history_rounded,    'History',   () => _push(const HistoryScreen()),    false),
-        _navBtn(Icons.more_horiz_rounded, 'Menu',      _showMenu,                         false),
+        ],
       ]),
-    );
-  }
+    ),
+  );
 
-  Widget _navBtn(IconData icon, String label, VoidCallback? onTap, bool active) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-        decoration: active ? BoxDecoration(
-          gradient: AppTheme.primaryGradient,
-          borderRadius: BorderRadius.circular(24),
-          boxShadow: AppTheme.glowShadow,
-        ) : null,
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, color: active ? Colors.white : AppTheme.textHint, size: 20),
-          const SizedBox(height: 2),
-          Text(label,
-              style: GoogleFonts.inter(
-                  color: active ? Colors.white : AppTheme.textHint,
-                  fontSize: 9,
-                  fontWeight: active ? FontWeight.w700 : FontWeight.w400)),
-        ]),
-      ),
-    );
-  }
+  // ── Bottom nav ─────────────────────────────────────────────────────────────
+  Widget _buildBottomNav() => Container(
+    margin: const EdgeInsets.fromLTRB(20, 0, 20, 14),
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+    decoration: BoxDecoration(
+      color: AppTheme.bgCard,
+      borderRadius: BorderRadius.circular(32),
+      border: Border.all(color: AppTheme.divider),
+      boxShadow: AppTheme.cardShadow,
+    ),
+    child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
+      _navBtn(Icons.home_rounded,            'Home',     null,                               true),
+      _navBtn(Icons.bookmark_rounded,        'Saved',    () => _push(const BookmarksScreen()), false),
+      _navBtn(Icons.download_rounded,        'Downloads',() => _push(const DownloadsScreen()),  false),
+      _navBtn(Icons.business_center_rounded, 'Business', () => _push(const BusinessScreen()),   false),
+      _navBtn(Icons.more_horiz_rounded,      'Menu',     _showMenu,                          false),
+    ]),
+  );
 
-  // ── Listening overlay ──────────────────────────────────────────────────────
-  Widget _buildListeningOverlay() {
-    return Positioned(
-      bottom: 100, left: 0, right: 0,
-      child: Center(
+  Widget _navBtn(IconData icon, String label, VoidCallback? onTap, bool active) =>
+      GestureDetector(
+        onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          decoration: BoxDecoration(
-            color: Colors.red.withOpacity(0.9),
-            borderRadius: BorderRadius.circular(30),
-            boxShadow: [BoxShadow(color: Colors.red.withOpacity(0.4),
-                blurRadius: 20, offset: const Offset(0, 4))],
-          ),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            const Icon(Icons.mic, color: Colors.white, size: 20),
-            const SizedBox(width: 10),
-            Text('Listening… tap mic to stop',
-                style: GoogleFonts.inter(
-                    color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+          decoration: active ? BoxDecoration(
+            gradient: AppTheme.primaryGradient,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: AppTheme.glowShadow,
+          ) : null,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Icon(icon, color: active ? Colors.white : AppTheme.textHint, size: 20),
+            const SizedBox(height: 2),
+            Text(label, style: GoogleFonts.inter(
+                color: active ? Colors.white : AppTheme.textHint, fontSize: 9,
+                fontWeight: active ? FontWeight.w700 : FontWeight.w400)),
           ]),
         ),
-      ),
-    );
-  }
+      );
 
-  // ── Menu sheet ─────────────────────────────────────────────────────────────
-  void _showMenu() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (_) => _MenuSheet(onPush: _push),
-    );
-  }
+  Widget _buildListeningOverlay() => Positioned(
+    bottom: 100, left: 0, right: 0,
+    child: Center(child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      decoration: BoxDecoration(
+        color: Colors.red.withOpacity(0.9),
+        borderRadius: BorderRadius.circular(30),
+        boxShadow: [BoxShadow(color: Colors.red.withOpacity(0.4),
+            blurRadius: 20, offset: const Offset(0, 4))],
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        const Icon(Icons.mic, color: Colors.white, size: 20),
+        const SizedBox(width: 10),
+        Text('Listening… tap mic to stop', style: GoogleFonts.inter(
+            color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+      ]),
+    )),
+  );
+
+  void _showMenu() => showModalBottomSheet(
+    context: context,
+    backgroundColor: Colors.transparent,
+    isScrollControlled: true,
+    builder: (_) => _MenuSheet(
+      onPush: _push,
+      onIncognito: () => Navigator.push(context, MaterialPageRoute(
+          builder: (_) => const BrowserView(
+              initialQuery: 'https://www.google.com', incognito: true))),
+    ),
+  );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════════
 class _MenuSheet extends StatelessWidget {
   final void Function(Widget) onPush;
-  const _MenuSheet({required this.onPush});
+  final VoidCallback onIncognito;
+  const _MenuSheet({required this.onPush, required this.onIncognito});
 
   @override
   Widget build(BuildContext context) {
     final items = [
-      {'icon': Icons.psychology_outlined,     'label': 'AI Chat',   'color': AppTheme.accentCyan,
+      {'icon': Icons.psychology_outlined,      'label': 'AI Chat',   'color': AppTheme.accentCyan,
        'fn': () { Navigator.pop(context); onPush(const AiAssistantScreen()); }},
-      {'icon': Icons.bookmark_border_rounded, 'label': 'Bookmarks', 'color': const Color(0xFFFFAB00),
+      {'icon': Icons.bookmark_border_rounded,  'label': 'Bookmarks', 'color': const Color(0xFFFFAB00),
        'fn': () { Navigator.pop(context); onPush(const BookmarksScreen()); }},
-      {'icon': Icons.download_outlined,       'label': 'Downloads', 'color': AppTheme.primaryBlue,
+      {'icon': Icons.download_outlined,        'label': 'Downloads', 'color': AppTheme.primaryBlue,
        'fn': () { Navigator.pop(context); onPush(const DownloadsScreen()); }},
-      {'icon': Icons.history_rounded,         'label': 'History',   'color': AppTheme.accentPurple,
+      {'icon': Icons.history_rounded,          'label': 'History',   'color': AppTheme.accentPurple,
        'fn': () { Navigator.pop(context); onPush(const HistoryScreen()); }},
-      {'icon': Icons.person_outline_rounded,  'label': 'Profile',   'color': const Color(0xFFFF6B6B),
+      {'icon': Icons.business_center_outlined, 'label': 'Business',  'color': const Color(0xFFFF6B6B),
+       'fn': () { Navigator.pop(context); onPush(const BusinessScreen()); }},
+      {'icon': Icons.person_outline_rounded,   'label': 'Profile',   'color': AppTheme.accentCyan,
        'fn': () { Navigator.pop(context); onPush(const ProfileScreen()); }},
-      {'icon': Icons.settings_outlined,       'label': 'Settings',  'color': AppTheme.success,
+      {'icon': Icons.settings_outlined,        'label': 'Settings',  'color': AppTheme.success,
        'fn': () { Navigator.pop(context); onPush(const SettingsScreen()); }},
-      {'icon': Icons.info_outline_rounded,    'label': 'About',     'color': AppTheme.textHint,
-       'fn': () { Navigator.pop(context); _about(context); }},
-      {'icon': Icons.share_outlined,          'label': 'Share',     'color': AppTheme.primaryBlue,
-       'fn': () { Navigator.pop(context); Clipboard.setData(const ClipboardData(text: 'NOVA X Browser')); }},
+      {'icon': Icons.person_off_outlined,      'label': 'Incognito', 'color': AppTheme.accentPurple,
+       'fn': () { Navigator.pop(context); onIncognito(); }},
     ];
-
     return Container(
       decoration: const BoxDecoration(
         color: AppTheme.bgCard,
@@ -1075,18 +1072,14 @@ class _MenuSheet extends StatelessWidget {
       ),
       padding: const EdgeInsets.fromLTRB(24, 12, 24, 28),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Container(
-          width: 40, height: 4,
-          margin: const EdgeInsets.only(bottom: 20),
-          decoration: BoxDecoration(
-              color: AppTheme.textHint, borderRadius: BorderRadius.circular(2)),
-        ),
+        Container(width: 40, height: 4, margin: const EdgeInsets.only(bottom: 20),
+          decoration: BoxDecoration(color: AppTheme.textHint,
+              borderRadius: BorderRadius.circular(2))),
         GridView.count(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           crossAxisCount: 4,
-          mainAxisSpacing: 14, crossAxisSpacing: 14,
-          childAspectRatio: 0.85,
+          mainAxisSpacing: 14, crossAxisSpacing: 14, childAspectRatio: 0.85,
           children: items.map((item) {
             final color = item['color'] as Color;
             return GestureDetector(
@@ -1103,8 +1096,7 @@ class _MenuSheet extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 Text(item['label'] as String,
-                    style: GoogleFonts.inter(
-                        color: AppTheme.textSecondary,
+                    style: GoogleFonts.inter(color: AppTheme.textSecondary,
                         fontSize: 10, fontWeight: FontWeight.w500),
                     textAlign: TextAlign.center,
                     maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -1115,22 +1107,4 @@ class _MenuSheet extends StatelessWidget {
       ]),
     );
   }
-
-  void _about(BuildContext ctx) => showDialog(
-    context: ctx,
-    builder: (_) => AlertDialog(
-      backgroundColor: AppTheme.bgCard,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      title: Text('NOVA X Browser',
-          style: GoogleFonts.spaceGrotesk(
-              color: AppTheme.textPrimary, fontWeight: FontWeight.bold)),
-      content: Text(
-          'Version 2.1.0\nBuilt with ❤️ by Tech Lyfe Team.\nCEO: Kobby (Mr. Romantic)',
-          style: GoogleFonts.inter(color: AppTheme.textSecondary, height: 1.5)),
-      actions: [TextButton(
-        onPressed: () => Navigator.pop(_),
-        child: Text('Close', style: GoogleFonts.inter(color: AppTheme.accentCyan)),
-      )],
-    ),
-  );
 }

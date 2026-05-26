@@ -14,10 +14,12 @@ dependencies:
   google_fonts: ^6.1.0
   shared_preferences: ^2.2.2
   dio: ^5.4.0
-  speech_to_text: ^6.6.2
-  audioplayers: ^5.2.1
-  image_picker: ^1.0.7      # Profile & business image upload
-  path_provider: ^2.1.2     # Persist images to app documents dir
+  # Upgraded from ^6.6.2 → ^7.4.0 to resolve js version conflict with audioplayers
+  speech_to_text: ^7.4.0
+  # Upgraded from ^5.2.1 → ^6.4.0 to resolve js version conflict with speech_to_text
+  audioplayers: ^6.4.0
+  image_picker: ^1.0.7
+  path_provider: ^2.1.2
 
 dev_dependencies:
   flutter_test:

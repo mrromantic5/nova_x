@@ -14,12 +14,27 @@ dependencies:
   google_fonts: ^6.1.0
   shared_preferences: ^2.2.2
   dio: ^5.4.0
-  # Upgraded from ^6.6.2 → ^7.4.0 to resolve js version conflict with audioplayers
-  speech_to_text: ^7.4.0
-  # Upgraded from ^5.2.1 → ^6.4.0 to resolve js version conflict with speech_to_text
-  audioplayers: ^6.4.0
+  # Reverted to the ORIGINAL working versions that built successfully before
+  # the profile/business update. Upgrading these caused the broken-gradle
+  # mess; the js conflict they introduced is solved cleanly via the override
+  # block below — no pub-cache patching needed.
+  speech_to_text: ^6.6.2
+  audioplayers: ^5.2.1
+  # New packages for the profile/business image upload feature
   image_picker: ^1.0.7
   path_provider: ^2.1.2
+
+# ──────────────────────────────────────────────────────────────────────────
+# Resolves the js package conflict triggered by adding image_picker:
+#   audioplayers_web        → js ^0.6.4  (Flutter web only — never used on Android)
+#   image_picker_for_web    → js ^0.6.x  (Flutter web only — never used on Android)
+#   speech_to_text          → js ^0.7.1  (genuinely used at compile time)
+# Forcing js ^0.7.1 satisfies speech_to_text. The web-only deps still install
+# and link fine; their js usage is never invoked on Android targets, so the
+# override is harmless in production.
+# ──────────────────────────────────────────────────────────────────────────
+dependency_overrides:
+  js: ^0.7.1
 
 dev_dependencies:
   flutter_test:

@@ -40,16 +40,37 @@ jobs:
           done
           echo "ProGuard fix done"
 
-      - name: Patch Android Manifest
+      - name: Verify Android Manifest
         run: |
           M="android/app/src/main/AndroidManifest.xml"
-          sed -i 's/android:label="nova_x"/android:label="NOVA X"/' "$M"
-          sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>|' "$M"
-          sed -i 's|android:icon="@mipmap/ic_launcher">|android:icon="@mipmap/ic_launcher"\n        android:usesCleartextTraffic="true"\n        android:hardwareAccelerated="true">|' "$M"
+          echo "=== AndroidManifest.xml (verification) ==="
           cat "$M"
 
       - name: Configure Gradle Java Home
         run: echo "org.gradle.java.home=$JAVA_HOME" >> android/gradle.properties
+
+      - name: Ensure gradlew is executable
+        run: chmod +x android/gradlew
+
+      - name: Restore Gradle Wrapper JAR
+        run: |
+          WRAPPER_JAR="android/gradle/wrapper/gradle-wrapper.jar"
+          if [ ! -f "$WRAPPER_JAR" ]; then
+            FLUTTER_ROOT=$(flutter --version --machine 2>/dev/null \
+              | python3 -c "import sys,json; print(json.load(sys.stdin).get('flutterRoot',''))" 2>/dev/null)
+            CACHED_JAR="$FLUTTER_ROOT/bin/cache/artifacts/gradle_wrapper/gradle-wrapper.jar"
+            if [ -f "$CACHED_JAR" ]; then
+              cp "$CACHED_JAR" "$WRAPPER_JAR"
+              echo "Restored gradle-wrapper.jar from Flutter SDK cache"
+            else
+              echo "Flutter cache JAR not found — running flutter precache"
+              flutter precache --android
+              cp "$CACHED_JAR" "$WRAPPER_JAR"
+              echo "Restored gradle-wrapper.jar after precache"
+            fi
+          else
+            echo "gradle-wrapper.jar already present"
+          fi
 
       - name: Compile Release APK Bundle
         run: flutter build apk --release

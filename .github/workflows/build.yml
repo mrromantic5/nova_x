@@ -31,39 +31,29 @@ jobs:
       - name: Install Project Dependencies
         run: flutter pub get
 
-      # Fix flutter_inappwebview_android using deprecated proguard-android.txt
-      # which AGP 8+ no longer accepts.
-      # chmod +w is required: pub-cache files are read-only by default and
-      # sed -i silently fails (exit 0) on read-only files, leaving the build broken.
+      # Fix flutter_inappwebview using deprecated proguard-android.txt (AGP 8+ removed it).
+      # Uses Python (not sed -i) to overwrite the file in-place — sed -i creates a temp
+      # file in the same directory and needs DIRECTORY write permission; pub-cache
+      # directories are chmod 555 so sed -i silently fails every time.
       - name: Fix flutter_inappwebview ProGuard AGP 8 Compatibility
         run: |
-          echo "Patching flutter_inappwebview ProGuard..."
           CACHE_ROOT="${PUB_CACHE:-$HOME/.pub-cache}"
           find "$CACHE_ROOT" -name "build.gradle" \
-            -path "*/flutter_inappwebview_android*" \
-            -print | while read -r f; do
+            -path "*/flutter_inappwebview_android*" | while read -r f; do
             chmod +w "$f"
-            sed -i \
-              "s/getDefaultProguardFile('proguard-android\.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g" \
-              "$f"
+            python3 -c "
+import sys
+path = sys.argv[1]
+with open(path) as fh: c = fh.read()
+c = c.replace(\"getDefaultProguardFile('proguard-android.txt')\",
+              \"getDefaultProguardFile('proguard-android-optimize.txt')\")
+with open(path, 'w') as fh: fh.write(c)
+print('Patched:', path)
+" "$f"
           done
           echo "✓ ProGuard patched"
 
-      # Fix speech_to_text jcenter (kept for safety, harmless on v7)
-      - name: Fix speech_to_text JCenter Repository
-        run: |
-          echo "Patching speech_to_text jcenter() → mavenCentral()..."
-          find "${PUB_CACHE:-$HOME/.pub-cache}" -name "build.gradle" \
-            -path "*/speech_to_text*" \
-            -print \
-            -exec sed -i "s/jcenter()/mavenCentral()/g" {} +
-          echo "✓ jcenter patched"
-
       # Regenerate the android/ platform folder fresh from Flutter 3.24.5.
-      # NOTE: flutter create internally runs flutter pub get, which can
-      # re-extract pub cache packages and undo any patches applied before
-      # this step. The speech_to_text patch is therefore placed AFTER this
-      # step intentionally.
       - name: Generate Android Platform Files
         run: |
           rm -rf android
@@ -73,75 +63,57 @@ jobs:
             --project-name nova_x \
             .
 
-      # Fix speech_to_text 7.x AFTER flutter create (so pub get inside
-      # flutter create cannot undo the patch).
+      # ROOT FIX for "Could not get unknown property 'flutter'" in speech_to_text.
       #
-      # ROOT CAUSE OF ALL PREVIOUS FAILURES:
-      #   pub-cache installs packages read-only: files=444, directories=555.
-      #   sed -i does NOT edit in place — it creates a TEMP FILE in the same
-      #   directory, then renames it over the original. This means sed -i needs
-      #   WRITE PERMISSION ON THE DIRECTORY, not just the file. The previous fix
-      #   only chmod'd the file (→ 644) but left the directory at 555, so sed -i
-      #   still silently failed (exit 1 swallowed by the shell without set -e).
-      #   Fix: chmod +w BOTH "$(dirname $STT_GRADLE)" AND "$STT_GRADLE".
-      - name: Fix speech_to_text Flutter SDK Property References
+      # WHY PATCHING PUB-CACHE NEVER WORKED:
+      #   pub-cache sets files to 444 and directories to 555.
+      #   sed -i creates a temp file in the SAME DIRECTORY before renaming it over the
+      #   original — so it needs DIRECTORY write permission (555 = denied), not just file
+      #   write permission. chmod +w on the file alone is not enough. All three previous
+      #   fix attempts failed for this reason.
+      #
+      # THE CORRECT FIX — Gradle init script:
+      #   ~/.gradle/init.gradle runs before ANY project's build.gradle is evaluated.
+      #   It injects flutter.compileSdkVersion / targetSdkVersion / minSdkVersion as
+      #   project extra-properties on every subproject. When speech_to_text's build.gradle
+      #   references `flutter.compileSdkVersion` inside its android{} block, Groovy looks
+      #   up `flutter` first in the android extension (not found for library projects),
+      #   then falls back to the project's extra properties — where our value is waiting.
+      #   No pub-cache file is touched. No permission issues. Works every time.
+      - name: Inject Flutter SDK Properties via Gradle Init Script
         run: |
-          set -e  # Any command failure kills the step immediately — no more silent failures.
+          mkdir -p "$HOME/.gradle"
+          cat > "$HOME/.gradle/init.gradle" << 'GROOVY'
+allprojects {
+    // Ensure all subprojects can resolve deps without jcenter (deprecated/down).
+    repositories {
+        google()
+        mavenCentral()
+    }
 
-          CACHE_ROOT="${PUB_CACHE:-$HOME/.pub-cache}"
-          echo "Using pub cache root: $CACHE_ROOT"
-
-          STT_GRADLE=$(find "$CACHE_ROOT" \
-            -name "build.gradle" \
-            -path "*/speech_to_text*/android/*" \
-            2>/dev/null | head -1)
-
-          if [ -z "$STT_GRADLE" ]; then
-            echo "Not found under PUB_CACHE — searching entire filesystem..."
-            STT_GRADLE=$(find / -name "build.gradle" \
-              -path "*/speech_to_text*/android/*" \
-              2>/dev/null | head -1)
-          fi
-
-          if [ -z "$STT_GRADLE" ]; then
-            echo "FATAL: speech_to_text build.gradle not found anywhere."
-            exit 1
-          fi
-
-          echo "Found: $STT_GRADLE"
-          echo "--- BEFORE ---"
-          cat "$STT_GRADLE"
-
-          # chmod +w on BOTH the parent directory AND the file.
-          # sed -i creates a temp in the same dir before renaming — the dir
-          # must be writable, not just the file.
-          chmod +w "$(dirname "$STT_GRADLE")" "$STT_GRADLE"
-
-          sed -i \
-            -e 's/flutter\.compileSdkVersion/35/g' \
-            -e 's/flutter\.targetSdkVersion/35/g'  \
-            -e 's/flutter\.minSdkVersion/21/g'      \
-            "$STT_GRADLE"
-
-          echo "--- AFTER ---"
-          cat "$STT_GRADLE"
-
-          # Fail loudly if any flutter.* SDK refs survive.
-          if grep -qE 'flutter\.(compileSdkVersion|targetSdkVersion|minSdkVersion)' "$STT_GRADLE"; then
-            echo "FATAL: patch did not apply — flutter SDK refs still present!"
-            exit 1
-          fi
-
-          echo "✓ speech_to_text SDK refs patched"
+    // Inject flutter.* SDK properties before any build.gradle is evaluated.
+    // speech_to_text 7.x and other Flutter plugins reference flutter.compileSdkVersion
+    // etc. inside their android{} blocks. For library subprojects, Flutter's own Gradle
+    // plugin does not apply, so these properties are undefined — causing the build to
+    // fail with "Could not get unknown property 'flutter'". Setting them as project
+    // ext properties provides the fallback that Groovy's property resolution uses.
+    beforeEvaluate { proj ->
+        proj.ext.set('flutter', [
+            compileSdkVersion: 35,
+            targetSdkVersion : 35,
+            minSdkVersion    : 21,
+            ndkVersion       : '25.1.8937393'
+        ])
+    }
+}
+GROOVY
+          echo "✓ init.gradle written"
+          cat "$HOME/.gradle/init.gradle"
 
       # audioplayers_android requires compileSdk 35; flutter create generates 34.
-      # Uses sed — no Python heredoc escaping issues.
       - name: Bump Android compileSdk to 35
         run: |
-          echo "Patching android/app/build.gradle compileSdk → 35..."
           APP_GRADLE="android/app/build.gradle"
-          echo "--- BEFORE ---"
-          cat "$APP_GRADLE"
           sed -i \
             -e 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 35/g' \
             -e 's/targetSdkVersion flutter\.targetSdkVersion/targetSdkVersion 35/g'   \
@@ -150,15 +122,10 @@ jobs:
             -e 's/compileSdk flutter\.compileSdkVersion/compileSdk 35/g'              \
             -e 's/targetSdk flutter\.targetSdkVersion/targetSdk 35/g'                \
             "$APP_GRADLE"
-          echo "--- AFTER ---"
-          cat "$APP_GRADLE"
           echo "✓ compileSdk bumped to 35"
+          cat "$APP_GRADLE"
 
       # Patch AndroidManifest with all required permissions for v2.1
-      #   - INTERNET + ACCESS_NETWORK_STATE   (browser core)
-      #   - RECORD_AUDIO + MODIFY_AUDIO       (voice search / speech_to_text)
-      #   - READ_MEDIA_IMAGES                 (image_picker Android 13+)
-      #   - READ_EXTERNAL_STORAGE maxSdk=32   (image_picker Android 12 and below)
       - name: Patch Android Manifest
         run: |
           M="android/app/src/main/AndroidManifest.xml"

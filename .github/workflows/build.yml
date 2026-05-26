@@ -20,6 +20,7 @@ jobs:
           java-version: '17'
           cache: ''
 
+      # Pinned to 3.24.5 — stable, AGP 8.x compatible, no DSL-only issues.
       - name: Set up Flutter Engine Environment
         uses: subosito/flutter-action@v2
         with:
@@ -30,48 +31,111 @@ jobs:
       - name: Install Project Dependencies
         run: flutter pub get
 
-      - name: Fix flutter_inappwebview ProGuard AGP 8 Compatibility
-        run: |
-          CACHE_ROOT="${PUB_CACHE:-$HOME/.pub-cache}"
-          find "$CACHE_ROOT" -name "build.gradle" -path "*/flutter_inappwebview_android*" | while read -r f; do
-            chmod +w "$(dirname "$f")" "$f"
-            sed -i "s/getDefaultProguardFile('proguard-android.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g" "$f"
-            echo "Patched: $f"
-          done
-          echo "ProGuard fix done"
+      # ── Pub-cache patches (run BEFORE generating android/) ─────────────────
 
-      - name: Verify Android Manifest
+      # Fix flutter_inappwebview_android: deprecated proguard-android.txt → optimize
+      - name: Patch flutter_inappwebview ProGuard
+        run: |
+          find "${PUB_CACHE:-$HOME/.pub-cache}" -name "build.gradle" \
+            -path "*/flutter_inappwebview_android*" \
+            -exec sed -i \
+              "s/getDefaultProguardFile('proguard-android\.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g" \
+              {} +
+          echo "✓ ProGuard patched"
+
+      # Fix speech_to_text 7.x: its build.gradle uses flutter.compileSdkVersion
+      # etc. which are app-level Flutter extension properties — unavailable inside
+      # plugin build.gradle → "Could not get unknown property 'flutter'".
+      # Replace with hardcoded values before Gradle ever evaluates the file.
+      - name: Patch speech_to_text Flutter SDK References
+        run: |
+          python3 << 'PYEOF'
+          import pathlib, re
+          pub = pathlib.Path.home() / '.pub-cache'
+          files = list(pub.glob('**/speech_to_text*/android/build.gradle'))
+          if not files:
+            print('speech_to_text build.gradle not found — skipping')
+          for f in files:
+            print(f'Patching {f}')
+            txt = f.read_text()
+            txt = re.sub(r'flutter\.compileSdkVersion', '35', txt)
+            txt = re.sub(r'flutter\.targetSdkVersion',  '35', txt)
+            txt = re.sub(r'flutter\.minSdkVersion',     '21', txt)
+            f.write_text(txt)
+            print('  ✓ done')
+          PYEOF
+          echo "✓ speech_to_text SDK refs patched"
+
+      # Fix jcenter() references (safe to run on any version, harmless if absent)
+      - name: Patch Dead jcenter() References
+        run: |
+          find "${PUB_CACHE:-$HOME/.pub-cache}" -name "build.gradle" \
+            -exec sed -i "s/jcenter()/mavenCentral()/g" {} +
+          echo "✓ jcenter → mavenCentral"
+
+      # ── Regenerate Android platform files ───────────────────────────────────
+      # Wipes the committed android/ folder and regenerates it from Flutter's
+      # template. This is the canonical approach for CI — avoids committing
+      # binary files (gradle-wrapper.jar) and keeps the android/ always in sync
+      # with the pinned Flutter version.
+      - name: Regenerate Android Platform Files
+        run: |
+          rm -rf android
+          flutter create \
+            --platforms android \
+            --org com.example \
+            --project-name nova_x \
+            .
+          echo "✓ android/ regenerated"
+
+      # ── Post-generate patches ───────────────────────────────────────────────
+
+      # audioplayers_android requires compileSdk 35; flutter create 3.24.5 → 34.
+      # Handles Groovy (compileSdkVersion) and KTS (compileSdk =) formats.
+      - name: Bump Android compileSdk to 35
+        run: |
+          python3 << 'PYEOF'
+          import re, pathlib
+          f = pathlib.Path('android/app/build.gradle')
+          txt = f.read_text()
+          txt = re.sub(r'compileSdkVersion\s+flutter\.compileSdkVersion', 'compileSdkVersion 35', txt)
+          txt = re.sub(r'targetSdkVersion\s+flutter\.targetSdkVersion',   'targetSdkVersion 35',  txt)
+          txt = re.sub(r'compileSdkVersion\s+\d+',                        'compileSdkVersion 35', txt)
+          txt = re.sub(r'compileSdk\s*=\s*flutter\.compileSdkVersion',    'compileSdk = 35',      txt)
+          txt = re.sub(r'targetSdk\s*=\s*flutter\.targetSdkVersion',      'targetSdk = 35',       txt)
+          txt = re.sub(r'compileSdk\s+flutter\.compileSdkVersion',         'compileSdk 35',        txt)
+          txt = re.sub(r'targetSdk\s+flutter\.targetSdkVersion',           'targetSdk 35',         txt)
+          f.write_text(txt)
+          print('✓ compileSdk bumped to 35')
+          PYEOF
+          grep -E "compileSdk|targetSdk|minSdk" android/app/build.gradle
+
+      # Inject all required permissions + app attributes into AndroidManifest.
+      # Permissions:
+      #   INTERNET + ACCESS_NETWORK_STATE   — browser networking
+      #   RECORD_AUDIO + MODIFY_AUDIO       — voice search (speech_to_text)
+      #   READ_MEDIA_IMAGES                 — image_picker on Android 13+
+      #   READ_EXTERNAL_STORAGE maxSdk=32   — image_picker on Android ≤12
+      - name: Patch Android Manifest
         run: |
           M="android/app/src/main/AndroidManifest.xml"
-          echo "=== AndroidManifest.xml (verification) ==="
+
+          # App display name
+          sed -i 's/android:label="nova_x"/android:label="NOVA X"/' "$M"
+
+          # Permissions block
+          sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>|' "$M"
+
+          # App-level attributes: cleartext HTTP for WebView + hardware accel
+          sed -i 's|android:icon="@mipmap/ic_launcher">|android:icon="@mipmap/ic_launcher"\n        android:usesCleartextTraffic="true"\n        android:hardwareAccelerated="true">|' "$M"
+
+          echo "✓ AndroidManifest patched"
           cat "$M"
 
       - name: Configure Gradle Java Home
         run: echo "org.gradle.java.home=$JAVA_HOME" >> android/gradle.properties
 
-      - name: Ensure gradlew is executable
-        run: chmod +x android/gradlew
-
-      - name: Restore Gradle Wrapper JAR
-        run: |
-          WRAPPER_JAR="android/gradle/wrapper/gradle-wrapper.jar"
-          if [ ! -f "$WRAPPER_JAR" ]; then
-            FLUTTER_ROOT=$(flutter --version --machine 2>/dev/null \
-              | python3 -c "import sys,json; print(json.load(sys.stdin).get('flutterRoot',''))" 2>/dev/null)
-            CACHED_JAR="$FLUTTER_ROOT/bin/cache/artifacts/gradle_wrapper/gradle-wrapper.jar"
-            if [ -f "$CACHED_JAR" ]; then
-              cp "$CACHED_JAR" "$WRAPPER_JAR"
-              echo "Restored gradle-wrapper.jar from Flutter SDK cache"
-            else
-              echo "Flutter cache JAR not found — running flutter precache"
-              flutter precache --android
-              cp "$CACHED_JAR" "$WRAPPER_JAR"
-              echo "Restored gradle-wrapper.jar after precache"
-            fi
-          else
-            echo "gradle-wrapper.jar already present"
-          fi
-
+      # ── Build ───────────────────────────────────────────────────────────────
       - name: Compile Release APK Bundle
         run: flutter build apk --release
 

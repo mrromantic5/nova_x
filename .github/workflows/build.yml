@@ -20,7 +20,6 @@ jobs:
           java-version: '17'
           cache: ''
 
-      # Pinned to 3.24.5 — stable, AGP 8.x compatible.
       - name: Set up Flutter Engine Environment
         uses: subosito/flutter-action@v2
         with:
@@ -32,19 +31,15 @@ jobs:
         run: flutter pub get
 
       # ─────────────────────────────────────────────────────────────────────
-      # PUB-CACHE PATCHES — pure sed, no Python heredocs (more reliable in CI)
+      # PUB-CACHE PATCHES — pure sed (reliable in CI)
       # ─────────────────────────────────────────────────────────────────────
 
-      # Fix flutter_inappwebview_android: AGP 8 dropped proguard-android.txt
+      # AGP 8 removed proguard-android.txt — flutter_inappwebview still references it.
       - name: Patch flutter_inappwebview ProGuard
         run: |
           set -e
           CACHE="${PUB_CACHE:-$HOME/.pub-cache}"
-          echo "::group::Searching for flutter_inappwebview build.gradle"
           FILES=$(find "$CACHE" -name "build.gradle" -path "*/flutter_inappwebview_android*" 2>/dev/null || true)
-          echo "$FILES"
-          echo "::endgroup::"
-
           if [ -z "$FILES" ]; then
             echo "::warning::flutter_inappwebview build.gradle not found"
           else
@@ -55,50 +50,7 @@ jobs:
             done
           fi
 
-      # Fix speech_to_text 7.x: its build.gradle uses flutter.compileSdkVersion
-      # which is an app-level Flutter extension property — unavailable inside
-      # plugin build.gradle, causing:
-      #   "Could not get unknown property 'flutter' for extension 'android'"
-      - name: Patch speech_to_text Flutter SDK References
-        run: |
-          set -e
-          CACHE="${PUB_CACHE:-$HOME/.pub-cache}"
-
-          echo "::group::Locating speech_to_text build.gradle"
-          GRADLE=$(find "$CACHE" -name "build.gradle" -path "*/speech_to_text*" 2>/dev/null | head -1)
-          echo "Found: $GRADLE"
-          echo "::endgroup::"
-
-          if [ -z "$GRADLE" ]; then
-            echo "::error::speech_to_text build.gradle NOT found in pub cache!"
-            echo "Pub cache structure:"
-            ls -la "$CACHE/hosted/pub.dev/" 2>/dev/null | grep -i speech || true
-            exit 1
-          fi
-
-          echo "::group::BEFORE patch"
-          cat "$GRADLE"
-          echo "::endgroup::"
-
-          chmod +w "$GRADLE" 2>/dev/null || true
-
-          # Three separate sed calls — simple, unambiguous, definitely works
-          sed -i 's/flutter\.compileSdkVersion/35/g' "$GRADLE"
-          sed -i 's/flutter\.targetSdkVersion/35/g'  "$GRADLE"
-          sed -i 's/flutter\.minSdkVersion/21/g'     "$GRADLE"
-
-          echo "::group::AFTER patch"
-          cat "$GRADLE"
-          echo "::endgroup::"
-
-          # Hard verification — fail step if any flutter.* reference remains
-          if grep -E "flutter\.(compileSdkVersion|targetSdkVersion|minSdkVersion)" "$GRADLE"; then
-            echo "::error::Patch failed — flutter.* references still present"
-            exit 1
-          fi
-          echo "✓ speech_to_text patched successfully"
-
-      # Fix dead jcenter() references in any plugin (harmless if absent)
+      # JCenter was shut down in 2022. speech_to_text 6.6.2 still references it.
       - name: Patch jcenter to mavenCentral
         run: |
           set -e
@@ -109,9 +61,8 @@ jobs:
 
       # ─────────────────────────────────────────────────────────────────────
       # REGENERATE ANDROID PLATFORM FILES
-      # Wipes committed android/ and regenerates from Flutter template.
-      # Avoids committing binary files (gradle-wrapper.jar) and keeps the
-      # android folder always in sync with the pinned Flutter version.
+      # Wipes committed android/ and regenerates fresh — avoids stale state
+      # and the missing gradle-wrapper.jar issue (which .gitignore excludes).
       # ─────────────────────────────────────────────────────────────────────
       - name: Regenerate Android Platform Files
         run: |
@@ -124,12 +75,7 @@ jobs:
             .
           echo "✓ android/ regenerated"
 
-      # ─────────────────────────────────────────────────────────────────────
-      # POST-GENERATE PATCHES — pure sed
-      # ─────────────────────────────────────────────────────────────────────
-
       # audioplayers_android requires compileSdk 35.
-      # Flutter 3.24.5 generates compileSdkVersion flutter.compileSdkVersion.
       - name: Bump Android compileSdk to 35
         run: |
           set -e
@@ -139,7 +85,6 @@ jobs:
           grep -E "compileSdk|targetSdk|minSdk" "$F" || true
           echo "::endgroup::"
 
-          # Cover every Flutter Gradle format we might encounter
           sed -i 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 35/g' "$F"
           sed -i 's/targetSdkVersion flutter\.targetSdkVersion/targetSdkVersion 35/g'   "$F"
           sed -i 's/compileSdk flutter\.compileSdkVersion/compileSdk 35/g'              "$F"
@@ -151,70 +96,51 @@ jobs:
           grep -E "compileSdk|targetSdk|minSdk" "$F"
           echo "::endgroup::"
 
-          # Hard verification
           if grep -E "flutter\.(compileSdkVersion|targetSdkVersion)" "$F"; then
             echo "::error::flutter.* SDK refs still present in app build.gradle"
             exit 1
           fi
           echo "✓ compileSdk bumped to 35"
 
-      # Inject all required permissions + app attributes into AndroidManifest.
-      # Permissions:
-      #   INTERNET + ACCESS_NETWORK_STATE     - browser networking
-      #   RECORD_AUDIO + MODIFY_AUDIO         - voice search (speech_to_text)
-      #   READ_MEDIA_IMAGES                   - image_picker on Android 13+
-      #   READ_EXTERNAL_STORAGE maxSdk=32     - image_picker on Android ≤12
+      # Permissions: networking, voice search, image picker (Android 13+ split).
       - name: Patch Android Manifest
         run: |
           set -e
           M="android/app/src/main/AndroidManifest.xml"
 
-          # App display name
           sed -i 's/android:label="nova_x"/android:label="NOVA X"/' "$M"
 
-          # All permissions injected right after the <manifest> opening tag
           sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>|' "$M"
 
-          # App-level attributes
           sed -i 's|android:icon="@mipmap/ic_launcher">|android:icon="@mipmap/ic_launcher"\n        android:usesCleartextTraffic="true"\n        android:hardwareAccelerated="true">|' "$M"
 
           echo "::group::Patched AndroidManifest"
           cat "$M"
           echo "::endgroup::"
-          echo "✓ Manifest patched"
 
       - name: Configure Gradle Java Home
         run: echo "org.gradle.java.home=$JAVA_HOME" >> android/gradle.properties
 
-      # ─────────────────────────────────────────────────────────────────────
-      # FINAL VERIFICATION before Gradle runs
-      # ─────────────────────────────────────────────────────────────────────
-      - name: Verify All Patches Before Build
+      - name: Verify Patches Before Build
         run: |
           set -e
           CACHE="${PUB_CACHE:-$HOME/.pub-cache}"
           SPEECH=$(find "$CACHE" -name "build.gradle" -path "*/speech_to_text*" 2>/dev/null | head -1)
-
           if [ -n "$SPEECH" ]; then
-            echo "::group::Final speech_to_text build.gradle state"
+            echo "::group::Final speech_to_text/android/build.gradle"
             cat "$SPEECH"
             echo "::endgroup::"
-
-            if grep -E "flutter\.(compileSdkVersion|targetSdkVersion|minSdkVersion)" "$SPEECH"; then
-              echo "::error::PATCH REGRESSED - flutter.* refs back in speech_to_text!"
+            # Confirm jcenter is gone
+            if grep -E "jcenter\(\)" "$SPEECH"; then
+              echo "::error::jcenter still present"
               exit 1
             fi
           fi
-
-          echo "::group::Final app/build.gradle state"
+          echo "::group::Final app/build.gradle"
           cat android/app/build.gradle
           echo "::endgroup::"
-
           echo "✅ All patches verified - proceeding to Gradle build"
 
-      # ─────────────────────────────────────────────────────────────────────
-      # BUILD
-      # ─────────────────────────────────────────────────────────────────────
       - name: Compile Release APK Bundle
         run: flutter build apk --release
 

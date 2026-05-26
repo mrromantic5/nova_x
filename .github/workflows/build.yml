@@ -76,46 +76,46 @@ jobs:
       # Fix speech_to_text 7.x AFTER flutter create (so pub get inside
       # flutter create cannot undo the patch).
       #
-      # ROOT CAUSE OF PREVIOUS FAILURES:
-      #   pub-cache files are installed as read-only (chmod 444).
-      #   sed -i on a read-only file exits with code 1 BUT the shell does not
-      #   propagate that error when sed is inside a compound command — so the
-      #   step reports success while the file stays completely unpatched.
-      #   Adding chmod +w before sed -i is the only required fix.
+      # ROOT CAUSE OF ALL PREVIOUS FAILURES:
+      #   pub-cache installs packages read-only: files=444, directories=555.
+      #   sed -i does NOT edit in place — it creates a TEMP FILE in the same
+      #   directory, then renames it over the original. This means sed -i needs
+      #   WRITE PERMISSION ON THE DIRECTORY, not just the file. The previous fix
+      #   only chmod'd the file (→ 644) but left the directory at 555, so sed -i
+      #   still silently failed (exit 1 swallowed by the shell without set -e).
+      #   Fix: chmod +w BOTH "$(dirname $STT_GRADLE)" AND "$STT_GRADLE".
       - name: Fix speech_to_text Flutter SDK Property References
         run: |
-          # Honour $PUB_CACHE if flutter-action set it; fall back to default.
+          set -e  # Any command failure kills the step immediately — no more silent failures.
+
           CACHE_ROOT="${PUB_CACHE:-$HOME/.pub-cache}"
           echo "Using pub cache root: $CACHE_ROOT"
 
-          # Locate speech_to_text's android/build.gradle (any version).
           STT_GRADLE=$(find "$CACHE_ROOT" \
             -name "build.gradle" \
             -path "*/speech_to_text*/android/*" \
             2>/dev/null | head -1)
 
           if [ -z "$STT_GRADLE" ]; then
-            echo "ERROR: speech_to_text build.gradle not found under $CACHE_ROOT"
-            echo "Searching entire filesystem as fallback..."
+            echo "Not found under PUB_CACHE — searching entire filesystem..."
             STT_GRADLE=$(find / -name "build.gradle" \
               -path "*/speech_to_text*/android/*" \
               2>/dev/null | head -1)
           fi
 
           if [ -z "$STT_GRADLE" ]; then
-            echo "FATAL: speech_to_text build.gradle not found anywhere — aborting."
+            echo "FATAL: speech_to_text build.gradle not found anywhere."
             exit 1
           fi
 
-          echo "Patching: $STT_GRADLE"
+          echo "Found: $STT_GRADLE"
           echo "--- BEFORE ---"
           cat "$STT_GRADLE"
 
-          # CRITICAL: make the file writable before sed.
-          # pub-cache files are read-only (444). sed -i silently fails on them —
-          # exits 1 but the step still shows green because it is not the last
-          # command. Without this chmod the file is NEVER patched.
-          chmod +w "$STT_GRADLE"
+          # chmod +w on BOTH the parent directory AND the file.
+          # sed -i creates a temp in the same dir before renaming — the dir
+          # must be writable, not just the file.
+          chmod +w "$(dirname "$STT_GRADLE")" "$STT_GRADLE"
 
           sed -i \
             -e 's/flutter\.compileSdkVersion/35/g' \
@@ -126,9 +126,9 @@ jobs:
           echo "--- AFTER ---"
           cat "$STT_GRADLE"
 
-          # Hard verification — fail loudly if any flutter.* SDK refs remain.
+          # Fail loudly if any flutter.* SDK refs survive.
           if grep -qE 'flutter\.(compileSdkVersion|targetSdkVersion|minSdkVersion)' "$STT_GRADLE"; then
-            echo "FATAL: patch did not apply — flutter SDK refs still present in $STT_GRADLE"
+            echo "FATAL: patch did not apply — flutter SDK refs still present!"
             exit 1
           fi
 

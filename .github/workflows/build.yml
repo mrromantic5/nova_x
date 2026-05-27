@@ -35,8 +35,8 @@ jobs:
           find "$CACHE" -name "build.gradle" -path "*/flutter_inappwebview_android*" 2>/dev/null | while read -r f; do
             chmod +w "$f" 2>/dev/null || true
             sed -i "s/getDefaultProguardFile('proguard-android\.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g" "$f"
+            echo "✓ ProGuard patched: $f"
           done
-          echo "✓ ProGuard patched"
 
       - name: Patch jcenter to mavenCentral
         run: |
@@ -60,6 +60,7 @@ jobs:
             exit 1
           fi
 
+      # ── App icon: resize assets/images/logo.png to all mipmap sizes ─────
       - name: Set app icon from logo.png
         run: |
           pip install Pillow --break-system-packages -q
@@ -85,17 +86,24 @@ jobs:
           print('✅ App icon set from logo.png')
           PYEOF
 
-      - name: Apply Google Services Plugin
+      # ── Firebase: add google-services plugin inside plugins {} block ──────
+      - name: Apply Google Services Plugin (Firebase)
         run: |
           APP="android/app/build.gradle"
           SET="android/settings.gradle"
           if ! grep -q "com.google.gms.google-services" "$SET"; then
             sed -i '/id "com.android.application" version/a\    id "com.google.gms.google-services" version "4.4.0" apply false' "$SET"
+            echo "✓ google-services declared in settings.gradle"
           fi
           if ! grep -q "com.google.gms.google-services" "$APP"; then
             sed -i '/^plugins {/a\    id "com.google.gms.google-services"' "$APP"
+            echo "✓ google-services applied in app/build.gradle"
           fi
-          echo "✓ Firebase Gradle applied"
+          if head -3 "$APP" | grep -q "^apply plugin"; then
+            echo "::error::apply plugin: found before plugins {} — Gradle will fail"
+            exit 1
+          fi
+          echo "✅ Firebase Gradle verified"
 
       - name: Bump compileSdk to 35
         run: |
@@ -107,68 +115,65 @@ jobs:
           sed -i 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 35/g'          "$F"
           sed -i 's/targetSdk = flutter\.targetSdkVersion/targetSdk = 35/g'             "$F"
           echo "✓ compileSdk bumped to 35"
+          grep -E "compileSdk|targetSdk" "$F"
 
-      # ─────────────────────────────────────────────────────────────────────
-      # PATCH the Flutter-generated AndroidManifest — do NOT replace it.
-      # Replacing the entire manifest loses the flutterEmbedding=2 meta-data
-      # that Flutter generates, causing: "Build failed due to use of deleted
-      # Android v1 embedding."
-      # ─────────────────────────────────────────────────────────────────────
-      - name: Patch AndroidManifest.xml
+      # ── Manifest patch — IDENTICAL to the old working step ───────────────
+      # DO NOT add android:launchMode here — Flutter 3.24.5 already generates
+      # it in MainActivity. Adding it again creates a duplicate XML attribute
+      # which causes: "Error parsing AndroidManifest.xml"
+      - name: Patch AndroidManifest
         run: |
           M="android/app/src/main/AndroidManifest.xml"
-
-          echo "--- ORIGINAL ---"
-          cat "$M"
-
-          # 1. App label
           sed -i 's/android:label="nova_x"/android:label="NOVA X"/' "$M"
-
-          # 2. Permissions block (inserted after opening <manifest> tag)
-          sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>|' "$M"
-
-          # 3. App-level attributes (cleartext + hardware acceleration)
+          sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>|' "$M"
           sed -i 's|android:icon="@mipmap/ic_launcher">|android:icon="@mipmap/ic_launcher"\n        android:usesCleartextTraffic="true"\n        android:hardwareAccelerated="true">|' "$M"
+          echo "✓ AndroidManifest patched (label + permissions + app attributes)"
 
-          # 4. launchMode=singleTop on MainActivity (required for FCM tap to work)
-          sed -i 's|android:name=".MainActivity"|android:name=".MainActivity"\n            android:launchMode="singleTop"|' "$M"
-
-          # 5. FCM intent-filter + metadata via Python (reliable multi-line insertion)
+      # ── FCM tap fix — separate safe step using Python ─────────────────────
+      # Adds FLUTTER_NOTIFICATION_CLICK intent-filter so tapping a push
+      # notification opens the app. Uses Python for safe XML insertion without
+      # risking duplicate attributes.
+      - name: Add FCM notification tap support
+        run: |
           python3 << 'PYEOF'
           content = open('android/app/src/main/AndroidManifest.xml').read()
 
-          # Add FLUTTER_NOTIFICATION_CLICK intent-filter after the launcher intent-filter.
-          # Replace only the FIRST occurrence of </intent-filter> so we don't duplicate.
-          fcm_filter = (
-              '\n            </intent-filter>'
-              '\n            <!-- FCM: tap notification to open app -->'
-              '\n            <intent-filter>'
-              '\n                <action android:name="FLUTTER_NOTIFICATION_CLICK"/>'
-              '\n                <category android:name="android.intent.category.DEFAULT"/>'
-              '\n            </intent-filter>'
-          )
-          # Find first </intent-filter> and add our block after it
-          first = content.find('</intent-filter>')
-          if first != -1 and 'FLUTTER_NOTIFICATION_CLICK' not in content:
-              content = content[:first] + fcm_filter + content[first + len('</intent-filter>'):]
+          # Add FLUTTER_NOTIFICATION_CLICK intent-filter after the first
+          # </intent-filter> (the launcher one). Only if not already present.
+          if 'FLUTTER_NOTIFICATION_CLICK' not in content:
+              fcm_filter = (
+                  '</intent-filter>\n'
+                  '            <intent-filter>\n'
+                  '                <action android:name="FLUTTER_NOTIFICATION_CLICK"/>\n'
+                  '                <category android:name="android.intent.category.DEFAULT"/>\n'
+                  '            </intent-filter>'
+              )
+              content = content.replace('</intent-filter>', fcm_filter, 1)
+              print('✓ FLUTTER_NOTIFICATION_CLICK intent-filter added')
+          else:
+              print('FLUTTER_NOTIFICATION_CLICK already present — skipping')
 
-          # Add FCM channel metadata before closing </application>
+          # Add FCM channel + icon + colour metadata before </application>.
+          # Only if not already present.
           if 'nova_x_channel' not in content:
               fcm_meta = (
                   '        <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="nova_x_channel"/>\n'
                   '        <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@mipmap/ic_launcher"/>\n'
                   '        <meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/nova_x_cyan"/>\n'
+                  '    </application>'
               )
-              content = content.replace('</application>', fcm_meta + '    </application>')
+              content = content.replace('    </application>', fcm_meta, 1)
+              print('✓ FCM channel metadata added')
+          else:
+              print('FCM channel metadata already present — skipping')
 
           open('android/app/src/main/AndroidManifest.xml', 'w').write(content)
-          print('✓ FCM intent-filter and metadata added')
           PYEOF
 
-          echo "--- PATCHED ---"
-          cat "$M"
-          echo "✓ AndroidManifest patched"
+          echo "--- Final AndroidManifest.xml ---"
+          cat android/app/src/main/AndroidManifest.xml
 
+      # ── Notification colour (cyan) ─────────────────────────────────────────
       - name: Create notification colour resource
         run: |
           mkdir -p android/app/src/main/res/values
@@ -189,13 +194,21 @@ jobs:
           ls -la android/app/google-services.json
           echo "=== compileSdk ==="
           grep -E "compileSdk|targetSdk" android/app/build.gradle | head -4
-          echo "=== FCM intent filter present ==="
+          echo "=== FCM intent filter ==="
           grep "FLUTTER_NOTIFICATION_CLICK" android/app/src/main/AndroidManifest.xml
-          echo "=== launchMode ==="
+          echo "=== launchMode (Flutter already generates this) ==="
           grep "launchMode" android/app/src/main/AndroidManifest.xml
-          echo "=== flutterEmbedding (must be present) ==="
-          grep "flutterEmbedding" android/app/src/main/AndroidManifest.xml || echo "NOTE: generated by flutter create automatically"
-          echo "✅ All verified"
+          echo "=== No duplicate attributes check ==="
+          python3 -c "
+          import xml.etree.ElementTree as ET
+          try:
+              ET.parse('android/app/src/main/AndroidManifest.xml')
+              print('✅ AndroidManifest.xml is valid XML')
+          except Exception as e:
+              print(f'❌ XML error: {e}')
+              exit(1)
+          "
+          echo "✅ All verified — starting Gradle build"
 
       - name: Build Release APK
         run: flutter build apk --release

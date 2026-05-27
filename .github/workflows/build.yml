@@ -35,7 +35,7 @@ jobs:
           find "$CACHE" -name "build.gradle" -path "*/flutter_inappwebview_android*" 2>/dev/null | while read -r f; do
             chmod +w "$f" 2>/dev/null || true
             sed -i "s/getDefaultProguardFile('proguard-android\.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g" "$f"
-            echo "✓ Patched ProGuard: $f"
+            echo "✓ ProGuard patched: $f"
           done
 
       - name: Patch jcenter to mavenCentral
@@ -54,42 +54,60 @@ jobs:
         run: |
           if [ -f "google-services.json" ]; then
             cp google-services.json android/app/google-services.json
-            echo "✓ google-services.json copied to android/app/"
+            echo "✓ google-services.json copied"
           else
-            echo "::error::google-services.json NOT FOUND in repo root! Push it to the repo."
+            echo "::error::google-services.json NOT FOUND in repo root!"
             exit 1
           fi
 
-      - name: Patch project-level build.gradle (add google-services classpath)
+      # ──────────────────────────────────────────────────────────────────────
+      # FIREBASE: Flutter 3.24.5 generates a new-style build.gradle with a
+      # plugins {} block at LINE 1. The ONLY correct way to add google-services
+      # is INSIDE that plugins {} block. Using `apply plugin:` BEFORE plugins {}
+      # causes the Gradle error: "only buildscript/pluginManagement/plugins blocks
+      # are allowed before plugins {} blocks".
+      # ──────────────────────────────────────────────────────────────────────
+      - name: Apply Google Services Plugin (Firebase)
         run: |
-          F="android/build.gradle"
-          if grep -q "google-services" "$F"; then
-            echo "google-services classpath already present"
-          else
-            sed -i "s|classpath 'com.android.tools.build:gradle:[^']*'|&\n        classpath 'com.google.gms:google-services:4.4.0'|" "$F"
-            echo "✓ google-services classpath added"
-          fi
-          echo "--- android/build.gradle ---"
-          cat "$F"
+          APP="android/app/build.gradle"
+          SET="android/settings.gradle"
 
-      - name: Patch app-level build.gradle (apply google-services plugin + compileSdk 35)
+          echo "--- BEFORE app/build.gradle ---"
+          head -10 "$APP"
+
+          # 1. Declare the plugin version in settings.gradle (new-style resolution)
+          if ! grep -q "com.google.gms.google-services" "$SET"; then
+            sed -i '/id "com.android.application" version/a\    id "com.google.gms.google-services" version "4.4.0" apply false' "$SET"
+            echo "✓ google-services version declared in settings.gradle"
+          fi
+
+          # 2. Apply the plugin INSIDE the plugins {} block — NOT before it
+          if ! grep -q "com.google.gms.google-services" "$APP"; then
+            sed -i '/^plugins {/a\    id "com.google.gms.google-services"' "$APP"
+            echo "✓ google-services added inside plugins {} block"
+          fi
+
+          # 3. Safety check — bare apply plugin: before plugins {} is fatal
+          if head -3 "$APP" | grep -q "^apply plugin"; then
+            echo "::error::apply plugin: found before plugins {} block — Gradle will fail"
+            exit 1
+          fi
+
+          echo "--- AFTER app/build.gradle (first 10 lines) ---"
+          head -10 "$APP"
+          echo "✅ Firebase Gradle integration verified"
+
+      - name: Bump compileSdk to 35
         run: |
           F="android/app/build.gradle"
-          # Apply google-services plugin
-          if ! grep -q "com.google.gms.google-services" "$F"; then
-            sed -i "1s/^/apply plugin: 'com.google.gms.google-services'\n/" "$F"
-            echo "✓ google-services plugin applied"
-          fi
-          # Bump compileSdk
           sed -i 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 35/g' "$F"
-          sed -i 's/targetSdkVersion flutter\.targetSdkVersion/targetSdkVersion 35/g' "$F"
-          sed -i 's/compileSdk flutter\.compileSdkVersion/compileSdk 35/g' "$F"
-          sed -i 's/targetSdk flutter\.targetSdkVersion/targetSdk 35/g' "$F"
-          sed -i 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 35/g' "$F"
-          sed -i 's/targetSdk = flutter\.targetSdkVersion/targetSdk = 35/g' "$F"
-          echo "✓ compileSdk bumped"
-          echo "--- android/app/build.gradle ---"
-          cat "$F"
+          sed -i 's/targetSdkVersion flutter\.targetSdkVersion/targetSdkVersion 35/g'   "$F"
+          sed -i 's/compileSdk flutter\.compileSdkVersion/compileSdk 35/g'              "$F"
+          sed -i 's/targetSdk flutter\.targetSdkVersion/targetSdk 35/g'                 "$F"
+          sed -i 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 35/g'          "$F"
+          sed -i 's/targetSdk = flutter\.targetSdkVersion/targetSdk = 35/g'             "$F"
+          echo "✓ compileSdk bumped to 35"
+          grep -E "compileSdk|targetSdk" "$F"
 
       - name: Patch AndroidManifest
         run: |
@@ -102,11 +120,17 @@ jobs:
       - name: Configure Gradle Java Home
         run: echo "org.gradle.java.home=$JAVA_HOME" >> android/gradle.properties
 
-      - name: Verify Before Build
+      - name: Final Verification
         run: |
-          echo "✅ google-services.json present: $(ls android/app/google-services.json)"
-          echo "✅ google-services plugin: $(grep 'google.gms' android/app/build.gradle | head -1)"
-          echo "✅ compileSdk: $(grep 'compileSdk' android/app/build.gradle | head -1)"
+          echo "=== google-services.json present ==="
+          ls -la android/app/google-services.json
+          echo "=== First 15 lines of app/build.gradle ==="
+          head -15 android/app/build.gradle
+          if ! grep -q "com.google.gms.google-services" android/app/build.gradle; then
+            echo "::error::google-services plugin NOT in app/build.gradle"
+            exit 1
+          fi
+          echo "✅ All verified — building"
 
       - name: Build Release APK
         run: flutter build apk --release

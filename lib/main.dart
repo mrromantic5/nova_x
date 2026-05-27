@@ -8,12 +8,18 @@ import 'package:nova_x/core/database/local_db.dart';
 import 'package:nova_x/core/services/api_service.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
 import 'features/auth/screens/auth_gate.dart';
+import 'features/business/screens/business_screen.dart';
+import 'features/browser/screens/browser_view.dart';
 
-// Background message handler — must be top-level function
+/// Global navigator key — lets us navigate from outside widget tree (FCM handler)
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+/// Background message handler — must be a top-level function
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
-  // Background messages are shown automatically by FCM on Android
+  // The system will show the notification automatically.
+  // Navigation happens when the user TAPS the notification (onMessageOpenedApp).
 }
 
 void main() async {
@@ -23,13 +29,8 @@ void main() async {
     DeviceOrientation.portraitDown,
   ]);
   await LocalDB.initialize();
-
-  // Initialize Firebase
   await Firebase.initializeApp();
-
-  // Register background message handler
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-
   runApp(const ProviderScope(child: NovaXApp()));
 }
 
@@ -47,32 +48,86 @@ class _NovaXAppState extends State<NovaXApp> {
   }
 
   Future<void> _initFCM() async {
-    final messaging = FirebaseMessaging.instance;
+    final msg = FirebaseMessaging.instance;
 
-    // Request notification permissions
-    await messaging.requestPermission(
-      alert:       true,
-      badge:       true,
-      sound:       true,
-      provisional: false,
+    // Request permission
+    await msg.requestPermission(
+      alert: true, badge: true, sound: true, provisional: false,
     );
 
-    // Get and register FCM token
-    final token = await messaging.getToken();
-    if (token != null) {
-      await ApiService.registerFcmToken(token);
-    }
+    // Set foreground notification options (show heads-up on Android)
+    await msg.setForegroundNotificationPresentationOptions(
+      alert: true, badge: true, sound: true,
+    );
 
-    // Listen for token refreshes
-    messaging.onTokenRefresh.listen((newToken) {
-      ApiService.registerFcmToken(newToken);
-    });
+    // Register FCM token with server
+    final token = await msg.getToken();
+    if (token != null) await ApiService.registerFcmToken(token);
 
-    // Handle notification taps when app is in foreground
+    // Token refresh
+    msg.onTokenRefresh.listen((t) => ApiService.registerFcmToken(t));
+
+    // Foreground message — show in-app snackbar
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      // FCM shows heads-up notifications on Android automatically
-      // Additional foreground handling can go here
+      final notif = message.notification;
+      if (notif == null) return;
+      final ctx = navigatorKey.currentContext;
+      if (ctx == null) return;
+      ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+        content: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(notif.title ?? '',
+                style: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.w700)),
+            if ((notif.body ?? '').isNotEmpty)
+              Text(notif.body ?? '',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12)),
+          ],
+        ),
+        backgroundColor: const Color(0xFF111827),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        duration: const Duration(seconds: 4),
+        action: SnackBarAction(
+          label: 'View',
+          textColor: const Color(0xFF00D4FF),
+          onPressed: () => _handleMessage(message),
+        ),
+      ));
     });
+
+    // Background → app opened by tapping notification
+    FirebaseMessaging.onMessageOpenedApp.listen(_handleMessage);
+
+    // Terminated → app opened by tapping notification
+    final initial = await msg.getInitialMessage();
+    if (initial != null) {
+      // Delay slightly to ensure the widget tree is ready
+      await Future.delayed(const Duration(milliseconds: 800));
+      _handleMessage(initial);
+    }
+  }
+
+  /// Route the user to the correct screen based on notification data payload
+  void _handleMessage(RemoteMessage message) {
+    final data   = message.data;
+    final screen = data['screen'] ?? 'home';
+    final url    = data['url']    ?? '';
+
+    final nav = navigatorKey.currentState;
+    if (nav == null) return;
+
+    if (screen == 'business') {
+      // Open global business directory
+      nav.push(MaterialPageRoute(builder: (_) => const BusinessScreen()));
+    } else if (screen == 'url' && url.isNotEmpty) {
+      // Open a specific URL in the browser
+      nav.push(MaterialPageRoute(
+          builder: (_) => BrowserView(initialQuery: url)));
+    }
+    // screen == 'home' → no navigation, app is already open or at home
   }
 
   @override
@@ -80,6 +135,7 @@ class _NovaXAppState extends State<NovaXApp> {
     return MaterialApp(
       title:                    'NOVA X',
       debugShowCheckedModeBanner: false,
+      navigatorKey:             navigatorKey, // ← required for push from outside widget tree
       theme: ThemeData(
         useMaterial3:            true,
         scaffoldBackgroundColor: AppTheme.bgDark,

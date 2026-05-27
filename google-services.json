@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "226072764417",
+    "project_id": "nova-x-30cfe",
+    "storage_bucket": "nova-x-30cfe.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:226072764417:android:715a3ab883d9c42d84e000",
+        "android_client_info": {
+          "package_name": "com.example.nova_x"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDt702JUEiT-2-wygHmEQUsiIZ5XadFCp0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

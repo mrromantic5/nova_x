@@ -1,7 +1,7 @@
 name: nova_x
 description: NOVA X — The Future of Browsing
 publish_to: 'none'
-version: 2.2.0+1
+version: 2.4.0+1
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -14,16 +14,13 @@ dependencies:
   google_fonts: ^6.1.0
   shared_preferences: ^2.2.2
   dio: ^5.4.0
-  # Original working versions — do NOT upgrade these
   speech_to_text: ^6.6.2
   audioplayers: ^5.2.1
-  # Image upload for profile & business
   image_picker: ^1.0.7
   path_provider: ^2.1.2
+  firebase_core: ^3.6.0
+  firebase_messaging: ^15.1.3
 
-# Resolves the js version conflict between speech_to_text and
-# image_picker_for_web (a transitive dep). Web variants are never
-# invoked on Android so forcing js ^0.7.1 is safe.
 dependency_overrides:
   js: ^0.7.1
 
@@ -36,7 +33,4 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/
-    # Add your background images (.jpg/.png/.webp) into this folder.
-    # They will appear automatically in the Customization screen.
-    # The folder must exist with at least one file for Flutter to accept it.
     - assets/backgrounds/

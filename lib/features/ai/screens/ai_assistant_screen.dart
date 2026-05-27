@@ -5,7 +5,9 @@ import 'package:flutter/services.dart';
 import 'package:dio/dio.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:speech_to_text/speech_to_text.dart';
+import 'dart:io';
 import 'package:nova_x/core/theme/app_theme.dart';
+import 'package:path_provider/path_provider.dart';
 
 class AiAssistantScreen extends StatefulWidget {
   const AiAssistantScreen({super.key});
@@ -271,6 +273,13 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
     }
   });
 
+  void _showImagePreview(String url) {
+    Navigator.push(context, MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (_) => _ImagePreviewScreen(imageUrl: url),
+    ));
+  }
+
   void _snack(String msg) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(msg, style: GoogleFonts.inter(color: Colors.white)),
       backgroundColor: AppTheme.bgElevated,
@@ -458,61 +467,161 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
 
   Widget _imageWidget(String url) => Align(
     alignment: Alignment.centerLeft,
-    child: Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.78),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: Image.network(url, fit: BoxFit.contain,
-            errorBuilder: (_, __, ___) => Container(
-              padding: const EdgeInsets.all(12),
-              color: AppTheme.bgCard,
-              child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.broken_image_outlined,
-                    color: AppTheme.textHint, size: 18),
-                SizedBox(width: 8),
-                Text('Image unavailable',
-                    style: TextStyle(color: AppTheme.textHint, fontSize: 12)),
-              ]),
+    child: GestureDetector(
+      onTap: () => _showImagePreview(url),
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.78),
+        child: Stack(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: Image.network(url, fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => Container(
+                    padding: const EdgeInsets.all(12),
+                    color: AppTheme.bgCard,
+                    child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.broken_image_outlined,
+                          color: AppTheme.textHint, size: 18),
+                      SizedBox(width: 8),
+                      Text('Image unavailable',
+                          style: TextStyle(color: AppTheme.textHint, fontSize: 12)),
+                    ]),
+                  ),
+                  loadingBuilder: (_, child, prog) => prog == null
+                      ? child
+                      : const SizedBox(
+                          height: 80,
+                          child: Center(child: CircularProgressIndicator(
+                              color: AppTheme.accentCyan, strokeWidth: 2)))),
             ),
-            loadingBuilder: (_, child, prog) => prog == null
-                ? child
-                : const SizedBox(
-                    height: 80,
-                    child: Center(child: CircularProgressIndicator(
-                        color: AppTheme.accentCyan, strokeWidth: 2)))),
+            // Tap-to-preview badge
+            Positioned(
+              bottom: 8, right: 8,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.fullscreen_rounded, color: Colors.white, size: 13),
+                  const SizedBox(width: 4),
+                  Text('Preview', style: GoogleFonts.inter(
+                      color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600)),
+                ]),
+              ),
+            ),
+          ],
+        ),
       ),
     ),
   );
 
   Widget _videoWidget(String url) => Align(
     alignment: Alignment.centerLeft,
-    child: Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppTheme.bgCard,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Icon(Icons.play_circle_fill_rounded,
-            color: AppTheme.accentCyan, size: 36),
-        const SizedBox(height: 8),
-        Text('Video generated! Tap to view:',
-            style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 12)),
-        const SizedBox(height: 6),
-        GestureDetector(
-          onTap: () => Clipboard.setData(ClipboardData(text: url)),
-          child: Text(url,
-              style: GoogleFonts.inter(
-                  color: AppTheme.accentCyan, fontSize: 11,
-                  decoration: TextDecoration.underline),
-              maxLines: 2, overflow: TextOverflow.ellipsis),
+    child: GestureDetector(
+      onTap: () => _showVideoPreview(url),
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppTheme.bgCard,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppTheme.divider),
         ),
-      ]),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Icon(Icons.play_circle_fill_rounded,
+                color: AppTheme.accentCyan, size: 36),
+            const SizedBox(width: 10),
+            Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Video Generated!',
+                    style: GoogleFonts.spaceGrotesk(
+                        color: AppTheme.textPrimary, fontSize: 13,
+                        fontWeight: FontWeight.w700)),
+                Text('Tap to preview & download',
+                    style: GoogleFonts.inter(
+                        color: AppTheme.accentCyan, fontSize: 11)),
+              ],
+            )),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                gradient: AppTheme.primaryGradient,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.download_rounded, color: Colors.white, size: 13),
+                const SizedBox(width: 4),
+                Text('Save', style: GoogleFonts.inter(
+                    color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700)),
+              ]),
+            ),
+          ]),
+          const SizedBox(height: 8),
+          Text(url,
+              style: GoogleFonts.inter(
+                  color: AppTheme.textHint, fontSize: 10),
+              maxLines: 1, overflow: TextOverflow.ellipsis),
+        ]),
+      ),
     ),
   );
+
+  void _showVideoPreview(String url) {
+    // Copy URL and show options
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => Container(
+        decoration: const BoxDecoration(
+          color: AppTheme.bgCard,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(width: 40, height: 4, margin: const EdgeInsets.only(bottom: 20),
+              decoration: BoxDecoration(color: AppTheme.divider,
+                  borderRadius: BorderRadius.circular(2))),
+          const Icon(Icons.videocam_rounded, color: AppTheme.accentCyan, size: 40),
+          const SizedBox(height: 12),
+          Text('Video Ready', style: GoogleFonts.spaceGrotesk(
+              color: AppTheme.textPrimary, fontSize: 18, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 6),
+          Text('Your AI video has been generated',
+              style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 13)),
+          const SizedBox(height: 20),
+          // Copy link
+          GestureDetector(
+            onTap: () {
+              Clipboard.setData(ClipboardData(text: url));
+              Navigator.pop(context);
+              _snack('Video link copied to clipboard ✓');
+            },
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              decoration: BoxDecoration(
+                color: AppTheme.bgElevated,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppTheme.divider),
+              ),
+              child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                const Icon(Icons.copy_rounded, color: AppTheme.accentCyan, size: 18),
+                const SizedBox(width: 8),
+                Text('Copy Video Link', style: GoogleFonts.inter(
+                    color: AppTheme.accentCyan, fontSize: 14, fontWeight: FontWeight.w600)),
+              ]),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
 
   Widget _loadingVideoWidget(String msg) => Align(
     alignment: Alignment.centerLeft,
@@ -622,6 +731,137 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
               boxShadow: AppTheme.glowShadow,
             ),
             child: const Icon(Icons.send_rounded, color: Colors.white, size: 18),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+// ── Full-screen image preview with download ──────────────────────────────────
+class _ImagePreviewScreen extends StatefulWidget {
+  final String imageUrl;
+  const _ImagePreviewScreen({required this.imageUrl});
+  @override State<_ImagePreviewScreen> createState() => _ImagePreviewScreenState();
+}
+
+class _ImagePreviewScreenState extends State<_ImagePreviewScreen> {
+  bool _downloading = false;
+  bool _downloaded  = false;
+
+  Future<void> _download() async {
+    if (_downloading || _downloaded) return;
+    setState(() => _downloading = true);
+    try {
+      final dio   = Dio();
+      final bytes = await dio.get<List<int>>(widget.imageUrl,
+          options: Options(responseType: ResponseType.bytes));
+      final dir   = await getApplicationDocumentsDirectory();
+      final path  = '${dir.path}/brains_ai_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      await File(path).writeAsBytes(bytes.data!);
+      if (mounted) setState(() { _downloading = false; _downloaded = true; });
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Image saved ✓', style: GoogleFonts.inter(color: Colors.white)),
+        backgroundColor: AppTheme.success,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ));
+    } catch (_) {
+      if (mounted) setState(() { _downloading = false; });
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Download failed. Try again.',
+            style: GoogleFonts.inter(color: Colors.white)),
+        backgroundColor: AppTheme.danger,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(children: [
+        // Zoomable image
+        Center(
+          child: InteractiveViewer(
+            minScale: 0.5, maxScale: 5.0,
+            child: Image.network(widget.imageUrl, fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const Icon(
+                    Icons.broken_image_outlined, color: Colors.white54, size: 60)),
+          ),
+        ),
+
+        // Top bar
+        Positioned(top: 0, left: 0, right: 0,
+          child: Container(
+            decoration: const BoxDecoration(gradient: LinearGradient(
+              begin: Alignment.topCenter, end: Alignment.bottomCenter,
+              colors: [Colors.black87, Colors.transparent],
+            )),
+            padding: EdgeInsets.only(
+                top: MediaQuery.of(context).padding.top + 8,
+                left: 8, right: 8, bottom: 20),
+            child: Row(children: [
+              GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: Container(
+                  width: 40, height: 40,
+                  decoration: BoxDecoration(
+                      color: Colors.black45,
+                      borderRadius: BorderRadius.circular(20)),
+                  child: const Icon(Icons.close_rounded,
+                      color: Colors.white, size: 20),
+                ),
+              ),
+              const Spacer(),
+              Text('BRAINS JET AI', style: GoogleFonts.spaceGrotesk(
+                  color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700)),
+              const Spacer(),
+              const SizedBox(width: 40),
+            ]),
+          ),
+        ),
+
+        // Bottom bar with download button
+        Positioned(bottom: 0, left: 0, right: 0,
+          child: Container(
+            decoration: const BoxDecoration(gradient: LinearGradient(
+              begin: Alignment.bottomCenter, end: Alignment.topCenter,
+              colors: [Colors.black87, Colors.transparent],
+            )),
+            padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).padding.bottom + 24,
+                top: 30, left: 24, right: 24),
+            child: GestureDetector(
+              onTap: _download,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                decoration: BoxDecoration(
+                  gradient: _downloaded ? null : AppTheme.primaryGradient,
+                  color:    _downloaded ? AppTheme.success : null,
+                  borderRadius: BorderRadius.circular(28),
+                  boxShadow: AppTheme.glowShadow,
+                ),
+                child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  _downloading
+                      ? const SizedBox(width: 18, height: 18,
+                          child: CircularProgressIndicator(
+                              color: Colors.white, strokeWidth: 2))
+                      : Icon(
+                          _downloaded ? Icons.check_rounded : Icons.download_rounded,
+                          color: Colors.white, size: 20),
+                  const SizedBox(width: 10),
+                  Text(
+                    _downloaded ? 'Saved to device!' : 'Download Image',
+                    style: GoogleFonts.spaceGrotesk(
+                        color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700),
+                  ),
+                ]),
+              ),
+            ),
           ),
         ),
       ]),

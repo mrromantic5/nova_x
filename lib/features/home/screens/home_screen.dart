@@ -234,6 +234,13 @@ class _HomeScreenState extends State<HomeScreen>
     } catch (_) {}
   }
 
+  Future<void> _refreshAll() async {
+    _loadAll();
+    _searchHist = LocalDB.getSearchHistory();
+    _newsCache.clear();
+    await _fetchNews(forceRefresh: true);
+  }
+
   Future<void> _fetchNews({bool forceRefresh = false}) async {
     if (!mounted) return;
     if (!forceRefresh && _newsCache.containsKey(_selectedCategory)) {
@@ -340,9 +347,13 @@ class _HomeScreenState extends State<HomeScreen>
             child: Column(children: [
               _buildHeader(),
               Expanded(
-                child: SingleChildScrollView(
-                  controller: _scrollCtrl,
-                  physics: const BouncingScrollPhysics(),
+                child: RefreshIndicator(
+                  onRefresh: _refreshAll,
+                  color: AppTheme.accentCyan,
+                  backgroundColor: AppTheme.bgCard,
+                  child: SingleChildScrollView(
+                    controller: _scrollCtrl,
+                    physics: const AlwaysScrollableScrollPhysics(),
                   padding: const EdgeInsets.only(bottom: 16),
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     const SizedBox(height: 20),
@@ -368,7 +379,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   // ── Background — persisted user choice ─────────────────────────────────────
   Widget _buildBackground() {
-    final bg = _backgroundPath;
+    final bg = _backgroundPath ?? 'assets/backgrounds/default.jpg';
     Widget layer;
     if (bg == null || bg.isEmpty) {
       layer = Container(decoration: const BoxDecoration(gradient: AppTheme.bgGradient));

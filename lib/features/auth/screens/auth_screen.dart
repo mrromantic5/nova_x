@@ -128,13 +128,22 @@ class _AuthScreenState extends State<AuthScreen>
             const SizedBox(height: 48),
             // Brand icon
             Container(
-              width: 72, height: 72,
+              width: 80, height: 80,
               decoration: BoxDecoration(
-                gradient: AppTheme.primaryGradient,
                 borderRadius: BorderRadius.circular(22),
                 boxShadow: AppTheme.glowShadow,
               ),
-              child: const Icon(Icons.public_rounded, color: Colors.white, size: 36),
+              clipBehavior: Clip.hardEdge,
+              child: Image.asset(
+                'assets/images/logo.png',
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(
+                  decoration: BoxDecoration(
+                    gradient: AppTheme.primaryGradient,
+                    borderRadius: BorderRadius.circular(22)),
+                  child: const Icon(Icons.public_rounded,
+                      color: Colors.white, size: 40)),
+              ),
             ),
             const SizedBox(height: 16),
             ShaderMask(

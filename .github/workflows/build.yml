@@ -8,7 +8,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -20,136 +19,104 @@ jobs:
           java-version: '17'
           cache: ''
 
-      - name: Set up Flutter Engine Environment
+      - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.24.5'
           channel: 'stable'
           cache: true
 
-      - name: Install Project Dependencies
+      - name: Install Dependencies
         run: flutter pub get
 
-      # ─────────────────────────────────────────────────────────────────────
-      # PUB-CACHE PATCHES — pure sed (reliable in CI)
-      # ─────────────────────────────────────────────────────────────────────
-
-      # AGP 8 removed proguard-android.txt — flutter_inappwebview still references it.
       - name: Patch flutter_inappwebview ProGuard
         run: |
-          set -e
           CACHE="${PUB_CACHE:-$HOME/.pub-cache}"
-          FILES=$(find "$CACHE" -name "build.gradle" -path "*/flutter_inappwebview_android*" 2>/dev/null || true)
-          if [ -z "$FILES" ]; then
-            echo "::warning::flutter_inappwebview build.gradle not found"
-          else
-            echo "$FILES" | while read -r f; do
-              chmod +w "$f" 2>/dev/null || true
-              sed -i "s/getDefaultProguardFile('proguard-android\.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g" "$f"
-              echo "✓ Patched: $f"
-            done
-          fi
+          find "$CACHE" -name "build.gradle" -path "*/flutter_inappwebview_android*" 2>/dev/null | while read -r f; do
+            chmod +w "$f" 2>/dev/null || true
+            sed -i "s/getDefaultProguardFile('proguard-android\.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g" "$f"
+            echo "✓ Patched ProGuard: $f"
+          done
 
-      # JCenter was shut down in 2022. speech_to_text 6.6.2 still references it.
       - name: Patch jcenter to mavenCentral
         run: |
-          set -e
           CACHE="${PUB_CACHE:-$HOME/.pub-cache}"
-          find "$CACHE" -name "build.gradle" -exec \
-            sed -i 's/jcenter()/mavenCentral()/g' {} +
-          echo "✓ jcenter references replaced"
+          find "$CACHE" -name "build.gradle" -exec sed -i 's/jcenter()/mavenCentral()/g' {} +
+          echo "✓ jcenter replaced"
 
-      # ─────────────────────────────────────────────────────────────────────
-      # REGENERATE ANDROID PLATFORM FILES
-      # Wipes committed android/ and regenerates fresh — avoids stale state
-      # and the missing gradle-wrapper.jar issue (which .gitignore excludes).
-      # ─────────────────────────────────────────────────────────────────────
       - name: Regenerate Android Platform Files
         run: |
-          set -e
           rm -rf android
-          flutter create \
-            --platforms android \
-            --org com.example \
-            --project-name nova_x \
-            .
+          flutter create --platforms android --org com.example --project-name nova_x .
           echo "✓ android/ regenerated"
 
-      # audioplayers_android requires compileSdk 35.
-      - name: Bump Android compileSdk to 35
+      - name: Copy google-services.json
         run: |
-          set -e
-          F="android/app/build.gradle"
-
-          echo "::group::BEFORE patch"
-          grep -E "compileSdk|targetSdk|minSdk" "$F" || true
-          echo "::endgroup::"
-
-          sed -i 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 35/g' "$F"
-          sed -i 's/targetSdkVersion flutter\.targetSdkVersion/targetSdkVersion 35/g'   "$F"
-          sed -i 's/compileSdk flutter\.compileSdkVersion/compileSdk 35/g'              "$F"
-          sed -i 's/targetSdk flutter\.targetSdkVersion/targetSdk 35/g'                 "$F"
-          sed -i 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 35/g'          "$F"
-          sed -i 's/targetSdk = flutter\.targetSdkVersion/targetSdk = 35/g'             "$F"
-
-          echo "::group::AFTER patch"
-          grep -E "compileSdk|targetSdk|minSdk" "$F"
-          echo "::endgroup::"
-
-          if grep -E "flutter\.(compileSdkVersion|targetSdkVersion)" "$F"; then
-            echo "::error::flutter.* SDK refs still present in app build.gradle"
+          if [ -f "google-services.json" ]; then
+            cp google-services.json android/app/google-services.json
+            echo "✓ google-services.json copied to android/app/"
+          else
+            echo "::error::google-services.json NOT FOUND in repo root! Push it to the repo."
             exit 1
           fi
-          echo "✓ compileSdk bumped to 35"
 
-      # Permissions: networking, voice search, image picker (Android 13+ split).
-      - name: Patch Android Manifest
+      - name: Patch project-level build.gradle (add google-services classpath)
         run: |
-          set -e
+          F="android/build.gradle"
+          if grep -q "google-services" "$F"; then
+            echo "google-services classpath already present"
+          else
+            sed -i "s|classpath 'com.android.tools.build:gradle:[^']*'|&\n        classpath 'com.google.gms:google-services:4.4.0'|" "$F"
+            echo "✓ google-services classpath added"
+          fi
+          echo "--- android/build.gradle ---"
+          cat "$F"
+
+      - name: Patch app-level build.gradle (apply google-services plugin + compileSdk 35)
+        run: |
+          F="android/app/build.gradle"
+          # Apply google-services plugin
+          if ! grep -q "com.google.gms.google-services" "$F"; then
+            sed -i "1s/^/apply plugin: 'com.google.gms.google-services'\n/" "$F"
+            echo "✓ google-services plugin applied"
+          fi
+          # Bump compileSdk
+          sed -i 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 35/g' "$F"
+          sed -i 's/targetSdkVersion flutter\.targetSdkVersion/targetSdkVersion 35/g' "$F"
+          sed -i 's/compileSdk flutter\.compileSdkVersion/compileSdk 35/g' "$F"
+          sed -i 's/targetSdk flutter\.targetSdkVersion/targetSdk 35/g' "$F"
+          sed -i 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 35/g' "$F"
+          sed -i 's/targetSdk = flutter\.targetSdkVersion/targetSdk = 35/g' "$F"
+          echo "✓ compileSdk bumped"
+          echo "--- android/app/build.gradle ---"
+          cat "$F"
+
+      - name: Patch AndroidManifest
+        run: |
           M="android/app/src/main/AndroidManifest.xml"
-
           sed -i 's/android:label="nova_x"/android:label="NOVA X"/' "$M"
-
-          sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>|' "$M"
-
+          sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>|' "$M"
           sed -i 's|android:icon="@mipmap/ic_launcher">|android:icon="@mipmap/ic_launcher"\n        android:usesCleartextTraffic="true"\n        android:hardwareAccelerated="true">|' "$M"
-
-          echo "::group::Patched AndroidManifest"
-          cat "$M"
-          echo "::endgroup::"
+          echo "✓ AndroidManifest patched"
 
       - name: Configure Gradle Java Home
         run: echo "org.gradle.java.home=$JAVA_HOME" >> android/gradle.properties
 
-      - name: Verify Patches Before Build
+      - name: Verify Before Build
         run: |
-          set -e
-          CACHE="${PUB_CACHE:-$HOME/.pub-cache}"
-          SPEECH=$(find "$CACHE" -name "build.gradle" -path "*/speech_to_text*" 2>/dev/null | head -1)
-          if [ -n "$SPEECH" ]; then
-            echo "::group::Final speech_to_text/android/build.gradle"
-            cat "$SPEECH"
-            echo "::endgroup::"
-            # Confirm jcenter is gone
-            if grep -E "jcenter\(\)" "$SPEECH"; then
-              echo "::error::jcenter still present"
-              exit 1
-            fi
-          fi
-          echo "::group::Final app/build.gradle"
-          cat android/app/build.gradle
-          echo "::endgroup::"
-          echo "✅ All patches verified - proceeding to Gradle build"
+          echo "✅ google-services.json present: $(ls android/app/google-services.json)"
+          echo "✅ google-services plugin: $(grep 'google.gms' android/app/build.gradle | head -1)"
+          echo "✅ compileSdk: $(grep 'compileSdk' android/app/build.gradle | head -1)"
 
-      - name: Compile Release APK Bundle
+      - name: Build Release APK
         run: flutter build apk --release
 
-      - name: Compile Distribution AAB Package
+      - name: Build Release AAB
         run: flutter build appbundle --release
 
-      - name: Archive Compiled Binaries
+      - name: Archive Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: nova-x-v2.1-release-${{ github.sha }}
+          name: nova-x-v2.4-release-${{ github.sha }}
           path: build/app/outputs/
           retention-days: 14

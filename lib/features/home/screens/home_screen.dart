@@ -17,6 +17,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:nova_x/core/database/local_db.dart';
+import 'package:nova_x/core/services/api_service.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
 import 'package:nova_x/core/services/news_service.dart';
 import '../../browser/screens/browser_view.dart';
@@ -52,6 +53,7 @@ class _HomeScreenState extends State<HomeScreen>
   String? _backgroundPath;
 
   // Speed Dial
+  bool _searching = false;
   List<Map<String, dynamic>> _speedDial = [];
 
   // News
@@ -252,25 +254,36 @@ class _HomeScreenState extends State<HomeScreen>
     _fetchNews();
   }
 
-  void _go(String query) {
+  Future<void> _go(String query) async {
+    if (_searching) return;
     final q = query.trim();
     if (q.isEmpty) return;
-    // Business name lookup → opens business website
-    final biz = LocalDB.searchBusiness(q);
-    if (biz != null && (biz['website'] as String? ?? '').isNotEmpty) {
-      LocalDB.addSearchQuery(q);
-      _searchCtrl.clear(); _searchFocus.unfocus();
-      setState(() { _showSuggest = false; _suggestions = []; });
-      Navigator.push(context, MaterialPageRoute(
-          builder: (_) => BrowserView(initialQuery: biz['website'] as String)));
+
+    _searchCtrl.clear();
+    _searchFocus.unfocus();
+    setState(() { _showSuggest = false; _suggestions = []; _searching = true; });
+    LocalDB.addSearchQuery(q);
+    _searchHist = LocalDB.getSearchHistory();
+
+    // Server-side business lookup (bumps search_count)
+    final biz = await ApiService.searchBusiness(q);
+    if (!mounted) return;
+    setState(() => _searching = false);
+
+    final website = ((biz?['website'] as String?) ?? '').trim();
+    if (biz != null && website.isNotEmpty) {
+      final bizId = biz['id'] as int?;
+      if (bizId != null) ApiService.recordBusinessVisit(bizId);
+      HapticFeedback.lightImpact();
+      Navigator.push(context,
+          MaterialPageRoute(builder: (_) => BrowserView(initialQuery: website)));
       return;
     }
-    LocalDB.addSearchQuery(q);
-    _searchCtrl.clear(); _searchFocus.unfocus();
-    setState(() { _showSuggest = false; _suggestions = []; });
+
     HapticFeedback.lightImpact();
     Navigator.push(context,
-        MaterialPageRoute(builder: (_) => BrowserView(initialQuery: q)));
+        MaterialPageRoute(
+            builder: (_) => BrowserView(initialQuery: LocalDB.buildSearchUrl(q))));
   }
 
   void _push(Widget screen) => Navigator.push(context,

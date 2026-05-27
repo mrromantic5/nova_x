@@ -228,12 +228,17 @@ class _ProfileScreenState extends State<ProfileScreen>
       backgroundColor: AppTheme.bgDark,
       body: FadeTransition(
         opacity: _fadeAnim,
-        child: CustomScrollView(slivers: [
+        child: RefreshIndicator(
+          onRefresh: _loadAll,
+          color: AppTheme.accentCyan,
+          backgroundColor: AppTheme.bgCard,
+          child: CustomScrollView(slivers: [
           _buildAppBar(),
           SliverToBoxAdapter(
             child: _loggedIn ? _buildLoggedIn() : _buildNotLoggedIn(),
           ),
         ]),
+        ),
       ),
     );
   }

@@ -1,7 +1,7 @@
 name: nova_x
 description: NOVA X — The Future of Browsing
 publish_to: 'none'
-version: 2.1.0+1
+version: 2.2.0+1
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -14,25 +14,16 @@ dependencies:
   google_fonts: ^6.1.0
   shared_preferences: ^2.2.2
   dio: ^5.4.0
-  # Reverted to the ORIGINAL working versions that built successfully before
-  # the profile/business update. Upgrading these caused the broken-gradle
-  # mess; the js conflict they introduced is solved cleanly via the override
-  # block below — no pub-cache patching needed.
+  # Original working versions — do NOT upgrade these
   speech_to_text: ^6.6.2
   audioplayers: ^5.2.1
-  # New packages for the profile/business image upload feature
+  # Image upload for profile & business
   image_picker: ^1.0.7
   path_provider: ^2.1.2
 
-# ──────────────────────────────────────────────────────────────────────────
-# Resolves the js package conflict triggered by adding image_picker:
-#   audioplayers_web        → js ^0.6.4  (Flutter web only — never used on Android)
-#   image_picker_for_web    → js ^0.6.x  (Flutter web only — never used on Android)
-#   speech_to_text          → js ^0.7.1  (genuinely used at compile time)
-# Forcing js ^0.7.1 satisfies speech_to_text. The web-only deps still install
-# and link fine; their js usage is never invoked on Android targets, so the
-# override is harmless in production.
-# ──────────────────────────────────────────────────────────────────────────
+# Resolves the js version conflict between speech_to_text and
+# image_picker_for_web (a transitive dep). Web variants are never
+# invoked on Android so forcing js ^0.7.1 is safe.
 dependency_overrides:
   js: ^0.7.1
 
@@ -45,3 +36,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/
+    # Add your background images (.jpg/.png/.webp) into this folder.
+    # They will appear automatically in the Customization screen.
+    # The folder must exist with at least one file for Flutter to accept it.
+    - assets/backgrounds/

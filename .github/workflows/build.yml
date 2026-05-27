@@ -60,6 +60,35 @@ jobs:
             exit 1
           fi
 
+
+      # ─────────────────────────────────────────────────────────────────────
+      # APP ICON — resize assets/images/logo.png to all Android mipmap sizes
+      # ─────────────────────────────────────────────────────────────────────
+      - name: Set app icon from logo.png
+        run: |
+          pip install Pillow --break-system-packages -q
+          python3 << 'PYEOF2'
+          from PIL import Image
+          import os
+          logo_path = 'assets/images/logo.png'
+          if not os.path.exists(logo_path):
+              print(f'WARNING: {logo_path} not found — keeping default icon')
+              exit(0)
+          sizes = {
+              'mipmap-mdpi': 48, 'mipmap-hdpi': 72,
+              'mipmap-xhdpi': 96, 'mipmap-xxhdpi': 144, 'mipmap-xxxhdpi': 192,
+          }
+          logo = Image.open(logo_path).convert('RGBA')
+          for d, s in sizes.items():
+              out = f'android/app/src/main/res/{d}'
+              os.makedirs(out, exist_ok=True)
+              r = logo.resize((s, s), Image.LANCZOS)
+              r.save(f'{out}/ic_launcher.png')
+              r.save(f'{out}/ic_launcher_round.png')
+              print(f'✓ {d}: {s}x{s}px')
+          print('✅ App icon set from logo.png')
+          PYEOF2
+
       # ──────────────────────────────────────────────────────────────────────
       # FIREBASE: Flutter 3.24.5 generates a new-style build.gradle with a
       # plugins {} block at LINE 1. The ONLY correct way to add google-services
@@ -109,13 +138,62 @@ jobs:
           echo "✓ compileSdk bumped to 35"
           grep -E "compileSdk|targetSdk" "$F"
 
-      - name: Patch AndroidManifest
+      # FCM tap fix: launchMode="singleTop" + FLUTTER_NOTIFICATION_CLICK intent filter
+      # Without these, tapping a push notification does NOT open the app.
+      - name: Write complete AndroidManifest.xml
         run: |
-          M="android/app/src/main/AndroidManifest.xml"
-          sed -i 's/android:label="nova_x"/android:label="NOVA X"/' "$M"
-          sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>|' "$M"
-          sed -i 's|android:icon="@mipmap/ic_launcher">|android:icon="@mipmap/ic_launcher"\n        android:usesCleartextTraffic="true"\n        android:hardwareAccelerated="true">|' "$M"
-          echo "✓ AndroidManifest patched"
+          cat > android/app/src/main/AndroidManifest.xml << 'XMLEOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+              <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+              <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
+              <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>
+              <application
+                  android:label="NOVA X"
+                  android:name="${applicationName}"
+                  android:icon="@mipmap/ic_launcher"
+                  android:roundIcon="@mipmap/ic_launcher_round"
+                  android:usesCleartextTraffic="true"
+                  android:hardwareAccelerated="true">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTop"
+                      android:theme="@style/LaunchTheme"
+                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+                      android:hardwareAccelerated="true"
+                      android:windowSoftInputMode="adjustResize">
+                      <meta-data android:name="io.flutter.embedding.android.NormalTheme" android:resource="@style/NormalTheme"/>
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                      <intent-filter>
+                          <action android:name="FLUTTER_NOTIFICATION_CLICK"/>
+                          <category android:name="android.intent.category.DEFAULT"/>
+                      </intent-filter>
+                  </activity>
+                  <meta-data android:name="io.flutter.embedding.android.SplashScreenDrawable" android:resource="@drawable/launch_background"/>
+                  <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="nova_x_channel"/>
+                  <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@mipmap/ic_launcher"/>
+                  <meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/nova_x_cyan"/>
+              </application>
+          </manifest>
+          XMLEOF
+          echo "✓ AndroidManifest.xml written with FCM tap support"
+
+      - name: Create colour resource
+        run: |
+          mkdir -p android/app/src/main/res/values
+          cat > android/app/src/main/res/values/colors.xml << 'XMLEOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources><color name="nova_x_cyan">#00D4FF</color></resources>
+          XMLEOF
+          echo "✓ colors.xml created"
 
       - name: Configure Gradle Java Home
         run: echo "org.gradle.java.home=$JAVA_HOME" >> android/gradle.properties

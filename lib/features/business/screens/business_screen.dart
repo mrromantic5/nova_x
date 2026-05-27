@@ -1,7 +1,9 @@
 // lib/features/business/screens/business_screen.dart
 //
-// NOVA X Business — premium business directory
-// Features: live search, category filter, business cards, open in browser
+// NOVA X Business — premium SaaS-grade directory.
+//   • Most-searched businesses surface to the top (algorithmic ranking)
+//   • A "🔥 Trending" badge highlights the top performer
+//   • Live search with autocomplete, 12 category filters, hero+compact layout
 
 import 'dart:io';
 import 'dart:ui';
@@ -12,9 +14,6 @@ import 'package:nova_x/core/theme/app_theme.dart';
 import '../../browser/screens/browser_view.dart';
 import '../../profile/screens/profile_screen.dart';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Categories (must match profile_screen list)
-// ─────────────────────────────────────────────────────────────────────────────
 const _cats = [
   'All', 'Technology', 'Food & Drinks', 'Fashion', 'Health & Beauty',
   'Finance', 'Education', 'Entertainment', 'Real Estate',
@@ -22,36 +21,35 @@ const _cats = [
 ];
 
 const Map<String, Color> _catColors = {
-  'All':            Color(0xFF00D4FF),
-  'Technology':     Color(0xFF7C4DFF),
-  'Food & Drinks':  Color(0xFFFF6B6B),
-  'Fashion':        Color(0xFFFF4081),
-  'Health & Beauty':Color(0xFF00C853),
-  'Finance':        Color(0xFFFFAB00),
-  'Education':      Color(0xFF1E7BFF),
-  'Entertainment':  Color(0xFFFF6B6B),
-  'Real Estate':    Color(0xFF00BCD4),
-  'Retail':         Color(0xFFFF9800),
-  'Services':       Color(0xFF4CAF50),
-  'Other':          Color(0xFF9E9E9E),
+  'All':             Color(0xFF00D4FF),
+  'Technology':      Color(0xFF7C4DFF),
+  'Food & Drinks':   Color(0xFFFF6B6B),
+  'Fashion':         Color(0xFFFF4081),
+  'Health & Beauty': Color(0xFF00C853),
+  'Finance':         Color(0xFFFFAB00),
+  'Education':       Color(0xFF1E7BFF),
+  'Entertainment':   Color(0xFFFF6B6B),
+  'Real Estate':     Color(0xFF00BCD4),
+  'Retail':          Color(0xFFFF9800),
+  'Services':        Color(0xFF4CAF50),
+  'Other':           Color(0xFF9E9E9E),
 };
 
 const Map<String, IconData> _catIcons = {
-  'All':            Icons.apps_rounded,
-  'Technology':     Icons.computer_rounded,
-  'Food & Drinks':  Icons.restaurant_rounded,
-  'Fashion':        Icons.checkroom_rounded,
-  'Health & Beauty':Icons.spa_rounded,
-  'Finance':        Icons.account_balance_rounded,
-  'Education':      Icons.school_rounded,
-  'Entertainment':  Icons.movie_rounded,
-  'Real Estate':    Icons.home_work_rounded,
-  'Retail':         Icons.shopping_bag_rounded,
-  'Services':       Icons.miscellaneous_services_rounded,
-  'Other':          Icons.more_horiz_rounded,
+  'All':             Icons.apps_rounded,
+  'Technology':      Icons.computer_rounded,
+  'Food & Drinks':   Icons.restaurant_rounded,
+  'Fashion':         Icons.checkroom_rounded,
+  'Health & Beauty': Icons.spa_rounded,
+  'Finance':         Icons.account_balance_rounded,
+  'Education':       Icons.school_rounded,
+  'Entertainment':   Icons.movie_rounded,
+  'Real Estate':     Icons.home_work_rounded,
+  'Retail':          Icons.shopping_bag_rounded,
+  'Services':        Icons.miscellaneous_services_rounded,
+  'Other':           Icons.more_horiz_rounded,
 };
 
-// ═════════════════════════════════════════════════════════════════════════════
 class BusinessScreen extends StatefulWidget {
   const BusinessScreen({super.key});
   @override
@@ -66,8 +64,8 @@ class _BusinessScreenState extends State<BusinessScreen>
 
   String _selectedCat   = 'All';
   String _searchQuery   = '';
-  List<Map<String, dynamic>> _all        = [];
-  List<Map<String, dynamic>> _filtered   = [];
+  List<Map<String, dynamic>> _all         = [];
+  List<Map<String, dynamic>> _filtered    = [];
   List<String>               _suggestions = [];
 
   @override
@@ -90,14 +88,15 @@ class _BusinessScreenState extends State<BusinessScreen>
   }
 
   void _load() {
-    _all      = LocalDB.getAllBusinesses();
+    // Algorithmic: ranked by search count desc
+    _all      = LocalDB.getRankedBusinesses();
     _filtered = _applyFilter(_all, _selectedCat, _searchQuery);
     if (mounted) setState(() {});
   }
 
   List<Map<String, dynamic>> _applyFilter(
       List<Map<String, dynamic>> src, String cat, String query) {
-    var result = src.where((b) {
+    return src.where((b) {
       final matchCat = cat == 'All' || b['category'] == cat;
       final q        = query.toLowerCase().trim();
       final matchQ   = q.isEmpty ||
@@ -106,15 +105,14 @@ class _BusinessScreenState extends State<BusinessScreen>
           (b['location']    as String? ?? '').toLowerCase().contains(q);
       return matchCat && matchQ;
     }).toList();
-    return result;
   }
 
   void _onSearchChange() {
     final q = _searchCtrl.text;
     setState(() {
-      _searchQuery  = q;
-      _filtered     = _applyFilter(_all, _selectedCat, q);
-      _suggestions  = q.trim().isEmpty
+      _searchQuery = q;
+      _filtered    = _applyFilter(_all, _selectedCat, q);
+      _suggestions = q.trim().isEmpty
           ? []
           : _all
               .where((b) => (b['name'] as String? ?? '')
@@ -136,23 +134,27 @@ class _BusinessScreenState extends State<BusinessScreen>
   void _openBusiness(Map<String, dynamic> biz) {
     final url = (biz['website'] as String? ?? '').trim();
     if (url.isEmpty) {
+      _snack('No website listed for this business');
+      return;
+    }
+    // Bump search count when opened from directory too
+    LocalDB.searchBusiness(biz['name'] as String? ?? '');
+    Navigator.push(context, MaterialPageRoute(
+        builder: (_) => BrowserView(initialQuery: url))).then((_) => _load());
+  }
+
+  void _goAddBusiness() {
+    Navigator.push(context, MaterialPageRoute(
+        builder: (_) => const ProfileScreen())).then((_) => _load());
+  }
+
+  void _snack(String msg) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('No website listed for this business',
-            style: GoogleFonts.inter(color: Colors.white)),
+        content: Text(msg, style: GoogleFonts.inter(color: Colors.white)),
         backgroundColor: AppTheme.bgElevated,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ));
-      return;
-    }
-    Navigator.push(context,
-        MaterialPageRoute(builder: (_) => BrowserView(initialQuery: url)));
-  }
-
-  void _goAddBusiness() {
-    Navigator.push(context,
-        MaterialPageRoute(builder: (_) => const ProfileScreen())).then((_) => _load());
-  }
 
   // ═══════════════════════════════════════════════════════════════════════════
   @override
@@ -162,7 +164,6 @@ class _BusinessScreenState extends State<BusinessScreen>
       body: FadeTransition(
         opacity: _fadeAnim,
         child: Stack(children: [
-          // Gradient background accents
           Positioned(top: -80, right: -80,
             child: Container(width: 250, height: 250,
               decoration: BoxDecoration(
@@ -184,15 +185,13 @@ class _BusinessScreenState extends State<BusinessScreen>
             ),
           ),
 
-          SafeArea(
-            child: Column(children: [
-              _buildHeader(),
-              _buildSearchBar(),
-              if (_suggestions.isNotEmpty) _buildSuggestions(),
-              _buildCategoryBar(),
-              Expanded(child: _buildBody()),
-            ]),
-          ),
+          SafeArea(child: Column(children: [
+            _buildHeader(),
+            _buildSearchBar(),
+            if (_suggestions.isNotEmpty) _buildSuggestions(),
+            _buildCategoryBar(),
+            Expanded(child: _buildBody()),
+          ])),
         ]),
       ),
     );
@@ -224,7 +223,7 @@ class _BusinessScreenState extends State<BusinessScreen>
                     color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800,
                     letterSpacing: 1)),
           ),
-          Text('${_all.length} business${_all.length == 1 ? '' : 'es'} listed',
+          Text('${_all.length} business${_all.length == 1 ? '' : 'es'} · ranked by popularity',
               style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11)),
         ]),
         const Spacer(),
@@ -240,9 +239,8 @@ class _BusinessScreenState extends State<BusinessScreen>
             child: Row(mainAxisSize: MainAxisSize.min, children: [
               const Icon(Icons.add_rounded, color: Colors.white, size: 14),
               const SizedBox(width: 4),
-              Text('Add Yours',
-                  style: GoogleFonts.inter(
-                      color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
+              Text('Add Yours', style: GoogleFonts.inter(
+                  color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
             ]),
           ),
         ),
@@ -283,10 +281,7 @@ class _BusinessScreenState extends State<BusinessScreen>
               ),
               if (_searchQuery.isNotEmpty)
                 GestureDetector(
-                  onTap: () {
-                    _searchCtrl.clear();
-                    FocusScope.of(context).unfocus();
-                  },
+                  onTap: () { _searchCtrl.clear(); FocusScope.of(context).unfocus(); },
                   child: const Icon(Icons.close_rounded, color: AppTheme.textHint, size: 18),
                 ),
             ]),
@@ -296,7 +291,6 @@ class _BusinessScreenState extends State<BusinessScreen>
     );
   }
 
-  // ── Suggestions ────────────────────────────────────────────────────────────
   Widget _buildSuggestions() {
     return Container(
       margin: const EdgeInsets.fromLTRB(20, 4, 20, 0),
@@ -309,18 +303,14 @@ class _BusinessScreenState extends State<BusinessScreen>
         children: _suggestions.map((s) => ListTile(
           dense: true,
           leading: const Icon(Icons.business_rounded, color: AppTheme.accentCyan, size: 16),
-          title: Text(s, style: GoogleFonts.inter(
-              color: AppTheme.textPrimary, fontSize: 13)),
-          onTap: () {
-            _searchCtrl.text = s;
-            FocusScope.of(context).unfocus();
-          },
+          title: Text(s, style: GoogleFonts.inter(color: AppTheme.textPrimary, fontSize: 13)),
+          onTap: () { _searchCtrl.text = s; FocusScope.of(context).unfocus(); },
         )).toList(),
       ),
     );
   }
 
-  // ── Category bar ───────────────────────────────────────────────────────────
+  // ── Category chips ─────────────────────────────────────────────────────────
   Widget _buildCategoryBar() {
     return Container(
       height: 90,
@@ -395,20 +385,26 @@ class _BusinessScreenState extends State<BusinessScreen>
         itemCount: _filtered.length,
         itemBuilder: (_, i) {
           final biz = _filtered[i];
+          // Show trending badge on #1 only when sort is by-popularity (no search query, "All" category)
+          final isTrending = i == 0
+              && _searchQuery.isEmpty
+              && _selectedCat == 'All'
+              && ((biz['searchCount'] as int?) ?? 0) > 0;
           return i == 0
-              ? _buildHeroCard(biz)
-              : _buildCompactCard(biz);
+              ? _buildHeroCard(biz, isTrending: isTrending)
+              : _buildCompactCard(biz, rank: i + 1);
         },
       ),
     );
   }
 
-  // ── Hero card (first business) ─────────────────────────────────────────────
-  Widget _buildHeroCard(Map<String, dynamic> biz) {
+  // ── Hero card ──────────────────────────────────────────────────────────────
+  Widget _buildHeroCard(Map<String, dynamic> biz, {required bool isTrending}) {
     final imgPath  = biz['imagePath'] as String? ?? '';
     final cat      = biz['category'] as String? ?? 'Other';
     final color    = _catColors[cat] ?? AppTheme.accentCyan;
     final hasUrl   = (biz['website'] as String? ?? '').isNotEmpty;
+    final searchN  = (biz['searchCount'] as int?) ?? 0;
 
     return GestureDetector(
       onTap: () => _openBusiness(biz),
@@ -417,12 +413,12 @@ class _BusinessScreenState extends State<BusinessScreen>
         decoration: BoxDecoration(
           color: AppTheme.bgCard,
           borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: AppTheme.divider),
+          border: Border.all(
+              color: isTrending ? AppTheme.warning.withOpacity(0.4) : AppTheme.divider),
           boxShadow: AppTheme.cardShadow,
         ),
         clipBehavior: Clip.hardEdge,
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          // Image
           Stack(children: [
             SizedBox(
               height: 180, width: double.infinity,
@@ -431,13 +427,29 @@ class _BusinessScreenState extends State<BusinessScreen>
                       errorBuilder: (_, __, ___) => _imagePlaceholder(180, color))
                   : _imagePlaceholder(180, color),
             ),
-            // Category badge
-            Positioned(top: 12, left: 12,
-              child: _catBadge(cat, color),
-            ),
-            // Verified / live badge
-            Positioned(top: 12, right: 12,
-              child: Container(
+            Positioned(top: 12, left: 12, child: _catBadge(cat, color)),
+            // Trending badge
+            if (isTrending)
+              Positioned(top: 12, right: 12, child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                      colors: [Color(0xFFFF8800), Color(0xFFFFAB00)]),
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [BoxShadow(
+                      color: AppTheme.warning.withOpacity(0.4),
+                      blurRadius: 8)],
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Text('🔥', style: TextStyle(fontSize: 11)),
+                  const SizedBox(width: 4),
+                  Text('TRENDING', style: GoogleFonts.inter(
+                      color: Colors.white, fontSize: 9,
+                      fontWeight: FontWeight.w800, letterSpacing: 0.5)),
+                ]),
+              ))
+            else
+              Positioned(top: 12, right: 12, child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: Colors.black54,
@@ -450,21 +462,34 @@ class _BusinessScreenState extends State<BusinessScreen>
                   Text('Active', style: GoogleFonts.inter(
                       color: Colors.white, fontSize: 9, fontWeight: FontWeight.w700)),
                 ]),
-              ),
-            ),
+              )),
           ]),
-
           Padding(
             padding: const EdgeInsets.all(16),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(biz['name'] ?? '',
-                  style: GoogleFonts.spaceGrotesk(
-                      color: AppTheme.textPrimary,
-                      fontSize: 18, fontWeight: FontWeight.w700)),
+              Row(children: [
+                Expanded(child: Text(biz['name'] ?? '',
+                    style: GoogleFonts.spaceGrotesk(
+                        color: AppTheme.textPrimary,
+                        fontSize: 18, fontWeight: FontWeight.w700))),
+                if (searchN > 0) ...[
+                  const SizedBox(width: 8),
+                  Row(children: [
+                    const Icon(Icons.visibility_outlined,
+                        color: AppTheme.textHint, size: 12),
+                    const SizedBox(width: 3),
+                    Text('$searchN',
+                        style: GoogleFonts.inter(
+                            color: AppTheme.textHint, fontSize: 11,
+                            fontWeight: FontWeight.w600)),
+                  ]),
+                ],
+              ]),
               const SizedBox(height: 4),
               if ((biz['location'] as String? ?? '').isNotEmpty)
                 Row(children: [
-                  const Icon(Icons.location_on_rounded, color: AppTheme.textHint, size: 12),
+                  const Icon(Icons.location_on_rounded,
+                      color: AppTheme.textHint, size: 12),
                   const SizedBox(width: 4),
                   Text(biz['location'] ?? '',
                       style: GoogleFonts.inter(
@@ -478,38 +503,31 @@ class _BusinessScreenState extends State<BusinessScreen>
               const SizedBox(height: 14),
               Row(children: [
                 if (hasUrl)
-                  Expanded(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      decoration: BoxDecoration(
-                        gradient: AppTheme.primaryGradient,
-                        borderRadius: BorderRadius.circular(14),
-                        boxShadow: AppTheme.glowShadow,
-                      ),
-                      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                        const Icon(Icons.open_in_browser_rounded,
-                            color: Colors.white, size: 16),
-                        const SizedBox(width: 6),
-                        Text('Visit Website',
-                            style: GoogleFonts.inter(
-                                color: Colors.white, fontSize: 13,
-                                fontWeight: FontWeight.w700)),
-                      ]),
+                  Expanded(child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(
+                      gradient: AppTheme.primaryGradient,
+                      borderRadius: BorderRadius.circular(14),
+                      boxShadow: AppTheme.glowShadow,
                     ),
-                  )
+                    child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                      const Icon(Icons.open_in_browser_rounded,
+                          color: Colors.white, size: 16),
+                      const SizedBox(width: 6),
+                      Text('Visit Website', style: GoogleFonts.inter(
+                          color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700)),
+                    ]),
+                  ))
                 else
-                  Expanded(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      decoration: BoxDecoration(
-                        color: AppTheme.bgElevated,
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: Center(child: Text('No website',
-                          style: GoogleFonts.inter(
-                              color: AppTheme.textHint, fontSize: 13))),
+                  Expanded(child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(
+                      color: AppTheme.bgElevated,
+                      borderRadius: BorderRadius.circular(14),
                     ),
-                  ),
+                    child: Center(child: Text('No website',
+                        style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 13))),
+                  )),
               ]),
             ]),
           ),
@@ -519,10 +537,12 @@ class _BusinessScreenState extends State<BusinessScreen>
   }
 
   // ── Compact card ───────────────────────────────────────────────────────────
-  Widget _buildCompactCard(Map<String, dynamic> biz) {
+  Widget _buildCompactCard(Map<String, dynamic> biz, {required int rank}) {
     final imgPath = biz['imagePath'] as String? ?? '';
     final cat     = biz['category']  as String? ?? 'Other';
     final color   = _catColors[cat]  ?? AppTheme.accentCyan;
+    final searchN = (biz['searchCount'] as int?) ?? 0;
+    final showRank = _searchQuery.isEmpty && _selectedCat == 'All';
 
     return GestureDetector(
       onTap: () => _openBusiness(biz),
@@ -535,64 +555,78 @@ class _BusinessScreenState extends State<BusinessScreen>
           border: Border.all(color: AppTheme.divider),
         ),
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          // Thumbnail
-          Container(
-            width: 70, height: 70,
-            decoration: BoxDecoration(borderRadius: BorderRadius.circular(14)),
-            clipBehavior: Clip.hardEdge,
-            child: imgPath.isNotEmpty
-                ? Image.file(File(imgPath), fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => _imagePlaceholder(70, color))
-                : _imagePlaceholder(70, color),
-          ),
-          const SizedBox(width: 14),
-
-          // Info
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                Expanded(
-                  child: Text(biz['name'] ?? '',
-                      style: GoogleFonts.spaceGrotesk(
-                          color: AppTheme.textPrimary,
-                          fontSize: 14, fontWeight: FontWeight.w700),
-                      maxLines: 1, overflow: TextOverflow.ellipsis),
+          Stack(children: [
+            Container(
+              width: 70, height: 70,
+              decoration: BoxDecoration(borderRadius: BorderRadius.circular(14)),
+              clipBehavior: Clip.hardEdge,
+              child: imgPath.isNotEmpty
+                  ? Image.file(File(imgPath), fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _imagePlaceholder(70, color))
+                  : _imagePlaceholder(70, color),
+            ),
+            if (showRank)
+              Positioned(top: -6, left: -6, child: Container(
+                width: 22, height: 22,
+                decoration: BoxDecoration(
+                  color: AppTheme.bgDark,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: color, width: 1.5),
                 ),
-                _catBadge(cat, color, small: true),
-              ]),
-              const SizedBox(height: 3),
-              if ((biz['location'] as String? ?? '').isNotEmpty)
-                Row(children: [
-                  const Icon(Icons.location_on_rounded, color: AppTheme.textHint, size: 10),
-                  const SizedBox(width: 2),
-                  Flexible(
-                    child: Text(biz['location'] ?? '',
-                        style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 10),
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
-                  ),
-                ]),
-              const SizedBox(height: 4),
-              Text(biz['description'] ?? '',
-                  style: GoogleFonts.inter(
-                      color: AppTheme.textSecondary, fontSize: 11.5, height: 1.4),
-                  maxLines: 2, overflow: TextOverflow.ellipsis),
-              const SizedBox(height: 6),
-              Row(children: [
-                const Icon(Icons.open_in_new_rounded, color: AppTheme.accentCyan, size: 11),
-                const SizedBox(width: 4),
-                Text('Visit website',
-                    style: GoogleFonts.inter(
-                        color: AppTheme.accentCyan, fontSize: 11,
-                        fontWeight: FontWeight.w600)),
-              ]),
+                child: Center(child: Text('$rank',
+                    style: GoogleFonts.spaceGrotesk(
+                        color: color, fontSize: 10, fontWeight: FontWeight.w800))),
+              )),
+          ]),
+          const SizedBox(width: 14),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Expanded(child: Text(biz['name'] ?? '',
+                  style: GoogleFonts.spaceGrotesk(
+                      color: AppTheme.textPrimary,
+                      fontSize: 14, fontWeight: FontWeight.w700),
+                  maxLines: 1, overflow: TextOverflow.ellipsis)),
+              _catBadge(cat, color, small: true),
             ]),
-          ),
+            const SizedBox(height: 3),
+            Row(children: [
+              if ((biz['location'] as String? ?? '').isNotEmpty) ...[
+                const Icon(Icons.location_on_rounded, color: AppTheme.textHint, size: 10),
+                const SizedBox(width: 2),
+                Flexible(child: Text(biz['location'] ?? '',
+                    style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 10),
+                    maxLines: 1, overflow: TextOverflow.ellipsis)),
+              ],
+              if (searchN > 0) ...[
+                if ((biz['location'] as String? ?? '').isNotEmpty) const Text('  ·  ',
+                    style: TextStyle(color: AppTheme.textHint, fontSize: 10)),
+                const Icon(Icons.visibility_outlined,
+                    color: AppTheme.textHint, size: 10),
+                const SizedBox(width: 2),
+                Text('$searchN', style: GoogleFonts.inter(
+                    color: AppTheme.textHint, fontSize: 10)),
+              ],
+            ]),
+            const SizedBox(height: 4),
+            Text(biz['description'] ?? '',
+                style: GoogleFonts.inter(
+                    color: AppTheme.textSecondary, fontSize: 11.5, height: 1.4),
+                maxLines: 2, overflow: TextOverflow.ellipsis),
+            const SizedBox(height: 6),
+            Row(children: [
+              const Icon(Icons.open_in_new_rounded, color: AppTheme.accentCyan, size: 11),
+              const SizedBox(width: 4),
+              Text('Visit website',
+                  style: GoogleFonts.inter(
+                      color: AppTheme.accentCyan, fontSize: 11,
+                      fontWeight: FontWeight.w600)),
+            ]),
+          ])),
         ]),
       ),
     );
   }
 
-  // ── Empty states ───────────────────────────────────────────────────────────
   Widget _buildEmptyAll() {
     return Center(child: Padding(
       padding: const EdgeInsets.all(40),
@@ -647,7 +681,6 @@ class _BusinessScreenState extends State<BusinessScreen>
     ));
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
   Widget _imagePlaceholder(double height, Color color) => Container(
     height: height,
     decoration: BoxDecoration(

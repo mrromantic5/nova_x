@@ -1,4 +1,13 @@
 // lib/features/home/screens/home_screen.dart
+//
+// NOVA X home screen — v2.2
+//   • Header: [logo.png] [NOVA X] on left, [AI, Profile, Settings] on right
+//   • Background: persisted user choice (asset or device file), no random fetch
+//   • Speed dial: read from LocalDB, + button opens editor
+//   • Profile avatar shows uploaded photo or coloured initial
+//   • Business name search opens the business's website
+//   • Dynamic time-based subtitle (changes every 3 hours)
+
 import 'dart:io';
 import 'dart:math';
 import 'dart:ui';
@@ -18,6 +27,8 @@ import '../../settings/screens/settings_screen.dart';
 import '../../profile/screens/profile_screen.dart';
 import '../../downloads/screens/downloads_screen.dart';
 import '../../business/screens/business_screen.dart';
+import '../../customization/screens/customization_screen.dart';
+import '../../customization/screens/speed_dial_editor_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -33,29 +44,32 @@ class _HomeScreenState extends State<HomeScreen>
   late AnimationController    _animCtrl;
   late Animation<double>      _fadeAnim;
 
-  final int _bgIndex = Random().nextInt(10) + 1;
-
   // Profile
   String? _profileImgPath;
   String  _profileName = '';
 
+  // Background
+  String? _backgroundPath;
+
+  // Speed Dial
+  List<Map<String, dynamic>> _speedDial = [];
+
   // News
-  String                           _selectedCategory = 'For You';
-  List<NewsArticle>                _news             = [];
-  final Map<String, List<NewsArticle>> _newsCache    = {};
+  String                               _selectedCategory = 'For You';
+  List<NewsArticle>                    _news             = [];
+  final Map<String, List<NewsArticle>> _newsCache        = {};
   bool _loadingNews = false;
 
-  // Search
+  // Search UI state
   List<String> _suggestions = [];
   List<String> _searchHist  = [];
-  bool _showSuggest  = false;
-  bool _isListening  = false;
+  bool _showSuggest = false;
+  bool _isListening = false;
 
   // Voice
   final SpeechToText _speech      = SpeechToText();
   bool               _speechAvail = false;
 
-  // Dynamic subtitle — seeded by day+hour-slot so stable per session
   late final String _subtitle;
 
   static const Map<String, Color> _catColor = {
@@ -68,19 +82,6 @@ class _HomeScreenState extends State<HomeScreen>
     'Health':        Color(0xFFFF4081),
     'Science':       Color(0xFF00BCD4),
   };
-
-  final List<Map<String, dynamic>> _speedDial = [
-    {'name': 'Google',    'url': 'https://google.com',                    'domain': 'google.com'},
-    {'name': 'YouTube',   'url': 'https://m.youtube.com',                 'domain': 'youtube.com'},
-    {'name': 'Facebook',  'url': 'https://m.facebook.com',                'domain': 'facebook.com'},
-    {'name': 'WhatsApp',  'url': 'https://web.whatsapp.com',              'domain': 'whatsapp.com'},
-    {'name': 'Instagram', 'url': 'https://instagram.com',                 'domain': 'instagram.com'},
-    {'name': 'ChatXAP',   'url': 'https://c.x.t-lyfe.com.ng/login.html', 'domain': 'c.x.t-lyfe.com.ng'},
-    {'name': 'X',         'url': 'https://x.com',                         'domain': 'x.com'},
-    {'name': 'TikTok',    'url': 'https://www.tiktok.com',                'domain': 'tiktok.com'},
-    {'name': 'Wikipedia', 'url': 'https://en.m.wikipedia.org',            'domain': 'wikipedia.org'},
-    {'name': 'Gmail',     'url': 'https://mail.google.com',               'domain': 'mail.google.com'},
-  ];
 
   // ── Dynamic subtitle ───────────────────────────────────────────────────────
   String _buildSubtitle() {
@@ -107,7 +108,7 @@ class _HomeScreenState extends State<HomeScreen>
         "What's on your agenda today?",
         'Keep the momentum going! 🔥',
         'Halfway through the day — explore!',
-        "What did you miss this morning?",
+        'What did you miss this morning?',
         'Power through! The web awaits 💻',
       ];
     } else if (h >= 17 && h < 21) {
@@ -128,7 +129,7 @@ class _HomeScreenState extends State<HomeScreen>
         'Night owl mode activated! 🌙',
         'The web never sleeps 💫',
         "What are you curious about tonight? ✨",
-        "Shh… the world is sleeping 🤫",
+        'Shh… the world is sleeping 🤫',
         'Stars are out — so is the internet 🌟',
         "Still up? Let's explore 🔦",
       ];
@@ -144,7 +145,7 @@ class _HomeScreenState extends State<HomeScreen>
         vsync: this, duration: const Duration(milliseconds: 800));
     _fadeAnim = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
     _animCtrl.forward();
-    _loadProfile();
+    _loadAll();
     _initSpeech();
     _fetchNews();
     _searchHist = LocalDB.getSearchHistory();
@@ -164,10 +165,12 @@ class _HomeScreenState extends State<HomeScreen>
     super.dispose();
   }
 
-  void _loadProfile() {
+  void _loadAll() {
     final p = LocalDB.getProfile();
     _profileName    = p['name']  as String? ?? '';
     _profileImgPath = LocalDB.getProfileImagePath();
+    _backgroundPath = LocalDB.getBackgroundImage();
+    _speedDial      = LocalDB.getSpeedDial();
     if (mounted) setState(() {});
   }
 
@@ -252,7 +255,7 @@ class _HomeScreenState extends State<HomeScreen>
   void _go(String query) {
     final q = query.trim();
     if (q.isEmpty) return;
-    // Business name lookup — redirect to business website
+    // Business name lookup → opens business website
     final biz = LocalDB.searchBusiness(q);
     if (biz != null && (biz['website'] as String? ?? '').isNotEmpty) {
       LocalDB.addSearchQuery(q);
@@ -279,7 +282,7 @@ class _HomeScreenState extends State<HomeScreen>
           child: child,
         ),
         transitionDuration: const Duration(milliseconds: 280),
-      )).then((_) => _loadProfile());
+      )).then((_) => _loadAll());
 
   void _showSnack(String msg) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -350,23 +353,37 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Widget _buildBackground() => Positioned.fill(child: Stack(children: [
-    Image.network(
-      'https://api.browser.t-lyfe.com.ng/images/background$_bgIndex.jpg',
-      fit: BoxFit.cover, width: double.infinity, height: double.infinity,
-      errorBuilder: (_, __, ___) =>
-          Container(decoration: const BoxDecoration(gradient: AppTheme.bgGradient)),
-    ),
-    Container(decoration: const BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.topCenter, end: Alignment.bottomCenter,
-        colors: [Color(0xD507101E), Color(0x9507101E), Color(0xEE07101E)],
-        stops: [0.0, 0.45, 1.0],
-      ),
-    )),
-  ]));
+  // ── Background — persisted user choice ─────────────────────────────────────
+  Widget _buildBackground() {
+    final bg = _backgroundPath;
+    Widget layer;
+    if (bg == null || bg.isEmpty) {
+      layer = Container(decoration: const BoxDecoration(gradient: AppTheme.bgGradient));
+    } else if (bg.startsWith('assets/')) {
+      layer = Image.asset(bg,
+          fit: BoxFit.cover, width: double.infinity, height: double.infinity,
+          errorBuilder: (_, __, ___) =>
+              Container(decoration: const BoxDecoration(gradient: AppTheme.bgGradient)));
+    } else {
+      layer = Image.file(File(bg),
+          fit: BoxFit.cover, width: double.infinity, height: double.infinity,
+          errorBuilder: (_, __, ___) =>
+              Container(decoration: const BoxDecoration(gradient: AppTheme.bgGradient)));
+    }
 
-  // ── Header ─────────────────────────────────────────────────────────────────
+    return Positioned.fill(child: Stack(children: [
+      Positioned.fill(child: layer),
+      Container(decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter, end: Alignment.bottomCenter,
+          colors: [Color(0xD507101E), Color(0x9507101E), Color(0xEE07101E)],
+          stops: [0.0, 0.45, 1.0],
+        ),
+      )),
+    ]));
+  }
+
+  // ── Header: [logo + NOVA X] on left, [AI, Profile, Settings] on right ─────
   Widget _buildHeader() {
     final imgPath = _profileImgPath;
     final color   = _avatarColor();
@@ -375,7 +392,39 @@ class _HomeScreenState extends State<HomeScreen>
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
       child: Row(children: [
-        // Profile avatar
+        // Logo
+        Container(
+          width: 36, height: 36,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            gradient: LinearGradient(
+              colors: [AppTheme.accentCyan.withOpacity(0.15),
+                       AppTheme.accentPurple.withOpacity(0.10)],
+            ),
+          ),
+          clipBehavior: Clip.hardEdge,
+          child: Image.asset(
+            'assets/images/logo.png',
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => ShaderMask(
+              shaderCallback: (b) => AppTheme.primaryGradient.createShader(b),
+              child: const Icon(Icons.public_rounded,
+                  color: Colors.white, size: 22),
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        ShaderMask(
+          shaderCallback: (b) => AppTheme.primaryGradient.createShader(b),
+          child: Text('NOVA X', style: GoogleFonts.spaceGrotesk(
+              fontSize: 22, fontWeight: FontWeight.w800,
+              color: Colors.white, letterSpacing: 2)),
+        ),
+        const Spacer(),
+        // AI
+        _hBtn(Icons.psychology_outlined, () => _push(const AiAssistantScreen())),
+        const SizedBox(width: 8),
+        // Profile (replaces the old incognito slot)
         GestureDetector(
           onTap: () => _push(const ProfileScreen()),
           child: Container(
@@ -394,36 +443,8 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           ),
         ),
-        const SizedBox(width: 10),
-        ShaderMask(
-          shaderCallback: (b) => AppTheme.primaryGradient.createShader(b),
-          child: Text('NOVA X', style: GoogleFonts.spaceGrotesk(
-              fontSize: 22, fontWeight: FontWeight.w800,
-              color: Colors.white, letterSpacing: 2)),
-        ),
-        const Spacer(),
-        _hBtn(Icons.psychology_outlined, () => _push(const AiAssistantScreen())),
         const SizedBox(width: 8),
-        // Incognito
-        GestureDetector(
-          onTap: () {
-            HapticFeedback.mediumImpact();
-            Navigator.push(context, MaterialPageRoute(
-                builder: (_) => const BrowserView(
-                    initialQuery: 'https://www.google.com', incognito: true)));
-          },
-          child: Container(
-            width: 36, height: 36,
-            decoration: BoxDecoration(
-              color: AppTheme.accentPurple.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: AppTheme.accentPurple.withOpacity(0.35)),
-            ),
-            child: const Icon(Icons.person_off_outlined,
-                color: AppTheme.accentPurple, size: 18),
-          ),
-        ),
-        const SizedBox(width: 8),
+        // Settings
         _hBtn(Icons.settings_outlined, () => _push(const SettingsScreen())),
       ]),
     );
@@ -635,57 +656,91 @@ class _HomeScreenState extends State<HomeScreen>
     ],
   );
 
-  // ── Speed dial ──────────────────────────────────────────────────────────────
-  Widget _buildSpeedDial() => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 20),
-    child: GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 5, mainAxisSpacing: 14,
-        crossAxisSpacing: 14, childAspectRatio: 0.8,
-      ),
-      itemCount: _speedDial.length,
-      itemBuilder: (_, i) {
-        final site   = _speedDial[i];
-        final domain = site['domain'] as String;
-        return GestureDetector(
-          onTap: () => _go(site['url'] as String),
-          child: Column(children: [
-            Container(
-              width: 52, height: 52,
-              decoration: BoxDecoration(
-                color: AppTheme.bgCard,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppTheme.divider),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(15),
-                child: Image.network(
-                  'https://www.google.com/s2/favicons?domain=$domain&sz=64',
-                  width: 52, height: 52, fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Center(child: Text(
-                    (site['name'] as String)[0],
-                    style: GoogleFonts.spaceGrotesk(
-                        color: AppTheme.accentCyan,
-                        fontSize: 20, fontWeight: FontWeight.w800))),
+  // ── Speed Dial — last cell is + button to edit ─────────────────────────────
+  Widget _buildSpeedDial() {
+    final itemCount = _speedDial.length + 1; // +1 for the (+) tile
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: GridView.builder(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 5, mainAxisSpacing: 14,
+          crossAxisSpacing: 14, childAspectRatio: 0.8,
+        ),
+        itemCount: itemCount,
+        itemBuilder: (_, i) {
+          // Last cell = (+) editor
+          if (i == _speedDial.length) return _dialAddTile();
+          final site   = _speedDial[i];
+          final domain = site['domain'] as String? ?? '';
+          return GestureDetector(
+            onTap: () => _go(site['url'] as String),
+            onLongPress: () => _push(const SpeedDialEditorScreen()),
+            child: Column(children: [
+              Container(
+                width: 52, height: 52,
+                decoration: BoxDecoration(
+                  color: AppTheme.bgCard,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: AppTheme.divider),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(15),
+                  child: Image.network(
+                    'https://www.google.com/s2/favicons?domain=$domain&sz=64',
+                    width: 52, height: 52, fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Center(child: Text(
+                      (site['name'] as String? ?? '?')[0],
+                      style: GoogleFonts.spaceGrotesk(
+                          color: AppTheme.accentCyan,
+                          fontSize: 20, fontWeight: FontWeight.w800))),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 6),
-            Text(site['name'] as String,
-                style: GoogleFonts.inter(
-                    color: AppTheme.textSecondary, fontSize: 9.5,
-                    fontWeight: FontWeight.w500),
-                maxLines: 1, overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center),
-          ]),
-        );
-      },
-    ),
-  );
+              const SizedBox(height: 6),
+              Text(site['name'] as String? ?? '',
+                  style: GoogleFonts.inter(
+                      color: AppTheme.textSecondary, fontSize: 9.5,
+                      fontWeight: FontWeight.w500),
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center),
+            ]),
+          );
+        },
+      ),
+    );
+  }
 
-  // ── Features row: AI Chat | Bookmarks | Downloads | Business ──────────────
+  /// The (+) tile that opens the speed-dial editor.
+  Widget _dialAddTile() {
+    return GestureDetector(
+      onTap: () => _push(const SpeedDialEditorScreen()),
+      child: Column(children: [
+        Container(
+          width: 52, height: 52,
+          decoration: BoxDecoration(
+            color: AppTheme.accentCyan.withOpacity(0.10),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+                color: AppTheme.accentCyan.withOpacity(0.4),
+                width: 1.5,
+                style: BorderStyle.solid),
+          ),
+          child: const Icon(Icons.add_rounded,
+              color: AppTheme.accentCyan, size: 28),
+        ),
+        const SizedBox(height: 6),
+        Text('Add',
+            style: GoogleFonts.inter(
+                color: AppTheme.accentCyan, fontSize: 9.5,
+                fontWeight: FontWeight.w600),
+            maxLines: 1, textAlign: TextAlign.center),
+      ]),
+    );
+  }
+
+  // ── Feature row ────────────────────────────────────────────────────────────
   Widget _buildFeatureRow() {
     final items = [
       {'icon': Icons.psychology_outlined,      'label': 'AI Chat',
@@ -737,9 +792,7 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // NEWS
-  // ══════════════════════════════════════════════════════════════════════════
+  // ── News section ───────────────────────────────────────────────────────────
   Widget _buildNewsSection() => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
@@ -979,11 +1032,11 @@ class _HomeScreenState extends State<HomeScreen>
       boxShadow: AppTheme.cardShadow,
     ),
     child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-      _navBtn(Icons.home_rounded,            'Home',     null,                               true),
-      _navBtn(Icons.bookmark_rounded,        'Saved',    () => _push(const BookmarksScreen()), false),
-      _navBtn(Icons.download_rounded,        'Downloads',() => _push(const DownloadsScreen()),  false),
-      _navBtn(Icons.business_center_rounded, 'Business', () => _push(const BusinessScreen()),   false),
-      _navBtn(Icons.more_horiz_rounded,      'Menu',     _showMenu,                          false),
+      _navBtn(Icons.home_rounded,            'Home',     null,                                  true),
+      _navBtn(Icons.bookmark_rounded,        'Saved',    () => _push(const BookmarksScreen()),  false),
+      _navBtn(Icons.download_rounded,        'Downloads',() => _push(const DownloadsScreen()),   false),
+      _navBtn(Icons.business_center_rounded, 'Business', () => _push(const BusinessScreen()),    false),
+      _navBtn(Icons.more_horiz_rounded,      'Menu',     _showMenu,                             false),
     ]),
   );
 
@@ -1048,21 +1101,23 @@ class _MenuSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final items = [
-      {'icon': Icons.psychology_outlined,      'label': 'AI Chat',   'color': AppTheme.accentCyan,
+      {'icon': Icons.psychology_outlined,      'label': 'AI Chat',     'color': AppTheme.accentCyan,
        'fn': () { Navigator.pop(context); onPush(const AiAssistantScreen()); }},
-      {'icon': Icons.bookmark_border_rounded,  'label': 'Bookmarks', 'color': const Color(0xFFFFAB00),
+      {'icon': Icons.bookmark_border_rounded,  'label': 'Bookmarks',   'color': const Color(0xFFFFAB00),
        'fn': () { Navigator.pop(context); onPush(const BookmarksScreen()); }},
-      {'icon': Icons.download_outlined,        'label': 'Downloads', 'color': AppTheme.primaryBlue,
+      {'icon': Icons.download_outlined,        'label': 'Downloads',   'color': AppTheme.primaryBlue,
        'fn': () { Navigator.pop(context); onPush(const DownloadsScreen()); }},
-      {'icon': Icons.history_rounded,          'label': 'History',   'color': AppTheme.accentPurple,
+      {'icon': Icons.history_rounded,          'label': 'History',     'color': AppTheme.accentPurple,
        'fn': () { Navigator.pop(context); onPush(const HistoryScreen()); }},
-      {'icon': Icons.business_center_outlined, 'label': 'Business',  'color': const Color(0xFFFF6B6B),
+      {'icon': Icons.business_center_outlined, 'label': 'Business',    'color': const Color(0xFFFF6B6B),
        'fn': () { Navigator.pop(context); onPush(const BusinessScreen()); }},
-      {'icon': Icons.person_outline_rounded,   'label': 'Profile',   'color': AppTheme.accentCyan,
+      {'icon': Icons.palette_outlined,         'label': 'Customize',   'color': AppTheme.accentCyan,
+       'fn': () { Navigator.pop(context); onPush(const CustomizationScreen()); }},
+      {'icon': Icons.person_outline_rounded,   'label': 'Profile',     'color': AppTheme.success,
        'fn': () { Navigator.pop(context); onPush(const ProfileScreen()); }},
-      {'icon': Icons.settings_outlined,        'label': 'Settings',  'color': AppTheme.success,
+      {'icon': Icons.settings_outlined,        'label': 'Settings',    'color': AppTheme.primaryBlue,
        'fn': () { Navigator.pop(context); onPush(const SettingsScreen()); }},
-      {'icon': Icons.person_off_outlined,      'label': 'Incognito', 'color': AppTheme.accentPurple,
+      {'icon': Icons.person_off_outlined,      'label': 'Incognito',   'color': AppTheme.accentPurple,
        'fn': () { Navigator.pop(context); onIncognito(); }},
     ];
     return Container(

@@ -4,6 +4,7 @@
 // Fetches ranked businesses from /api/v1/businesses.
 // Tap → opens the business website + bumps search_count server-side.
 
+import 'dart:math';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -63,6 +64,7 @@ class _BusinessScreenState extends State<BusinessScreen>
   String _selectedCat = 'All';
   String _query = '';
   List<Map<String, dynamic>> _all = [];
+  int _heroIndex = 0;
   List<Map<String, dynamic>> _filtered = [];
   List<String> _suggestions = [];
   bool _loading = true;
@@ -89,6 +91,12 @@ class _BusinessScreenState extends State<BusinessScreen>
   Future<void> _load() async {
     setState(() => _loading = true);
     _all = await ApiService.getBusinesses();
+    // Pick a random hero card on every load — so first card changes each time
+    if (_all.isNotEmpty) {
+      _heroIndex = Random().nextInt(_all.length);
+    } else {
+      _heroIndex = 0;
+    }
     _filtered = _applyFilter(_all, _selectedCat, _query);
     if (mounted) setState(() => _loading = false);
   }
@@ -142,6 +150,9 @@ class _BusinessScreenState extends State<BusinessScreen>
       _snack('No website listed for this business');
       return;
     }
+    // Record visit on server (increments visit_count)
+    final bizId = biz['id'] as int?;
+    if (bizId != null) ApiService.recordBusinessVisit(bizId);
     Navigator.push(context, MaterialPageRoute(
         builder: (_) => BrowserView(initialQuery: url)))
         .then((_) => _load());
@@ -394,15 +405,25 @@ class _BusinessScreenState extends State<BusinessScreen>
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 30),
         itemCount: _filtered.length,
         itemBuilder: (_, i) {
-          final biz = _filtered[i];
+          // Reorder: show _heroIndex item first, then all others
+          int actualIdx;
+          if (i == 0) {
+            actualIdx = _heroIndex.clamp(0, _filtered.length - 1);
+          } else if (i <= _heroIndex) {
+            actualIdx = i - 1;
+          } else {
+            actualIdx = i;
+          }
+          final biz = _filtered[actualIdx];
           final searchCount = (biz['search_count'] as int?) ?? 0;
+          // Trending badge: only shown when no filter active AND has searches
           final isTrending = i == 0
               && _query.isEmpty
               && _selectedCat == 'All'
               && searchCount > 0;
           return i == 0
               ? _buildHeroCard(biz, isTrending: isTrending)
-              : _buildCompactCard(biz, rank: i + 1);
+              : _buildCompactCard(biz, rank: i);
         },
       ),
     );

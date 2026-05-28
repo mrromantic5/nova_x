@@ -24,10 +24,15 @@ class BrowserView extends StatefulWidget {
   /// Set to true to open in private/incognito mode
   final bool incognito;
 
+  /// Optional HTML to load directly (e.g. visual search page).
+  /// When set, loaded via loadData() with baseUrl=google.com
+  final String? htmlContent;
+
   const BrowserView({
     super.key,
     required this.initialQuery,
     this.incognito = false,
+    this.htmlContent,
   });
 
   @override
@@ -441,6 +446,18 @@ class _BrowserViewState extends State<BrowserView>
             return null;
           },
         );
+        // Visual search: load HTML with google.com base URL
+        // so fetch() is same-origin and cookies are included
+        if (widget.htmlContent != null) {
+          Future.delayed(const Duration(milliseconds: 80), () {
+            c.loadData(
+              data:     widget.htmlContent!,
+              mimeType: 'text/html',
+              encoding: 'utf-8',
+              baseUrl:  WebUri('https://www.google.com'),
+            );
+          });
+        }
       },
 
       onLoadStart: (c, url) async {

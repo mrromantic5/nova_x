@@ -54,7 +54,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ));
 
-  void _push(Widget screen) => Navigator.push(
+  Future<void> _push(Widget screen) => Navigator.push(
     context,
     MaterialPageRoute(builder: (_) => screen),
   ).then((_) => setState(() {
@@ -253,7 +253,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _navTile(Icons.password_rounded, 'Saved Passwords',
               '$_savedPwCount password${_savedPwCount == 1 ? '' : 's'} stored',
               AppTheme.accentPurple,
-              () => _push(const PasswordManagerScreen()).then((_) => _loadPwCount())),
+              () async { await _push(const PasswordManagerScreen()); _loadPwCount(); }),
           ]),
 
           // ── Privacy & Data ────────────────────────────────────────────────

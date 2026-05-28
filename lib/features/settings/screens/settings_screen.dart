@@ -1,7 +1,10 @@
 // lib/features/settings/screens/settings_screen.dart
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:nova_x/core/database/local_db.dart';
+import 'package:nova_x/core/services/password_service.dart';
+import '../../password/password_manager_screen.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
 import '../../profile/screens/profile_screen.dart';
 import '../../customization/screens/customization_screen.dart';
@@ -16,12 +19,23 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   String _engine = 'google';
   Map<String, dynamic> _profile = {};
+  bool   _adBlock       = false;
+  bool   _savePasswords = true;
+  int    _savedPwCount  = 0;
 
   @override
   void initState() {
     super.initState();
-    _engine  = LocalDB.getSearchEngine();
-    _profile = LocalDB.getProfile();
+    _engine       = LocalDB.getSearchEngine();
+    _profile      = LocalDB.getProfile();
+    _adBlock      = LocalDB.getAdBlockEnabled();
+    _savePasswords= LocalDB.getSavePasswordsEnabled();
+    _loadPwCount();
+  }
+
+  Future<void> _loadPwCount() async {
+    final all = await PasswordService.getAllCredentials();
+    if (mounted) setState(() => _savedPwCount = all.length);
   }
 
   Future<void> _setEngine(String e) async {
@@ -37,12 +51,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ));
 
-  void _push(Widget screen) => Navigator.push(
+  Future<void> _push(Widget screen) => Navigator.push(
     context,
     MaterialPageRoute(builder: (_) => screen),
   ).then((_) => setState(() {
     _profile = LocalDB.getProfile();
     _engine  = LocalDB.getSearchEngine();
+    _adBlock = LocalDB.getAdBlockEnabled();
+    _savePasswords = LocalDB.getSavePasswordsEnabled();
   }));
 
   VoidCallback _confirm(String title, String body, Future<void> Function() fn) {
@@ -185,7 +201,63 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _engineTile('yahoo',      'Yahoo',       'yahoo.com'),
           ]),
 
-          // ── Privacy ────────────────────────────────────────────────────
+          // ── Security & Passwords ────────────────────────────────────────
+          _sectionHeader('Security & Passwords'),
+          _card([
+            // Ad Blocker toggle
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              leading: Container(
+                width: 34, height: 34,
+                decoration: BoxDecoration(
+                  color: (_adBlock ? AppTheme.success : AppTheme.textHint).withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(10)),
+                child: Icon(Icons.shield_rounded,
+                    color: _adBlock ? AppTheme.success : AppTheme.textHint, size: 17)),
+              title: Text('Ad Blocker', style: GoogleFonts.inter(
+                  color: AppTheme.textPrimary, fontSize: 14, fontWeight: FontWeight.w500)),
+              subtitle: Text(_adBlock ? 'Blocking ads & trackers' : 'Ads not blocked',
+                  style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11)),
+              trailing: Switch(
+                value: _adBlock,
+                onChanged: (v) async {
+                  await LocalDB.setAdBlockEnabled(v);
+                  setState(() => _adBlock = v);
+                  _snack(v ? '🛡️ Ad Blocker enabled' : 'Ad Blocker disabled');
+                },
+                activeColor: AppTheme.success,
+              ),
+            ),
+            // Save Passwords toggle
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              leading: Container(
+                width: 34, height: 34,
+                decoration: BoxDecoration(
+                  color: AppTheme.accentCyan.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(10)),
+                child: const Icon(Icons.key_rounded, color: AppTheme.accentCyan, size: 17)),
+              title: Text('Save Passwords', style: GoogleFonts.inter(
+                  color: AppTheme.textPrimary, fontSize: 14, fontWeight: FontWeight.w500)),
+              subtitle: Text(_savePasswords ? 'Offer to save logins' : 'Never save passwords',
+                  style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11)),
+              trailing: Switch(
+                value: _savePasswords,
+                onChanged: (v) async {
+                  await LocalDB.setSavePasswordsEnabled(v);
+                  setState(() => _savePasswords = v);
+                },
+                activeColor: AppTheme.accentCyan,
+              ),
+            ),
+            // Saved Passwords management
+            _navTile(Icons.password_rounded, 'Saved Passwords',
+                '$_savedPwCount password${_savedPwCount == 1 ? '' : 's'} stored',
+                AppTheme.accentPurple,
+                () => _push(const PasswordManagerScreen()).then((_) => _loadPwCount())),
+          ]),
+
+          // ── Privacy & Data ──────────────────────────────────────────────
           _sectionHeader('Privacy & Data'),
           _card([
             _actionTile(
@@ -213,6 +285,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   () async { await LocalDB.clearSearchHistory(); _snack('Search history cleared'); }),
             ),
           ]),
+
+          const SizedBox(height: 4),
+          // Clear ALL browser data in one tap
+          _actionTile(
+            Icons.delete_sweep_rounded, 'Clear All Browser Data',
+            'Cookies, cache, history, searches & downloads',
+            AppTheme.danger,
+            _confirm(
+              'Clear All Browser Data',
+              'This will delete your entire browsing history, cookies, cache, search history and download records. This cannot be undone.',
+              () async {
+                // Clear WebView cookies + cache
+                await CookieManager.instance().deleteAllCookies();
+                await InAppWebViewController.clearAllCache();
+                // Clear local records
+                await LocalDB.clearHistory();
+                await LocalDB.clearBookmarks();
+                await LocalDB.clearDownloads();
+                await LocalDB.clearSearchHistory();
+                _snack('🧹 All browser data cleared');
+              },
+            ),
+          ),
 
           // ── About ──────────────────────────────────────────────────────
           _sectionHeader('About NOVA X'),

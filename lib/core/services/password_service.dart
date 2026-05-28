@@ -1,21 +1,17 @@
 // lib/core/services/password_service.dart
-//
-// Handles:
-//   • Saving / reading / deleting passwords via flutter_secure_storage
-//   • Ad-blocker ContentBlocker list for flutter_inappwebview
-//   • JS snippets for password detection and autofill
-
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+// Use 'as fss' prefix to avoid AndroidOptions name conflict with flutter_inappwebview
+import 'package:flutter_secure_storage/flutter_secure_storage.dart' as fss;
 import 'dart:convert';
 
 class PasswordService {
-  static const _storage = FlutterSecureStorage(
-    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+  // Prefix all calls with fss. to avoid AndroidOptions ambiguity
+  static const _storage = fss.FlutterSecureStorage(
+    aOptions: fss.AndroidOptions(encryptedSharedPreferences: true),
   );
   static const _prefix = 'novax_pw_';
 
-  // ── Save credentials for a domain ──────────────────────────────────────────
+  // ── Save credentials ────────────────────────────────────────────────────────
   static Future<void> saveCredentials(
       String domain, String username, String password) async {
     final key   = _prefix + _sanitizeDomain(domain);
@@ -23,7 +19,7 @@ class PasswordService {
     await _storage.write(key: key, value: value);
   }
 
-  // ── Get saved credentials for a domain (null if none) ───────────────────────
+  // ── Get credentials for domain ──────────────────────────────────────────────
   static Future<Map<String, String>?> getCredentials(String domain) async {
     try {
       final key = _prefix + _sanitizeDomain(domain);
@@ -39,10 +35,10 @@ class PasswordService {
     }
   }
 
-  // ── List all saved passwords (for management screen) ────────────────────────
+  // ── List all saved passwords ─────────────────────────────────────────────────
   static Future<List<Map<String, String>>> getAllCredentials() async {
     try {
-      final all = await _storage.readAll();
+      final all    = await _storage.readAll();
       final result = <Map<String, String>>[];
       for (final entry in all.entries) {
         if (!entry.key.startsWith(_prefix)) continue;
@@ -63,12 +59,11 @@ class PasswordService {
     }
   }
 
-  // ── Delete one domain's credentials ─────────────────────────────────────────
-  static Future<void> deleteCredentials(String domain) async {
-    await _storage.delete(key: _prefix + _sanitizeDomain(domain));
-  }
+  // ── Delete one domain ────────────────────────────────────────────────────────
+  static Future<void> deleteCredentials(String domain) async =>
+      _storage.delete(key: _prefix + _sanitizeDomain(domain));
 
-  // ── Delete all saved passwords ───────────────────────────────────────────────
+  // ── Delete all ───────────────────────────────────────────────────────────────
   static Future<void> deleteAllCredentials() async {
     final all = await _storage.readAll();
     for (final key in all.keys) {
@@ -103,9 +98,8 @@ class PasswordService {
 })();
 ''';
 
-  // ── JS: autofill username + password into detected fields ──────────────────
+  // ── JS: autofill fields ──────────────────────────────────────────────────────
   static String autofillJS(String username, String password) {
-    // Escape single quotes in credentials
     final safeU = username.replaceAll("'", "\\'").replaceAll('`', '\\`');
     final safeP = password.replaceAll("'", "\\'").replaceAll('`', '\\`');
     return """
@@ -113,7 +107,7 @@ class PasswordService {
   var filled = false;
   var inputs = document.querySelectorAll('input');
   for (var i = 0; i < inputs.length; i++) {
-    var inp = inputs[i];
+    var inp  = inputs[i];
     var name = (inp.name || inp.id || inp.placeholder || '').toLowerCase();
     if (!filled && (inp.type === 'email' ||
         name.includes('user') || name.includes('email') ||
@@ -133,56 +127,98 @@ class PasswordService {
 """;
   }
 
-  // ── Ad-blocker: 60+ blocked ad/tracker domains ──────────────────────────────
+  // ── Ad blocker: 60+ domains using VALID flutter_inappwebview 6.x enum values ─
+  // Valid ContentBlockerTriggerResourceType values in v6:
+  //   SCRIPT, IMAGE, STYLE_SHEET, RAW (covers XHR/fetch), MEDIA, FONT,
+  //   SVG_DOCUMENT, POPUP, DOCUMENT
+  // NOT valid in v6: FETCH, XMLHTTPREQUEST, OTHER (those don't exist)
   static List<ContentBlocker> buildAdBlockers() {
     const patterns = [
       // Google advertising
-      'doubleclick\\.net', 'googlesyndication\\.com',
-      'googleadservices\\.com', 'adservice\\.google\\.com',
+      'doubleclick\\.net',
+      'googlesyndication\\.com',
+      'googleadservices\\.com',
+      'adservice\\.google\\.com',
       'pagead2\\.googlesyndication\\.com',
-      // Analytics
-      'google-analytics\\.com', 'analytics\\.google\\.com',
-      'googletagmanager\\.com', 'googletagservices\\.com',
+      // Analytics / tag managers
+      'google-analytics\\.com',
+      'analytics\\.google\\.com',
+      'googletagmanager\\.com',
+      'googletagservices\\.com',
       // Major ad networks
-      'adnxs\\.com', 'advertising\\.com', 'amazon-adsystem\\.com',
-      'ads\\.yahoo\\.com', 'pubmatic\\.com', 'openx\\.net',
-      'rubiconproject\\.com', 'criteo\\.com', 'criteo\\.net',
-      'taboola\\.com', 'outbrain\\.com', 'media\\.net',
+      'adnxs\\.com',
+      'advertising\\.com',
+      'amazon-adsystem\\.com',
+      'ads\\.yahoo\\.com',
+      'pubmatic\\.com',
+      'openx\\.net',
+      'rubiconproject\\.com',
+      'criteo\\.com',
+      'criteo\\.net',
+      'taboola\\.com',
+      'outbrain\\.com',
+      'media\\.net',
       // Trackers
-      'scorecardresearch\\.com', 'quantserve\\.com', 'comscore\\.com',
-      'demdex\\.net', 'exelator\\.com', 'krxd\\.net',
-      'bluekai\\.com', 'doubleverify\\.com', 'integral-active\\.com',
+      'scorecardresearch\\.com',
+      'quantserve\\.com',
+      'comscore\\.com',
+      'demdex\\.net',
+      'exelator\\.com',
+      'krxd\\.net',
+      'bluekai\\.com',
+      'doubleverify\\.com',
+      'integral-active\\.com',
       // Programmatic
-      'indexww\\.com', 'casalemedia\\.com', 'contextweb\\.com',
-      'cxense\\.com', 'bidswitch\\.net', 'adform\\.net',
-      'adsrvr\\.org', 'adtech\\.de', 'lkqd\\.net',
-      'moatads\\.com', 'rfihub\\.com', 'nexac\\.com',
-      'sharethrough\\.com', 'sovrn\\.com', 'lijit\\.com',
-      'triplelift\\.com', 'undertone\\.com', 'vertamedia\\.com',
-      'teads\\.tv', 'zedo\\.com', 'stickyads\\.tv',
+      'indexww\\.com',
+      'casalemedia\\.com',
+      'contextweb\\.com',
+      'cxense\\.com',
+      'bidswitch\\.net',
+      'adform\\.net',
+      'adsrvr\\.org',
+      'adtech\\.de',
+      'lkqd\\.net',
+      'moatads\\.com',
+      'rfihub\\.com',
+      'nexac\\.com',
+      'sharethrough\\.com',
+      'sovrn\\.com',
+      'lijit\\.com',
+      'triplelift\\.com',
+      'undertone\\.com',
+      'vertamedia\\.com',
+      'teads\\.tv',
+      'zedo\\.com',
+      'stickyads\\.tv',
       // Social trackers
-      'facebook\\.com/tr', 'connect\\.facebook\\.net',
-      'platform\\.twitter\\.com/oct\\.js',
-      'snap\\.licdn\\.com', 'ads\\.linkedin\\.com',
+      'connect\\.facebook\\.net',
+      'snap\\.licdn\\.com',
+      'ads\\.linkedin\\.com',
       // Mobile ad SDKs
-      'adcolony\\.com', 'mopub\\.com', 'applovin\\.com',
-      'inmobi\\.com', 'verizonmedia\\.com', 'appnexus\\.com',
-      // Others
-      'trustarc\\.com', 'tremorhub\\.com', 'onetag\\.net',
-      'spotxchange\\.com', 'smartadserver\\.com', '33across\\.com',
-      'a8r8\\.com', 'adtelligent\\.com', 'emxdgt\\.com',
+      'adcolony\\.com',
+      'mopub\\.com',
+      'applovin\\.com',
+      'inmobi\\.com',
+      'appnexus\\.com',
+      // Misc
+      'trustarc\\.com',
+      'tremorhub\\.com',
+      'onetag\\.net',
+      'spotxchange\\.com',
+      'smartadserver\\.com',
     ];
 
     return patterns.map((pattern) => ContentBlocker(
       trigger: ContentBlockerTrigger(
         urlFilter: pattern,
+        // Only use resource types that EXIST in flutter_inappwebview 6.x
         resourceType: [
           ContentBlockerTriggerResourceType.SCRIPT,
           ContentBlockerTriggerResourceType.IMAGE,
           ContentBlockerTriggerResourceType.STYLE_SHEET,
-          ContentBlockerTriggerResourceType.FETCH,
-          ContentBlockerTriggerResourceType.XMLHTTPREQUEST,
-          ContentBlockerTriggerResourceType.OTHER,
+          ContentBlockerTriggerResourceType.RAW,    // covers XHR + fetch
+          ContentBlockerTriggerResourceType.MEDIA,
+          ContentBlockerTriggerResourceType.FONT,
         ],
       ),
       action: ContentBlockerAction(

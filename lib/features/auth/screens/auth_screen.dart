@@ -4,6 +4,8 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:nova_x/core/services/api_service.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
+import '../../legal/screens/terms_screen.dart';
+import '../../legal/screens/privacy_screen.dart';
 import '../../home/screens/home_screen.dart';
 import 'otp_screen.dart';
 
@@ -21,6 +23,7 @@ class _AuthScreenState extends State<AuthScreen>
   bool _obscure   = true;
   bool _obscure2  = true;
   String _error   = '';
+  bool _agreed    = false;  // must agree to T&C before sign up
 
   final _loginEmailCtrl = TextEditingController();
   final _loginPassCtrl  = TextEditingController();
@@ -76,6 +79,10 @@ class _AuthScreenState extends State<AuthScreen>
     final email = _regEmailCtrl.text.trim();
     final pass  = _regPassCtrl.text;
     final pass2 = _regPass2Ctrl.text;
+    if (!_agreed) {
+      setState(() => _error = 'Please agree to the Terms of Service and Privacy Policy.');
+      return;
+    }
     if (name.isEmpty || email.isEmpty || pass.isEmpty) {
       setState(() => _error = 'Please fill in all fields.');
       return;
@@ -240,9 +247,9 @@ class _AuthScreenState extends State<AuthScreen>
               ),
             ),
 
-            // Verification notice for sign-up tab
+            // Email verification notice
             if (_tabs.index == 1) ...[
-              const SizedBox(height: 14),
+              const SizedBox(height: 10),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
@@ -259,6 +266,65 @@ class _AuthScreenState extends State<AuthScreen>
                     style: GoogleFonts.inter(
                         color: AppTheme.accentCyan, fontSize: 11),
                   )),
+                ]),
+              ),
+              const SizedBox(height: 12),
+              // ── Agreement checkbox ───────────────────────────────
+              GestureDetector(
+                onTap: () => setState(() => _agreed = !_agreed),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    width: 22, height: 22, margin: const EdgeInsets.only(top: 1),
+                    decoration: BoxDecoration(
+                      color: _agreed
+                          ? AppTheme.accentCyan : Colors.transparent,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: _agreed
+                            ? AppTheme.accentCyan : AppTheme.textHint,
+                        width: 1.5,
+                      ),
+                    ),
+                    child: _agreed
+                        ? const Icon(Icons.check_rounded,
+                            color: Colors.white, size: 14)
+                        : null,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text.rich(TextSpan(
+                    style: GoogleFonts.inter(
+                        color: AppTheme.textSecondary, fontSize: 12,
+                        height: 1.5),
+                    children: [
+                      const TextSpan(text: 'I have read and agree to the '),
+                      WidgetSpan(child: GestureDetector(
+                        onTap: () => Navigator.push(context,
+                            MaterialPageRoute(
+                                builder: (_) => const TermsScreen())),
+                        child: Text('Terms of Service',
+                            style: GoogleFonts.inter(
+                                color: AppTheme.accentCyan, fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                decoration: TextDecoration.underline,
+                                decorationColor: AppTheme.accentCyan)),
+                      )),
+                      const TextSpan(text: ' and '),
+                      WidgetSpan(child: GestureDetector(
+                        onTap: () => Navigator.push(context,
+                            MaterialPageRoute(
+                                builder: (_) => const PrivacyScreen())),
+                        child: Text('Privacy Policy',
+                            style: GoogleFonts.inter(
+                                color: AppTheme.accentPurple, fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                decoration: TextDecoration.underline,
+                                decorationColor: AppTheme.accentPurple)),
+                      )),
+                      const TextSpan(text: ' of NOVA X.'),
+                    ],
+                  ))),
                 ]),
               ),
             ],

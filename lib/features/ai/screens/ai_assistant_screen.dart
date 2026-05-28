@@ -753,23 +753,42 @@ class _ImagePreviewScreenState extends State<_ImagePreviewScreen> {
     if (_downloading || _downloaded) return;
     setState(() => _downloading = true);
     try {
-      final dio   = Dio();
-      final bytes = await dio.get<List<int>>(widget.imageUrl,
+      final dio      = Dio();
+      final response = await dio.get<List<int>>(widget.imageUrl,
           options: Options(responseType: ResponseType.bytes));
-      final dir   = await getApplicationDocumentsDirectory();
-      final path  = '${dir.path}/brains_ai_${DateTime.now().millisecondsSinceEpoch}.jpg';
-      await File(path).writeAsBytes(bytes.data!);
+
+      // Save to public Pictures/NOVA X — visible in device Files app & Gallery
+      final String savePath;
+      if (Platform.isAndroid) {
+        final extDir   = await getExternalStorageDirectory();
+        final basePath = extDir!.path.split('/Android/')[0];
+        final picDir   = Directory('$basePath/Pictures/NOVA X');
+        if (!await picDir.exists()) await picDir.create(recursive: true);
+        savePath = '${picDir.path}/brains_ai_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      } else {
+        final dir = await getApplicationDocumentsDirectory();
+        savePath  = '${dir.path}/brains_ai_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      }
+
+      await File(savePath).writeAsBytes(response.data!);
+
       if (mounted) setState(() { _downloading = false; _downloaded = true; });
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Image saved ✓', style: GoogleFonts.inter(color: Colors.white)),
+        content: Row(children: [
+          const Icon(Icons.check_circle_outline_rounded, color: Colors.white, size: 16),
+          const SizedBox(width: 8),
+          Expanded(child: Text('Saved to Pictures/NOVA X on your device ✓',
+              style: GoogleFonts.inter(color: Colors.white, fontSize: 12))),
+        ]),
         backgroundColor: AppTheme.success,
         behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ));
-    } catch (_) {
+    } catch (e) {
       if (mounted) setState(() { _downloading = false; });
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Download failed. Try again.',
+        content: Text('Download failed. Check your connection.',
             style: GoogleFonts.inter(color: Colors.white)),
         backgroundColor: AppTheme.danger,
         behavior: SnackBarBehavior.floating,
@@ -777,6 +796,7 @@ class _ImagePreviewScreenState extends State<_ImagePreviewScreen> {
       ));
     }
   }
+
 
   @override
   Widget build(BuildContext context) {

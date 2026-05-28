@@ -1,10 +1,9 @@
 // lib/features/settings/screens/settings_screen.dart
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:nova_x/core/database/local_db.dart';
-import 'package:nova_x/core/services/password_service.dart';
-import '../../password/password_manager_screen.dart';
+import '../../legal/screens/terms_screen.dart';
+import '../../legal/screens/privacy_screen.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
 import '../../profile/screens/profile_screen.dart';
 import '../../customization/screens/customization_screen.dart';
@@ -19,23 +18,12 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   String _engine = 'google';
   Map<String, dynamic> _profile = {};
-  bool   _adBlock       = false;
-  bool   _savePasswords = true;
-  int    _savedPwCount  = 0;
 
   @override
   void initState() {
     super.initState();
-    _engine       = LocalDB.getSearchEngine();
-    _profile      = LocalDB.getProfile();
-    _adBlock      = LocalDB.getAdBlockEnabled();
-    _savePasswords= LocalDB.getSavePasswordsEnabled();
-    _loadPwCount();
-  }
-
-  Future<void> _loadPwCount() async {
-    final all = await PasswordService.getAllCredentials();
-    if (mounted) setState(() => _savedPwCount = all.length);
+    _engine  = LocalDB.getSearchEngine();
+    _profile = LocalDB.getProfile();
   }
 
   Future<void> _setEngine(String e) async {
@@ -51,14 +39,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ));
 
-  Future<void> _push(Widget screen) => Navigator.push(
+  void _push(Widget screen) => Navigator.push(
     context,
     MaterialPageRoute(builder: (_) => screen),
   ).then((_) => setState(() {
     _profile = LocalDB.getProfile();
     _engine  = LocalDB.getSearchEngine();
-    _adBlock = LocalDB.getAdBlockEnabled();
-    _savePasswords = LocalDB.getSavePasswordsEnabled();
   }));
 
   VoidCallback _confirm(String title, String body, Future<void> Function() fn) {
@@ -201,63 +187,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _engineTile('yahoo',      'Yahoo',       'yahoo.com'),
           ]),
 
-          // ── Security & Passwords ────────────────────────────────────────
-          _sectionHeader('Security & Passwords'),
-          _card([
-            // Ad Blocker toggle
-            ListTile(
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              leading: Container(
-                width: 34, height: 34,
-                decoration: BoxDecoration(
-                  color: (_adBlock ? AppTheme.success : AppTheme.textHint).withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(10)),
-                child: Icon(Icons.shield_rounded,
-                    color: _adBlock ? AppTheme.success : AppTheme.textHint, size: 17)),
-              title: Text('Ad Blocker', style: GoogleFonts.inter(
-                  color: AppTheme.textPrimary, fontSize: 14, fontWeight: FontWeight.w500)),
-              subtitle: Text(_adBlock ? 'Blocking ads & trackers' : 'Ads not blocked',
-                  style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11)),
-              trailing: Switch(
-                value: _adBlock,
-                onChanged: (v) async {
-                  await LocalDB.setAdBlockEnabled(v);
-                  setState(() => _adBlock = v);
-                  _snack(v ? '🛡️ Ad Blocker enabled' : 'Ad Blocker disabled');
-                },
-                activeColor: AppTheme.success,
-              ),
-            ),
-            // Save Passwords toggle
-            ListTile(
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              leading: Container(
-                width: 34, height: 34,
-                decoration: BoxDecoration(
-                  color: AppTheme.accentCyan.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(10)),
-                child: const Icon(Icons.key_rounded, color: AppTheme.accentCyan, size: 17)),
-              title: Text('Save Passwords', style: GoogleFonts.inter(
-                  color: AppTheme.textPrimary, fontSize: 14, fontWeight: FontWeight.w500)),
-              subtitle: Text(_savePasswords ? 'Offer to save logins' : 'Never save passwords',
-                  style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11)),
-              trailing: Switch(
-                value: _savePasswords,
-                onChanged: (v) async {
-                  await LocalDB.setSavePasswordsEnabled(v);
-                  setState(() => _savePasswords = v);
-                },
-                activeColor: AppTheme.accentCyan,
-              ),
-            ),
-            // Saved Passwords management
-            _navTile(Icons.password_rounded, 'Saved Passwords',
-                '$_savedPwCount password${_savedPwCount == 1 ? '' : 's'} stored',
-                AppTheme.accentPurple,
-                () => _push(const PasswordManagerScreen()).then((_) => _loadPwCount())),
-          ]),
-
-          // ── Privacy & Data ──────────────────────────────────────────────
+          // ── Privacy ────────────────────────────────────────────────────
           _sectionHeader('Privacy & Data'),
           _card([
             _actionTile(
@@ -286,28 +216,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ]),
 
-          const SizedBox(height: 4),
-          // Clear ALL browser data in one tap
-          _actionTile(
-            Icons.delete_sweep_rounded, 'Clear All Browser Data',
-            'Cookies, cache, history, searches & downloads',
-            AppTheme.danger,
-            _confirm(
-              'Clear All Browser Data',
-              'This will delete your entire browsing history, cookies, cache, search history and download records. This cannot be undone.',
-              () async {
-                // Clear WebView cookies + cache
-                await CookieManager.instance().deleteAllCookies();
-                await InAppWebViewController.clearAllCache();
-                // Clear local records
-                await LocalDB.clearHistory();
-                await LocalDB.clearBookmarks();
-                await LocalDB.clearDownloads();
-                await LocalDB.clearSearchHistory();
-                _snack('🧹 All browser data cleared');
-              },
+          // ── Legal ─────────────────────────────────────────────────────
+          _sectionHeader('Legal'),
+          _card([
+            _navTile(
+              Icons.gavel_rounded, 'Terms of Service',
+              'User agreement & usage policy',
+              AppTheme.accentCyan,
+              () => _push(const TermsScreen())),
+            _navTile(
+              Icons.privacy_tip_outlined, 'Privacy Policy',
+              'How we collect and protect your data',
+              AppTheme.accentPurple,
+              () => _push(const PrivacyScreen())),
+            _actionTile(
+              Icons.email_outlined, 'Contact Us',
+              'emmanuelkgyasiarthur@gmail.com',
+              AppTheme.success,
+              () => _showContactSheet(),
             ),
-          ),
+          ]),
 
           // ── About ──────────────────────────────────────────────────────
           _sectionHeader('About NOVA X'),
@@ -321,6 +249,71 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
   }
+
+  void _showContactSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => Container(
+        decoration: const BoxDecoration(
+          color: AppTheme.bgCard,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        padding: const EdgeInsets.fromLTRB(24, 12, 24, 40),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(width: 40, height: 4,
+            margin: const EdgeInsets.only(bottom: 20),
+            decoration: BoxDecoration(color: AppTheme.divider,
+                borderRadius: BorderRadius.circular(2))),
+          Row(children: [
+            Container(width: 44, height: 44,
+              decoration: BoxDecoration(gradient: AppTheme.primaryGradient,
+                  borderRadius: BorderRadius.circular(14)),
+              child: const Icon(Icons.support_agent_rounded,
+                  color: Colors.white, size: 22)),
+            const SizedBox(width: 14),
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Contact Us', style: GoogleFonts.spaceGrotesk(
+                  color: AppTheme.textPrimary, fontSize: 18,
+                  fontWeight: FontWeight.w800)),
+              Text('Tech Lyfe Team', style: GoogleFonts.inter(
+                  color: AppTheme.textHint, fontSize: 12)),
+            ]),
+          ]),
+          const SizedBox(height: 20),
+          _contactTile(Icons.email_outlined, 'Email',
+              'emmanuelkgyasiarthur@gmail.com', AppTheme.accentCyan),
+          const SizedBox(height: 10),
+          _contactTile(Icons.chat_outlined, 'WhatsApp',
+              '+233 540 964 040', AppTheme.success),
+          const SizedBox(height: 10),
+          _contactTile(Icons.chat_outlined, 'WhatsApp',
+              '+233 502 733 366', AppTheme.success),
+        ]),
+      ),
+    );
+  }
+
+  Widget _contactTile(IconData icon, String label,
+      String value, Color color) =>
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withOpacity(0.2)),
+        ),
+        child: Row(children: [
+          Icon(icon, color: color, size: 18),
+          const SizedBox(width: 12),
+          Text('$label: ', style: GoogleFonts.inter(
+              color: AppTheme.textHint, fontSize: 13,
+              fontWeight: FontWeight.w600)),
+          Expanded(child: Text(value, style: GoogleFonts.inter(
+              color: AppTheme.textPrimary, fontSize: 13,
+              fontWeight: FontWeight.w700))),
+        ]),
+      );
 
   Widget _sectionHeader(String label) => Padding(
     padding: const EdgeInsets.fromLTRB(4, 20, 4, 10),

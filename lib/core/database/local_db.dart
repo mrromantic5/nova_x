@@ -23,6 +23,8 @@ class LocalDB {
   static const _kSearchEngine   = 'nx_search_engine';
   static const _kBackground     = 'nx_background_image';   // NEW
   static const _kSpeedDial      = 'nx_speed_dial';         // NEW
+  static const _kAdBlock        = 'nx_ad_block_enabled';
+  static const _kSavePasswords  = 'nx_save_passwords_enabled';
 
   // ── Default Quick Access list (used until user customises) ────────────────
   static const List<Map<String, dynamic>> defaultSpeedDial = [
@@ -329,6 +331,16 @@ class LocalDB {
   // ═══════════════════════════════════════════════════════════════════════════
   // CLEAR ALL (keeps businesses, speed dial, background, search engine pref)
   // ═══════════════════════════════════════════════════════════════════════════
+  // ── Ad Blocker ──────────────────────────────────────────────────────────
+  static bool  getAdBlockEnabled()         => _p.getBool(_kAdBlock) ?? false;
+  static Future<void> setAdBlockEnabled(bool v) async =>
+      _p.setBool(_kAdBlock, v);
+
+  // ── Password Manager toggle ─────────────────────────────────────────────
+  static bool  getSavePasswordsEnabled()   => _p.getBool(_kSavePasswords) ?? true;
+  static Future<void> setSavePasswordsEnabled(bool v) async =>
+      _p.setBool(_kSavePasswords, v);
+
   static Future<void> clearAll() async {
     await clearSearchHistory();
     await clearHistory();

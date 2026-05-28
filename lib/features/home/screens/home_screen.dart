@@ -18,6 +18,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:nova_x/core/database/local_db.dart';
 import 'package:nova_x/core/services/lens_service.dart';
+import 'package:nova_x/features/cyber/screens/cyber_screen.dart';
 import 'package:nova_x/core/services/api_service.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
 import 'package:nova_x/core/services/news_service.dart';
@@ -385,26 +386,21 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<void> _doLensSearch({required bool fromCamera}) async {
     setState(() => _lensLoading = true);
-    _snack('📷 Preparing image…');
+    _snack('🔍 Processing image…');
 
-    // Build an HTML page that uploads from within the WebView
-    // (same-origin fetch to Google — no 'image not associated' error)
-    final html = await LensService.buildSearchPage(fromCamera: fromCamera);
+    final url = await LensService.search(fromCamera: fromCamera);
 
     setState(() => _lensLoading = false);
 
-    if (html == null) {
-      // User cancelled photo picker
+    if (url == null) {
+      _snack('Search cancelled');
       return;
     }
 
-    // Open the upload page in NOVA X browser
+    // Open result in NOVA X browser
     if (mounted) {
       Navigator.push(context, MaterialPageRoute(
-          builder: (_) => BrowserView(
-            initialQuery: 'https://www.google.com',
-            htmlContent:  html,
-          )));
+          builder: (_) => BrowserView(initialQuery: url)));
     }
   }
 
@@ -1314,7 +1310,9 @@ class _MenuSheet extends StatelessWidget {
        'fn': () { Navigator.pop(context); onPush(const ProfileScreen()); }},
       {'icon': Icons.settings_outlined,        'label': 'Settings',    'color': AppTheme.primaryBlue,
        'fn': () { Navigator.pop(context); onPush(const SettingsScreen()); }},
-      {'icon': Icons.person_off_outlined,      'label': 'Incognito',   'color': AppTheme.accentPurple,
+      {'icon': Icons.security_rounded,          'label': 'NOVA Cyber', 'color': AppTheme.accentCyan,
+       'fn': () { Navigator.pop(context); onPush(const CyberScreen()); }},
+      {'icon': Icons.person_off_outlined,       'label': 'Incognito',  'color': AppTheme.accentPurple,
        'fn': () { Navigator.pop(context); onIncognito(); }},
     ];
     return Container(

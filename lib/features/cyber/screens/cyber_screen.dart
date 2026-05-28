@@ -543,7 +543,7 @@ class _CyberScreenState extends State<CyberScreen>
 
     final byCategory = <CheckCategory, List<SecurityCheck>>{};
     for (final c in filtered) {
-      byCategory.putIfAbsent(c.category, () []).add(c);
+      byCategory.putIfAbsent(c.category, () => <SecurityCheck>[]).add(c);
     }
 
     final widgets = <Widget>[];
@@ -796,11 +796,11 @@ class _CyberScreenState extends State<CyberScreen>
                   padding: const EdgeInsets.only(bottom: 7),
                   child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     SizedBox(width: 150, child: Text(e.key,
-                        style: GoogleFonts.inter(color: AppTheme.accentCyan,
+                        style: TextStyle(color: AppTheme.accentCyan,
                             fontSize: 10, fontWeight: FontWeight.w700,
                             fontFamily: 'monospace'))),
                     Expanded(child: Text(e.value,
-                        style: GoogleFonts.inter(color: AppTheme.textSecondary,
+                        style: TextStyle(color: AppTheme.textSecondary,
                             fontSize: 10, fontFamily: 'monospace'))),
                   ]),
                 ),
@@ -846,7 +846,7 @@ class _CyberScreenState extends State<CyberScreen>
                           color: AppTheme.accentCyan, fontSize: 9,
                           fontWeight: FontWeight.w800))),
                     ),
-                    Expanded(child: Text(rec.value, style: GoogleFonts.inter(
+                    Expanded(child: Text(rec.value, style: TextStyle(
                         color: AppTheme.textSecondary, fontSize: 10,
                         fontFamily: 'monospace'))),
                   ]),

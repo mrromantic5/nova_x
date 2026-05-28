@@ -17,6 +17,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:nova_x/core/database/local_db.dart';
+import 'package:nova_x/core/services/lens_service.dart';
 import 'package:nova_x/core/services/api_service.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
 import 'package:nova_x/core/services/news_service.dart';
@@ -53,7 +54,8 @@ class _HomeScreenState extends State<HomeScreen>
   String? _backgroundPath;
 
   // Speed Dial
-  bool _searching = false;
+  bool _searching   = false;
+  bool _lensLoading = false;  // true while uploading image to Google
   List<Map<String, dynamic>> _speedDial = [];
 
   // News
@@ -260,6 +262,155 @@ class _HomeScreenState extends State<HomeScreen>
     setState(() { _selectedCategory = cat; _news = []; });
     _fetchNews();
   }
+
+  // ── Visual / Lens search ────────────────────────────────────────────────────
+  void _showLensSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => Container(
+        decoration: const BoxDecoration(
+          color: AppTheme.bgCard,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        padding: const EdgeInsets.fromLTRB(24, 12, 24, 40),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(width: 40, height: 4,
+            margin: const EdgeInsets.only(bottom: 20),
+            decoration: BoxDecoration(color: AppTheme.divider,
+                borderRadius: BorderRadius.circular(2))),
+
+          // Header
+          Row(children: [
+            Container(width: 44, height: 44,
+              decoration: BoxDecoration(
+                gradient: AppTheme.primaryGradient,
+                borderRadius: BorderRadius.circular(14)),
+              child: const Icon(Icons.image_search_rounded,
+                  color: Colors.white, size: 22)),
+            const SizedBox(width: 14),
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Visual Search', style: GoogleFonts.spaceGrotesk(
+                  color: AppTheme.textPrimary, fontSize: 18,
+                  fontWeight: FontWeight.w800)),
+              Text('Search by image using Google',
+                  style: GoogleFonts.inter(
+                      color: AppTheme.textHint, fontSize: 12)),
+            ]),
+          ]),
+          const SizedBox(height: 24),
+
+          // Camera option
+          _lensOption(
+            Icons.camera_alt_rounded,
+            'Take a Photo',
+            'Use camera to capture and search',
+            AppTheme.accentCyan,
+            () async {
+              Navigator.pop(context);
+              await _doLensSearch(fromCamera: true);
+            },
+          ),
+          const SizedBox(height: 12),
+
+          // Gallery option
+          _lensOption(
+            Icons.photo_library_rounded,
+            'Choose from Gallery',
+            'Pick an existing photo and search',
+            AppTheme.accentPurple,
+            () async {
+              Navigator.pop(context);
+              await _doLensSearch(fromCamera: false);
+            },
+          ),
+          const SizedBox(height: 16),
+
+          // Info note
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppTheme.bgElevated,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppTheme.divider),
+            ),
+            child: Row(children: [
+              const Icon(Icons.info_outline_rounded,
+                  color: AppTheme.textHint, size: 14),
+              const SizedBox(width: 8),
+              Expanded(child: Text(
+                'Identifies objects, products, landmarks, '
+                'text in images and finds visually similar pages.',
+                style: GoogleFonts.inter(
+                    color: AppTheme.textHint, fontSize: 11, height: 1.5),
+              )),
+            ]),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _lensOption(IconData icon, String title, String subtitle,
+      Color color, VoidCallback onTap) =>
+      GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.07),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: color.withOpacity(0.25)),
+          ),
+          child: Row(children: [
+            Container(width: 44, height: 44,
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(12)),
+              child: Icon(icon, color: color, size: 22)),
+            const SizedBox(width: 14),
+            Expanded(child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title, style: GoogleFonts.spaceGrotesk(
+                  color: AppTheme.textPrimary, fontSize: 15,
+                  fontWeight: FontWeight.w700)),
+              Text(subtitle, style: GoogleFonts.inter(
+                  color: AppTheme.textHint, fontSize: 12)),
+            ])),
+            Icon(Icons.arrow_forward_ios_rounded,
+                color: color, size: 14),
+          ]),
+        ),
+      );
+
+  Future<void> _doLensSearch({required bool fromCamera}) async {
+    setState(() => _lensLoading = true);
+    _snack('🔍 Processing image…');
+
+    final url = await LensService.search(fromCamera: fromCamera);
+
+    setState(() => _lensLoading = false);
+
+    if (url == null) {
+      _snack('Search cancelled');
+      return;
+    }
+
+    // Open result in NOVA X browser
+    if (mounted) {
+      Navigator.push(context, MaterialPageRoute(
+          builder: (_) => BrowserView(initialQuery: url)));
+    }
+  }
+
+  void _snack(String msg) => ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(msg, style: GoogleFonts.inter(color: Colors.white)),
+      backgroundColor: AppTheme.bgElevated,
+      behavior: SnackBarBehavior.floating,
+      duration: const Duration(seconds: 2),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    ));
 
   Future<void> _go(String query) async {
     if (_searching) return;
@@ -565,6 +716,22 @@ class _HomeScreenState extends State<HomeScreen>
                           _isListening ? Icons.mic : Icons.mic_none_rounded,
                           color: _isListening ? Colors.redAccent : AppTheme.textHint,
                           size: 20),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  // ── Lens / Camera search button ──────────────────
+                  GestureDetector(
+                    onTap: _showLensSheet,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      padding: const EdgeInsets.all(8),
+                      child: _lensLoading
+                          ? const SizedBox(width: 20, height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppTheme.accentCyan))
+                          : const Icon(Icons.image_search_rounded,
+                              color: AppTheme.accentCyan, size: 22),
                     ),
                   ),
                   const SizedBox(width: 4),

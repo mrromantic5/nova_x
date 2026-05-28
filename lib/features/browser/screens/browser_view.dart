@@ -7,8 +7,7 @@
 //   • Zoom controls (text zoom slider + reset)
 
 import 'dart:convert';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:nova_x/core/services/password_service.dart';
+import 'package:nova_x/features/cookie/cookie_editor_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -46,14 +45,11 @@ class _BrowserViewState extends State<BrowserView>
   bool   _isBookmarked = false;
   bool   _isSecure    = false;
   bool   _desktopMode   = false;
-
-  // ── Ad Blocker ──────────────────────────────────────────────────────────
-  bool   _adBlockEnabled = false;
-
-  // ── Password Manager ────────────────────────────────────────────────────
-  bool   _savePasswords  = true;
-  Map<String, String>? _pendingCredentials;  // waiting for user to confirm save
-  Map<String, String>? _savedCreds;          // autofill candidate for current domain
+  // Reader Mode
+  bool   _readerMode     = false;
+  String _readerTheme    = 'dark';
+  double _readerFontSize = 18.0;
+  String? _readerOriginalUrl;
 
   // ── DevTools ──────────────────────────────────────────────────────────────
   final List<Map<String, dynamic>> _consoleLogs = [];
@@ -116,9 +112,7 @@ class _BrowserViewState extends State<BrowserView>
     _currentUrl   = initial;
     _urlCtrl.text = _hostLabel(initial);
     _isSecure     = initial.startsWith('https://');
-    _isBookmarked    = widget.incognito ? false : LocalDB.isBookmarked(initial);
-    _adBlockEnabled  = LocalDB.getAdBlockEnabled();
-    _savePasswords   = LocalDB.getSavePasswordsEnabled();
+    _isBookmarked = widget.incognito ? false : LocalDB.isBookmarked(initial);
   }
 
   @override
@@ -206,7 +200,8 @@ class _BrowserViewState extends State<BrowserView>
           Expanded(child: _buildWebView()),
           // Zoom bar (shown above bottom bar when active)
           if (_showZoomBar) _buildZoomBar(),
-          _buildBottomBar(),
+          _buildReaderToolbar(),
+          if (!_readerMode) _buildBottomBar(),
         ]),
       ]),
     );
@@ -387,12 +382,11 @@ class _BrowserViewState extends State<BrowserView>
         allowContentAccess:           true,
         textZoom:                     _textZoom.toInt(),
         userAgent:                    _desktopMode ? _desktopUA : null,
-        contentBlockers:              _adBlockEnabled ? PasswordService.buildAdBlockers() : [],
       ),
 
       onWebViewCreated: (c) {
         _wvc = c;
-        // Console log handler
+        // Register the console log handler BEFORE any page loads
         c.addJavaScriptHandler(
           handlerName: 'novaxLog',
           callback: (args) {
@@ -411,29 +405,6 @@ class _BrowserViewState extends State<BrowserView>
             return null;
           },
         );
-
-        // Password detection handler
-        if (!widget.incognito && _savePasswords) {
-          c.addJavaScriptHandler(
-            handlerName: 'novaxPwDetect',
-            callback: (args) async {
-              if (args.isEmpty || !mounted) return null;
-              try {
-                final data = args[0] is Map
-                    ? Map<String, dynamic>.from(args[0] as Map)
-                    : jsonDecode(args[0].toString()) as Map<String, dynamic>;
-                final domain = data['domain']?.toString() ?? '';
-                final user   = data['username']?.toString() ?? '';
-                final pass   = data['password']?.toString() ?? '';
-                if (domain.isNotEmpty && pass.isNotEmpty) {
-                  _pendingCredentials = {'domain': domain, 'username': user, 'password': pass};
-                  if (mounted) _showSavePasswordPrompt(domain, user, pass);
-                }
-              } catch (_) {}
-              return null;
-            },
-          );
-        }
       },
 
       onLoadStart: (c, url) async {
@@ -447,10 +418,6 @@ class _BrowserViewState extends State<BrowserView>
         });
         // Inject console patch as early as possible
         await c.evaluateJavascript(source: _consoleHook);
-        // Password detection hook
-        if (!widget.incognito && _savePasswords) {
-          await c.evaluateJavascript(source: PasswordService.pwDetectJS);
-        }
       },
 
       onTitleChanged: (_, title) {
@@ -467,15 +434,6 @@ class _BrowserViewState extends State<BrowserView>
         await c.evaluateJavascript(source: _consoleHook);
         // Don't save history in incognito
         if (!widget.incognito) await LocalDB.saveHistoryItem(u, _pageTitle);
-        // Check for saved passwords for autofill
-        if (!widget.incognito && _savePasswords) {
-          final domain = LocalDB.extractDomain(u);
-          final creds  = await PasswordService.getCredentials(domain);
-          if (creds != null && mounted) {
-            _savedCreds = creds;
-            _showAutofillPrompt(domain);
-          }
-        }
       },
 
       onProgressChanged: (_, p) {
@@ -625,106 +583,6 @@ class _BrowserViewState extends State<BrowserView>
     );
   }
 
-  // ── Password Manager ────────────────────────────────────────────────────────
-  void _showSavePasswordPrompt(String domain, String username, String password) {
-    showModalBottomSheet(
-      context: context, backgroundColor: Colors.transparent,
-      builder: (_) => Container(
-        decoration: const BoxDecoration(
-          color: AppTheme.bgCard,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Container(width: 40, height: 4, margin: const EdgeInsets.only(bottom: 16),
-              decoration: BoxDecoration(color: AppTheme.divider, borderRadius: BorderRadius.circular(2))),
-          Row(children: [
-            Container(width: 44, height: 44,
-              decoration: BoxDecoration(gradient: AppTheme.primaryGradient, borderRadius: BorderRadius.circular(14)),
-              child: const Icon(Icons.key_rounded, color: Colors.white, size: 22)),
-            const SizedBox(width: 14),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Save password?', style: GoogleFonts.spaceGrotesk(
-                  color: AppTheme.textPrimary, fontSize: 16, fontWeight: FontWeight.w700)),
-              Text(domain, style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 12)),
-            ])),
-          ]),
-          if (username.isNotEmpty) Padding(
-            padding: const EdgeInsets.only(top: 14),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(color: AppTheme.bgElevated,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppTheme.divider)),
-              child: Row(children: [
-                const Icon(Icons.person_outline_rounded, color: AppTheme.textHint, size: 16),
-                const SizedBox(width: 8),
-                Text(username, style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 13)),
-              ]),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Row(children: [
-            Expanded(child: GestureDetector(
-              onTap: () => Navigator.pop(context),
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                decoration: BoxDecoration(color: AppTheme.bgElevated,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: AppTheme.divider)),
-                child: Center(child: Text('Not now', style: GoogleFonts.inter(
-                    color: AppTheme.textHint, fontSize: 14, fontWeight: FontWeight.w600))),
-              ),
-            )),
-            const SizedBox(width: 12),
-            Expanded(child: GestureDetector(
-              onTap: () async {
-                await PasswordService.saveCredentials(domain, username, password);
-                if (mounted) Navigator.pop(context);
-                _snack('🔑 Password saved for $domain');
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                decoration: BoxDecoration(gradient: AppTheme.primaryGradient,
-                    borderRadius: BorderRadius.circular(14),
-                    boxShadow: AppTheme.glowShadow),
-                child: Center(child: Text('Save', style: GoogleFonts.spaceGrotesk(
-                    color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700))),
-              ),
-            )),
-          ]),
-        ]),
-      ),
-    );
-  }
-
-  void _showAutofillPrompt(String domain) {
-    final creds = _savedCreds;
-    if (creds == null) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Row(children: [
-        const Icon(Icons.key_rounded, color: AppTheme.accentCyan, size: 16),
-        const SizedBox(width: 8),
-        Expanded(child: Text('Fill saved password for $domain?',
-            style: GoogleFonts.inter(color: Colors.white, fontSize: 12))),
-      ]),
-      backgroundColor: AppTheme.bgElevated,
-      behavior: SnackBarBehavior.floating,
-      duration: const Duration(seconds: 6),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      action: SnackBarAction(
-        label: 'Fill',
-        textColor: AppTheme.accentCyan,
-        onPressed: () async {
-          final js = PasswordService.autofillJS(
-              creds['username'] ?? '', creds['password'] ?? '');
-          await _wvc?.evaluateJavascript(source: js);
-          _snack('✅ Password filled');
-        },
-      ),
-    ));
-  }
-
   // ── More menu ──────────────────────────────────────────────────────────────
   void _showMoreMenu() {
     showModalBottomSheet(
@@ -856,55 +714,33 @@ class _BrowserViewState extends State<BrowserView>
             color: AppTheme.accentPurple,
           ),
 
+          // ── READER MODE ────────────────────────────────────────────────────
+          _menuTile(
+            Icons.menu_book_rounded,
+            _readerMode ? 'Exit Reader Mode' : 'Reader Mode',
+            () { Navigator.pop(context); _toggleReaderMode(); },
+            color: _readerMode ? AppTheme.warning : AppTheme.textSecondary,
+          ),
+
+          // ── COOKIE EDITOR ──────────────────────────────────────────────────
+          _menuTile(
+            Icons.cookie_outlined, 'Cookie Editor',
+            () {
+              Navigator.pop(context);
+              Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => CookieEditorScreen(url: _currentUrl)));
+            },
+            color: AppTheme.warning,
+          ),
+
           // ── FIND IN PAGE ───────────────────────────────────────────────────
           _menuTile(
-            Icons.search_rounded, 'Find in page',
-            () { Navigator.pop(context); _showFindInPage(); },
-          ),
-
-          // ── AD BLOCKER ─────────────────────────────────────────────────────
-          ListTile(
-            leading: Container(
-              width: 34, height: 34,
-              decoration: BoxDecoration(
-                color: (_adBlockEnabled
-                    ? AppTheme.success : AppTheme.textHint).withOpacity(0.12),
-                borderRadius: BorderRadius.circular(10)),
-              child: Icon(Icons.shield_rounded,
-                  color: _adBlockEnabled ? AppTheme.success : AppTheme.textHint,
-                  size: 18)),
-            title: Text('Ad Blocker', style: GoogleFonts.inter(
-                color: AppTheme.textPrimary, fontSize: 14)),
-            subtitle: Text(_adBlockEnabled ? 'ON — Ads blocked' : 'OFF',
-                style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11)),
-            trailing: Switch(
-              value: _adBlockEnabled,
-              onChanged: (v) async {
-                await LocalDB.setAdBlockEnabled(v);
-                setState(() => _adBlockEnabled = v);
-                Navigator.pop(context);
-                await _wvc?.reload();
-                _snack(v ? '🛡️ Ad Blocker ON — reloading…' : 'Ad Blocker OFF');
-              },
-              activeColor: AppTheme.success,
-              inactiveThumbColor: AppTheme.textHint,
-            ),
-            contentPadding: EdgeInsets.zero, dense: true,
-          ),
-
-          // ── CLEAR PAGE DATA ────────────────────────────────────────────────
-          _menuTile(
-            Icons.cleaning_services_rounded, 'Clear page data',
-            () async {
+            Icons.search_rounded,
+            'Find in page',
+            () {
               Navigator.pop(context);
-              await CookieManager.instance().deleteAllCookies();
-              await _wvc?.clearCache();
-              await _wvc?.evaluateJavascript(
-                  source: 'localStorage.clear(); sessionStorage.clear();');
-              await _wvc?.reload();
-              _snack('🧹 Cookies, cache & storage cleared');
+              _showFindInPage();
             },
-            color: AppTheme.danger,
           ),
         ]),
       ),
@@ -922,6 +758,207 @@ class _BrowserViewState extends State<BrowserView>
       dense: true,
     );
   }
+
+
+  // ── Reader Mode ───────────────────────────────────────────────────────────
+  static const String _readerJs = '(function(){'
+    'try{'
+    'var sel=["article","[role=main]","main",".article-content",".post-content",'
+    '".entry-content",".story-body",".article-body",".post-body"];'
+    'var best=null,bestSc=0;'
+    'for(var i=0;i<sel.length;i++){'
+    'var el=document.querySelector(sel[i]);'
+    'if(el){var sc=el.innerText.trim().length;if(sc>bestSc&&sc>300){bestSc=sc;best=el;}}'
+    '}'
+    'if(!best){'
+    'var divs=document.querySelectorAll("div,section");'
+    'for(var i=0;i<divs.length;i++){'
+    'var el=divs[i],ps=el.querySelectorAll("p"),sc=0;'
+    'for(var j=0;j<ps.length;j++)sc+=(ps[j].innerText||"").length;'
+    'if(sc>bestSc&&sc<100000){bestSc=sc;best=el;}'
+    '}}'
+    'if(!best)return JSON.stringify({error:"No article content found"});'
+    'var title=(document.querySelector("h1")||{}).innerText||document.title||"Article";'
+    'var clone=best.cloneNode(true);'
+    'var rm=clone.querySelectorAll("script,style,iframe,noscript,.ad,.ads,nav,.sidebar");'
+    'for(var i=0;i<rm.length;i++){if(rm[i].parentNode)rm[i].parentNode.removeChild(rm[i]);}'
+    'var words=(best.innerText||"").trim().split(/\s+/).length;'
+    'return JSON.stringify({title:title.trim(),html:clone.innerHTML,'
+    'wordCount:words,readTime:Math.max(1,Math.ceil(words/200))});'
+    '}catch(e){return JSON.stringify({error:e.message});}'
+    '})()';
+
+  Future<void> _toggleReaderMode() async {
+    if (_readerMode) {
+      setState(() => _readerMode = false);
+      if (_readerOriginalUrl != null) {
+        _wvc?.loadUrl(urlRequest: URLRequest(url: WebUri(_readerOriginalUrl!)));
+        _readerOriginalUrl = null;
+      }
+      return;
+    }
+    _snack('Extracting article…');
+    final result = await _wvc?.evaluateJavascript(source: _readerJs);
+    if (result == null) { _snack('Could not extract content'); return; }
+    try {
+      final data = jsonDecode(result.toString()) as Map<String, dynamic>;
+      if (data.containsKey('error')) {
+        _snack('Reader Mode: ${data["error"]}'); return;
+      }
+      final title     = (data['title'] as String?) ?? _pageTitle;
+      final html      = (data['html']  as String?) ?? '';
+      final wordCount = (data['wordCount'] as int?) ?? 0;
+      final readTime  = (data['readTime']  as int?) ?? 1;
+      if (html.isEmpty) { _snack('No article found on this page'); return; }
+      _readerOriginalUrl = _currentUrl;
+      setState(() => _readerMode = true);
+      final page = _buildReaderHtml(title, html, wordCount, readTime);
+      await _wvc?.loadData(data: page, mimeType: 'text/html', encoding: 'utf-8');
+    } catch (e) {
+      _snack('Reader Mode error: $e');
+    }
+  }
+
+  String _buildReaderHtml(String title, String html, int words, int mins) {
+    final themes = {
+      'dark':  {'bg':'#07101E','text':'#F1F5F9','card':'#111827','muted':'#94A3B8','border':'#1E293B','link':'#00D4FF'},
+      'light': {'bg':'#FAFAFA','text':'#1A1A2E','card':'#FFFFFF','muted':'#64748B','border':'#E2E8F0','link':'#0052CC'},
+      'sepia': {'bg':'#F4ECD8','text':'#4A3728','card':'#EDE0C4','muted':'#7A5C44','border':'#D4B896','link':'#C0392B'},
+    };
+    final t  = themes[_readerTheme] ?? themes['dark']!;
+    final fs = _readerFontSize.toInt();
+    final esc = title.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
+    return '<!DOCTYPE html><html><head><meta charset="UTF-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5">'
+        '<style>'
+        '*{box-sizing:border-box;margin:0;padding:0}'
+        'body{background:${t['bg']};color:${t['text']};'
+        'font-family:Georgia,serif;font-size:${fs}px;line-height:1.85;'
+        'max-width:720px;margin:0 auto;padding:28px 20px 120px}'
+        '.hdr{margin-bottom:28px;padding-bottom:20px;border-bottom:2px solid ${t['border']}}'
+        '.ttl{font-size:1.75em;font-weight:700;line-height:1.3;margin-bottom:12px}'
+        '.meta{font-size:13px;color:${t['muted']};font-family:sans-serif;display:flex;gap:12px;flex-wrap:wrap}'
+        '.badge{background:rgba(0,212,255,.12);color:#00D4FF;padding:3px 12px;border-radius:20px;font-weight:700;border:1px solid rgba(0,212,255,.2);font-size:11px}'
+        'h1,h2,h3{margin:1.5em 0 .5em;line-height:1.3}'
+        'h1{font-size:1.6em}h2{font-size:1.35em}h3{font-size:1.15em}'
+        'p{margin:1em 0}'
+        'a{color:${t['link']};text-decoration:none}'
+        'img{max-width:100%;height:auto;border-radius:10px;margin:1em 0;display:block}'
+        'blockquote{border-left:3px solid #00D4FF;padding:12px 20px;margin:1.5em 0;background:rgba(0,212,255,.05);border-radius:0 10px 10px 0;font-style:italic;color:${t['muted']}}'
+        'pre{background:${t['card']};border:1px solid ${t['border']};border-radius:10px;padding:16px;overflow-x:auto;margin:1em 0}'
+        'code{font-family:monospace;background:${t['card']};padding:2px 6px;border-radius:5px;font-size:.87em;border:1px solid ${t['border']}}'
+        'ul,ol{padding-left:1.8em;margin:1em 0}li{margin:.4em 0}'
+        'hr{border:none;border-top:1px solid ${t['border']};margin:2em 0}'
+        'table{border-collapse:collapse;width:100%;margin:1em 0;font-size:.9em}'
+        'th,td{border:1px solid ${t['border']};padding:10px 14px;text-align:left}'
+        'th{background:${t['card']};font-weight:700}'
+        '</style></head><body>'
+        '<div class="hdr"><div class="ttl">$esc</div>'
+        '<div class="meta"><span class="badge">📖 $mins min read</span>'
+        '<span>$words words</span><span style="opacity:.5">NOVA X Reader</span></div></div>'
+        '$html</body></html>';
+  }
+
+  Widget _buildReaderToolbar() {
+    if (!_readerMode) return const SizedBox.shrink();
+    return Container(
+      padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).padding.bottom + 4,
+          top: 8, left: 14, right: 14),
+      decoration: BoxDecoration(
+        color: AppTheme.bgCard,
+        border: Border(top: BorderSide(
+            color: AppTheme.warning.withOpacity(0.5), width: 1.5)),
+      ),
+      child: Row(children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: AppTheme.warning.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: AppTheme.warning.withOpacity(0.4)),
+          ),
+          child: Text('READER', style: GoogleFonts.spaceGrotesk(
+              color: AppTheme.warning, fontSize: 9, fontWeight: FontWeight.w800)),
+        ),
+        const SizedBox(width: 10),
+        // Font size
+        _rBtn(Icons.text_decrease_rounded, () async {
+          if (_readerFontSize > 12) {
+            _readerFontSize -= 2;
+            await _wvc?.evaluateJavascript(
+                source: "document.body.style.fontSize='${_readerFontSize.toInt()}px'");
+            if (mounted) setState(() {});
+          }
+        }),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          child: Text('${_readerFontSize.toInt()}px',
+              style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 11)),
+        ),
+        _rBtn(Icons.text_increase_rounded, () async {
+          if (_readerFontSize < 28) {
+            _readerFontSize += 2;
+            await _wvc?.evaluateJavascript(
+                source: "document.body.style.fontSize='${_readerFontSize.toInt()}px'");
+            if (mounted) setState(() {});
+          }
+        }),
+        const Spacer(),
+        // Themes
+        for (final entry in [['dark','🌙'],['light','☀️'],['sepia','📜']])
+          GestureDetector(
+            onTap: () {
+              setState(() => _readerTheme = entry[0]);
+              // Rebuild reader with new theme
+              final url = _readerOriginalUrl;
+              _toggleReaderMode().then((_) {
+                _readerOriginalUrl = url;
+                _toggleReaderMode();
+              });
+            },
+            child: Container(
+              width: 30, height: 30,
+              margin: const EdgeInsets.only(left: 4),
+              decoration: BoxDecoration(
+                color: _readerTheme == entry[0]
+                    ? AppTheme.warning.withOpacity(0.15) : AppTheme.bgElevated,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: _readerTheme == entry[0]
+                      ? AppTheme.warning : AppTheme.divider),
+              ),
+              child: Center(child: Text(entry[1],
+                  style: const TextStyle(fontSize: 13))),
+            ),
+          ),
+        const SizedBox(width: 8),
+        // Exit
+        GestureDetector(
+          onTap: _toggleReaderMode,
+          child: Container(
+            width: 30, height: 30,
+            decoration: BoxDecoration(
+              color: AppTheme.danger.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppTheme.danger.withOpacity(0.3)),
+            ),
+            child: const Icon(Icons.close_rounded,
+                color: AppTheme.danger, size: 15),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  Widget _rBtn(IconData icon, VoidCallback onTap) => GestureDetector(
+    onTap: onTap,
+    child: Container(width: 28, height: 28,
+      decoration: BoxDecoration(color: AppTheme.bgElevated,
+          borderRadius: BorderRadius.circular(7),
+          border: Border.all(color: AppTheme.divider)),
+      child: Icon(icon, color: AppTheme.textSecondary, size: 13)),
+  );
 
   // ── Find in page ───────────────────────────────────────────────────────────
   void _showFindInPage() {

@@ -549,7 +549,7 @@ class _CookieEditorScreenState extends State<CookieEditorScreen>
                   },
                   child: Text(
                     cookie.value ?? '(empty)',
-                    style: GoogleFonts.inter(
+                    style: TextStyle(
                         color: AppTheme.textSecondary,
                         fontSize: 12, fontFamily: 'monospace'),
                     maxLines: 2, overflow: TextOverflow.ellipsis,

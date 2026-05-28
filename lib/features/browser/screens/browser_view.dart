@@ -144,7 +144,9 @@ class _BrowserViewState extends State<BrowserView>
     setState(() => _desktopMode = !_desktopMode);
     await _wvc?.setSettings(
       settings: InAppWebViewSettings(
-        userAgent: _desktopMode ? _desktopUA : null,
+        // Empty string '' resets to system default mobile UA.
+        // null does NOT reset — it keeps the previous custom UA.
+        userAgent: _desktopMode ? _desktopUA : '',
       ),
     );
     await _wvc?.reload();
@@ -588,11 +590,19 @@ class _BrowserViewState extends State<BrowserView>
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (_) => Container(
+      isScrollControlled: true,       // allows sheet to expand beyond half screen
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.6,        // starts at 60% of screen
+        minChildSize:     0.4,
+        maxChildSize:     0.92,       // can expand to 92% — all items visible
+        expand: false,
+        builder: (_, scrollCtrl) => Container(
         decoration: BoxDecoration(
           color: widget.incognito ? const Color(0xFF130F24) : AppTheme.bgCard,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         ),
+        child: SingleChildScrollView(
+        controller: scrollCtrl,
         padding: const EdgeInsets.fromLTRB(24, 12, 24, 28),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           Container(
@@ -743,6 +753,8 @@ class _BrowserViewState extends State<BrowserView>
             },
           ),
         ]),
+        ),   // SingleChildScrollView
+        ),   // Container = DraggableScrollableSheet builder return
       ),
     );
   }

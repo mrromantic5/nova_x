@@ -147,6 +147,7 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                 '3.  Data Storage & Security',
                 '4.  Third-Party Services',
                 '5.  Cookies & Tracking',
+                '5c. NOVA Cyber Security Scanner',
                 '6.  Push Notifications',
                 '7.  Business Directory Data',
                 '8.  Children\'s Privacy',
@@ -168,7 +169,18 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                     'With your consent, we store your browsing history, bookmarks, '
                     'and search queries locally on your device and optionally synced '
                     'to our servers for cross-device access. Incognito browsing is '
-                    'never stored or synced.'),
+                    'never stored or synced. Cookies visible to NOVA X are managed '
+                    'locally and are never transmitted to our servers.'),
+                _sub('Password Manager Data',
+                    'Passwords saved by the NOVA X Password Manager are stored '
+                    'exclusively on your device using Android encrypted SharedPreferences '
+                    '(flutter_secure_storage). Saved passwords are NEVER transmitted to '
+                    'our servers, any third party, or backed up to the cloud.'),
+                _sub('Visual Search Images',
+                    'When you use the Visual Search (Lens) feature, your selected image '
+                    'is uploaded directly to Google Image Search from within the browser. '
+                    'We do not store, process, or have access to that image. '
+                    'Google\'s Privacy Policy applies.'),
                 _sub('Business Listings',
                     'If you submit a business listing, we collect the business name, '
                     'description, category, location, website URL, and any images '
@@ -219,7 +231,15 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                 _sub('Local Data',
                     'Browsing history, bookmarks, and searches are stored locally '
                     'on your device using secure local storage. You can delete '
-                    'this data at any time in Settings.'),
+                    'this data at any time in Settings → Clear All Browser Data.'),
+                _sub('Password Manager Security',
+                    'The built-in Password Manager uses Android\'s encrypted '
+                    'SharedPreferences (AES-256). Passwords never leave your device. '
+                    'If you uninstall NOVA X, all saved passwords are permanently deleted.'),
+                _sub('Ad Blocker',
+                    'The Ad Blocker operates entirely on-device using a built-in '
+                    'domain blocklist. No browsing data is sent to any service to '
+                    'perform ad blocking.'),
                 _sub('Breach Notification',
                     'In the event of a data breach affecting your personal '
                     'information, we will notify affected users within 72 hours '
@@ -240,6 +260,18 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                     'The /image command sends prompts to Pollinations.ai for '
                     'image generation. Pollinations.ai\'s privacy policy applies '
                     'to generated image data.'),
+                _sub('Visual Search (Google Image Search)',
+                    'The Lens/Visual Search feature uploads your image directly to '
+                    'Google\'s image search endpoint (google.com/searchbyimage/upload) '
+                    'from within the app\'s WebView. Google may process and store your '
+                    'image according to Google\'s Privacy Policy. We do not receive '
+                    'or process the image.'),
+                _sub('NOVA Cyber Security Scanner',
+                    'NOVA Cyber performs active security probes against websites you choose '
+                    'to scan. These probes include HTTP requests with security test payloads. '
+                    'Scan results are displayed locally and are not stored on our servers. '
+                    'DNS lookups for DMARC/SPF checks are made via Google DNS-over-HTTPS '
+                    '(dns.google). Google\'s Privacy Policy applies to those DNS queries.'),
                 _sub('SMTP Email Service',
                     'We use our own email server to send verification codes and '
                     'account notifications. Email addresses are used solely for '

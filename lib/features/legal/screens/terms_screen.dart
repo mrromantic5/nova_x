@@ -147,6 +147,7 @@ class _TermsScreenState extends State<TermsScreen> {
                 '3.  User Accounts',
                 '4.  Acceptable Use',
                 '5.  Business Directory',
+                '5b. Built-In Tools & Features',
                 '6.  Intellectual Property',
                 '7.  Privacy & Data',
                 '8.  Disclaimers',
@@ -179,8 +180,14 @@ class _TermsScreenState extends State<TermsScreen> {
                   '• AI-powered assistant (BRAINS JET AI)\n'
                   '• Cloud bookmark and history sync\n'
                   '• Push notifications and alerts\n'
-                  '• Password management\n'
-                  '• Reader mode and developer tools\n\n'
+                  '• Password management (encrypted local storage)\n'
+                  '• Reader Mode (clean article reading)\n'
+                  '• Ad Blocker (blocks 60+ ad and tracker domains)\n'
+                  '• Cookie Editor (view, edit and delete browser cookies)\n'
+                  '• NOVA Cyber (website security scanning tool)\n'
+                  '• Visual Search / Lens (search by image)\n'
+                  '• App Shortcuts (quick launch from home screen)\n'
+                  '• Developer tools and advanced browser controls\n\n'
                   'We reserve the right to modify, suspend, or discontinue any '
                   'feature of the Service at any time without prior notice.'),
 
@@ -226,6 +233,29 @@ class _TermsScreenState extends State<TermsScreen> {
                   'that violates these Terms, contains inappropriate content, or '
                   'is reported by other users as fraudulent or misleading. We do '
                   'not endorse any business listed in the directory.'),
+
+              _section('5b. Built-In Tools & Features', Icons.build_circle_outlined,
+                  AppTheme.accentCyan,
+                  'NOVA X includes the following advanced built-in tools. By using each tool, '
+                  'you agree to use it responsibly and lawfully:\n\n'
+                  '• Ad Blocker: Blocks advertising and tracking domains. We do not guarantee '
+                  'completeness. Some legitimate content may be affected.\n\n'
+                  '• Password Manager: Credentials are stored encrypted on your device only. '
+                  'We never transmit saved passwords. You are responsible for device security.\n\n'
+                  '• Cookie Editor: Allows viewing and editing browser cookies for any website '
+                  'you visit. Use responsibly and only on sites you own or have permission to modify.\n\n'
+                  '• Reader Mode: Extracts and reformats article content for easier reading. '
+                  'Content remains copyright of the original publisher.\n\n'
+                  '• NOVA Cyber (Security Scanner): Performs passive security checks on websites '
+                  'including header analysis, SQL injection probing, XSS testing, and file exposure '
+                  'scanning. Results are informational only. We make no guarantee of completeness or '
+                  'accuracy. You must not use NOVA Cyber to scan websites without authorisation. '
+                  'Scanning third-party systems without permission may be illegal in your jurisdiction.\n\n'
+                  '• Visual Search: Uploads your selected image to Google Image Search. By using '
+                  'this feature, you acknowledge that your image is sent to Google and Google\'s '
+                  'Privacy Policy applies to that data.\n\n'
+                  '• App Shortcuts: Long-press shortcuts launch specific app screens. These are '
+                  'convenience features and do not grant additional permissions.'),
 
               _section('6.  Intellectual Property', Icons.copyright_rounded,
                   AppTheme.accentPurple,

@@ -1,7 +1,10 @@
 // lib/features/settings/screens/settings_screen.dart
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:nova_x/core/database/local_db.dart';
+import 'package:nova_x/core/services/password_service.dart';
+import '../../password/password_manager_screen.dart';
 import '../../legal/screens/terms_screen.dart';
 import '../../legal/screens/privacy_screen.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
@@ -16,14 +19,26 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  bool   _adBlock       = false;
+  bool   _savePasswords = true;
+  int    _savedPwCount  = 0;
+
   String _engine = 'google';
   Map<String, dynamic> _profile = {};
 
   @override
   void initState() {
     super.initState();
-    _engine  = LocalDB.getSearchEngine();
+    _engine        = LocalDB.getSearchEngine();
+    _adBlock       = LocalDB.getAdBlockEnabled();
+    _savePasswords = LocalDB.getSavePasswordsEnabled();
+    _loadPwCount();
     _profile = LocalDB.getProfile();
+  }
+
+  Future<void> _loadPwCount() async {
+    final all = await PasswordService.getAllCredentials();
+    if (mounted) setState(() => _savedPwCount = all.length);
   }
 
   Future<void> _setEngine(String e) async {
@@ -44,7 +59,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     MaterialPageRoute(builder: (_) => screen),
   ).then((_) => setState(() {
     _profile = LocalDB.getProfile();
-    _engine  = LocalDB.getSearchEngine();
+    _engine        = LocalDB.getSearchEngine();
+    _adBlock       = LocalDB.getAdBlockEnabled();
+    _savePasswords = LocalDB.getSavePasswordsEnabled();
+    _loadPwCount();
   }));
 
   VoidCallback _confirm(String title, String body, Future<void> Function() fn) {
@@ -188,6 +206,57 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ]),
 
           // ── Privacy ────────────────────────────────────────────────────
+          // ── Security & Passwords ──────────────────────────────────────────
+          _sectionHeader('Security & Passwords'),
+          _card([
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal:16, vertical:4),
+              leading: Container(width:34, height:34,
+                decoration: BoxDecoration(
+                  color: (_adBlock ? AppTheme.success : AppTheme.textHint).withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(10)),
+                child: Icon(Icons.shield_rounded,
+                    color: _adBlock ? AppTheme.success : AppTheme.textHint, size:17)),
+              title: Text('Ad Blocker', style: GoogleFonts.inter(
+                  color: AppTheme.textPrimary, fontSize:14, fontWeight: FontWeight.w500)),
+              subtitle: Text(_adBlock ? 'Blocking ads & trackers' : 'Ads not blocked',
+                  style: GoogleFonts.inter(color: AppTheme.textHint, fontSize:11)),
+              trailing: Switch(
+                value: _adBlock,
+                onChanged: (v) async {
+                  await LocalDB.setAdBlockEnabled(v);
+                  setState(() => _adBlock = v);
+                },
+                activeColor: AppTheme.success,
+              ),
+            ),
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal:16, vertical:4),
+              leading: Container(width:34, height:34,
+                decoration: BoxDecoration(
+                  color: AppTheme.accentCyan.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(10)),
+                child: const Icon(Icons.key_rounded, color: AppTheme.accentCyan, size:17)),
+              title: Text('Save Passwords', style: GoogleFonts.inter(
+                  color: AppTheme.textPrimary, fontSize:14, fontWeight: FontWeight.w500)),
+              subtitle: Text(_savePasswords ? 'Offer to save logins' : 'Never save passwords',
+                  style: GoogleFonts.inter(color: AppTheme.textHint, fontSize:11)),
+              trailing: Switch(
+                value: _savePasswords,
+                onChanged: (v) async {
+                  await LocalDB.setSavePasswordsEnabled(v);
+                  setState(() => _savePasswords = v);
+                },
+                activeColor: AppTheme.accentCyan,
+              ),
+            ),
+            _navTile(Icons.password_rounded, 'Saved Passwords',
+              '$_savedPwCount password${_savedPwCount == 1 ? '' : 's'} stored',
+              AppTheme.accentPurple,
+              () => _push(const PasswordManagerScreen()).then((_) => _loadPwCount())),
+          ]),
+
+          // ── Privacy & Data ────────────────────────────────────────────────
           _sectionHeader('Privacy & Data'),
           _card([
             _actionTile(
@@ -217,6 +286,65 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ]),
 
           // ── Legal ─────────────────────────────────────────────────────
+          GestureDetector(
+            onTap: () async {
+              final ok = await showDialog<bool>(
+                context: context,
+                builder: (_) => AlertDialog(
+                  backgroundColor: AppTheme.bgCard,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  title: Text('Clear All Browser Data?', style: GoogleFonts.spaceGrotesk(
+                      color: AppTheme.textPrimary, fontWeight: FontWeight.bold)),
+                  content: Text('Deletes all cookies, cache, history, downloads and search history.',
+                      style: GoogleFonts.inter(color: AppTheme.textSecondary)),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(context, false),
+                        child: Text('Cancel', style: GoogleFonts.inter(color: AppTheme.textHint))),
+                    TextButton(onPressed: () => Navigator.pop(context, true),
+                        child: Text('Clear All', style: GoogleFonts.inter(
+                            color: AppTheme.danger, fontWeight: FontWeight.w700))),
+                  ],
+                ),
+              );
+              if (ok == true) {
+                await CookieManager.instance().deleteAllCookies();
+                await InAppWebViewController.clearAllCache();
+                await LocalDB.clearHistory();
+                await LocalDB.clearBookmarks();
+                await LocalDB.clearDownloads();
+                await LocalDB.clearSearchHistory();
+                if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text('🧹 All browser data cleared',
+                      style: GoogleFonts.inter(color: Colors.white)),
+                  backgroundColor: AppTheme.bgElevated,
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ));
+              }
+            },
+            child: Container(
+              margin: const EdgeInsets.fromLTRB(0, 0, 0, 16),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppTheme.danger.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppTheme.danger.withOpacity(0.3)),
+              ),
+              child: Row(children: [
+                const Icon(Icons.delete_sweep_rounded, color: AppTheme.danger, size:20),
+                const SizedBox(width:12),
+                Expanded(child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('Clear All Browser Data', style: GoogleFonts.spaceGrotesk(
+                      color: AppTheme.danger, fontSize:14, fontWeight: FontWeight.w700)),
+                  Text('Cookies, cache, history, searches & downloads',
+                      style: GoogleFonts.inter(color: AppTheme.danger.withOpacity(0.7), fontSize:11)),
+                ])),
+                const Icon(Icons.arrow_forward_ios_rounded, color: AppTheme.danger, size:13),
+              ]),
+            ),
+          ),
+
           _sectionHeader('Legal'),
           _card([
             _navTile(

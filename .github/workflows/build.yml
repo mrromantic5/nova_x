@@ -96,15 +96,8 @@ jobs:
           logo   = logo.crop((cx - half, cy - half, cx + half, cy + half))
 
           for dir_name, size in sizes.items():
-              # 3. Create NOVA X blue gradient background (no more white bleed-through)
-              bg   = Image.new('RGBA', (size, size), (0, 0, 0, 0))
-              draw = ImageDraw.Draw(bg)
-              for y in range(size):
-                  t = y / max(size - 1, 1)
-                  r = int(0   + 12 * t)
-                  g = int(40  + 75 * t)
-                  b = int(185 + 60 * t)
-                  draw.line([(0, y), (size - 1, y)], fill=(r, g, b, 255))
+              # 3. White background
+              bg   = Image.new('RGBA', (size, size), (255, 255, 255, 255))
 
               # 4. Scale logo to 90% fill — bold and clearly visible
               logo_sz = int(size * 0.90)

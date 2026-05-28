@@ -845,7 +845,7 @@ class CyberService {
 
     // API key / token patterns
     final apiPatterns = [
-      RegExp(r'(?:api[_-]?key|apikey|access[_-]?token|secret[_-]?key)\s*[:=]\s*["\']?([A-Za-z0-9_\-]{20,})',
+      RegExp(r'(?:api[_-]?key|apikey|access[_-]?token|secret[_-]?key)\s*[:=]\s*[A-Za-z0-9_-]{20,}',
           caseSensitive: false),
       RegExp(r'(?:sk-|pk_live_|sk_live_|AKIA)[A-Za-z0-9]{16,}'),
     ];
@@ -1121,8 +1121,8 @@ class CyberService {
 
     // Mixed content
     final hasMixed = isHttps &&
-        (RegExp(r'src=["\']http://', caseSensitive: false).hasMatch(body) ||
-         RegExp(r'href=["\']http://', caseSensitive: false).hasMatch(body));
+        (RegExp(r'src=.{0,2}http://', caseSensitive: false).hasMatch(body) ||
+         RegExp(r'href=.{0,2}http://', caseSensitive: false).hasMatch(body));
     checks.add(SecurityCheck(
       id: 'mixed', name: 'Mixed Content',
       status: hasMixed ? CheckStatus.fail : CheckStatus.pass,

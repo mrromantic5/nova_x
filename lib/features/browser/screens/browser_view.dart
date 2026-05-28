@@ -7,7 +7,7 @@
 //   • Zoom controls (text zoom slider + reset)
 
 import 'dart:convert';
-import 'package:nova_x/features/cookie/cookie_editor_screen.dart';
+import 'package:nova_x/features/cyber/screens/cyber_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -44,12 +44,7 @@ class _BrowserViewState extends State<BrowserView>
   String _pageTitle   = 'Loading…';
   bool   _isBookmarked = false;
   bool   _isSecure    = false;
-  bool   _desktopMode   = false;
-  // Reader Mode
-  bool   _readerMode     = false;
-  String _readerTheme    = 'dark';
-  double _readerFontSize = 18.0;
-  String? _readerOriginalUrl;
+  bool   _desktopMode = false;
 
   // ── DevTools ──────────────────────────────────────────────────────────────
   final List<Map<String, dynamic>> _consoleLogs = [];
@@ -144,9 +139,7 @@ class _BrowserViewState extends State<BrowserView>
     setState(() => _desktopMode = !_desktopMode);
     await _wvc?.setSettings(
       settings: InAppWebViewSettings(
-        // Empty string '' resets to system default mobile UA.
-        // null does NOT reset — it keeps the previous custom UA.
-        userAgent: _desktopMode ? _desktopUA : '',
+        userAgent: _desktopMode ? _desktopUA : null,
       ),
     );
     await _wvc?.reload();
@@ -202,8 +195,7 @@ class _BrowserViewState extends State<BrowserView>
           Expanded(child: _buildWebView()),
           // Zoom bar (shown above bottom bar when active)
           if (_showZoomBar) _buildZoomBar(),
-          _buildReaderToolbar(),
-          if (!_readerMode) _buildBottomBar(),
+          _buildBottomBar(),
         ]),
       ]),
     );
@@ -590,19 +582,11 @@ class _BrowserViewState extends State<BrowserView>
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      isScrollControlled: true,       // allows sheet to expand beyond half screen
-      builder: (_) => DraggableScrollableSheet(
-        initialChildSize: 0.6,        // starts at 60% of screen
-        minChildSize:     0.4,
-        maxChildSize:     0.92,       // can expand to 92% — all items visible
-        expand: false,
-        builder: (_, scrollCtrl) => Container(
+      builder: (_) => Container(
         decoration: BoxDecoration(
           color: widget.incognito ? const Color(0xFF130F24) : AppTheme.bgCard,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         ),
-        child: SingleChildScrollView(
-        controller: scrollCtrl,
         padding: const EdgeInsets.fromLTRB(24, 12, 24, 28),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           Container(
@@ -724,26 +708,40 @@ class _BrowserViewState extends State<BrowserView>
             color: AppTheme.accentPurple,
           ),
 
-          // ── READER MODE ────────────────────────────────────────────────────
-          _menuTile(
-            Icons.menu_book_rounded,
-            _readerMode ? 'Exit Reader Mode' : 'Reader Mode',
-            () { Navigator.pop(context); _toggleReaderMode(); },
-            color: _readerMode ? AppTheme.warning : AppTheme.textSecondary,
-          ),
-
-          // ── COOKIE EDITOR ──────────────────────────────────────────────────
-          _menuTile(
-            Icons.cookie_outlined, 'Cookie Editor',
-            () {
+          // ── NOVA CYBER ─────────────────────────────────────────────────────
+          ListTile(
+            contentPadding: EdgeInsets.zero, dense: true,
+            leading: Container(
+              width: 34, height: 34,
+              decoration: BoxDecoration(
+                gradient: AppTheme.primaryGradient,
+                borderRadius: BorderRadius.circular(10)),
+              child: const Icon(Icons.security_rounded,
+                  color: Colors.white, size: 17)),
+            title: Text('NOVA Cyber', style: GoogleFonts.spaceGrotesk(
+                color: AppTheme.textPrimary, fontSize: 14,
+                fontWeight: FontWeight.w700)),
+            subtitle: Text('Website security scanner',
+                style: GoogleFonts.inter(
+                    color: AppTheme.textHint, fontSize: 11)),
+            trailing: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: AppTheme.accentCyan.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                    color: AppTheme.accentCyan.withOpacity(0.3))),
+              child: Text('CYBER', style: GoogleFonts.inter(
+                  color: AppTheme.accentCyan, fontSize: 9,
+                  fontWeight: FontWeight.w800))),
+            onTap: () {
               Navigator.pop(context);
               Navigator.push(context, MaterialPageRoute(
-                  builder: (_) => CookieEditorScreen(url: _currentUrl)));
+                  builder: (_) => CyberScreen(initialUrl: _currentUrl)));
             },
-            color: AppTheme.warning,
           ),
 
-          // ── FIND IN PAGE ───────────────────────────────────────────────────
+          // ── FIND IN PAGE (bonus) ──────────────────────────────────────────
           _menuTile(
             Icons.search_rounded,
             'Find in page',
@@ -753,8 +751,6 @@ class _BrowserViewState extends State<BrowserView>
             },
           ),
         ]),
-        ),   // SingleChildScrollView
-        ),   // Container = DraggableScrollableSheet builder return
       ),
     );
   }
@@ -770,207 +766,6 @@ class _BrowserViewState extends State<BrowserView>
       dense: true,
     );
   }
-
-
-  // ── Reader Mode ───────────────────────────────────────────────────────────
-  static const String _readerJs = '(function(){'
-    'try{'
-    'var sel=["article","[role=main]","main",".article-content",".post-content",'
-    '".entry-content",".story-body",".article-body",".post-body"];'
-    'var best=null,bestSc=0;'
-    'for(var i=0;i<sel.length;i++){'
-    'var el=document.querySelector(sel[i]);'
-    'if(el){var sc=el.innerText.trim().length;if(sc>bestSc&&sc>300){bestSc=sc;best=el;}}'
-    '}'
-    'if(!best){'
-    'var divs=document.querySelectorAll("div,section");'
-    'for(var i=0;i<divs.length;i++){'
-    'var el=divs[i],ps=el.querySelectorAll("p"),sc=0;'
-    'for(var j=0;j<ps.length;j++)sc+=(ps[j].innerText||"").length;'
-    'if(sc>bestSc&&sc<100000){bestSc=sc;best=el;}'
-    '}}'
-    'if(!best)return JSON.stringify({error:"No article content found"});'
-    'var title=(document.querySelector("h1")||{}).innerText||document.title||"Article";'
-    'var clone=best.cloneNode(true);'
-    'var rm=clone.querySelectorAll("script,style,iframe,noscript,.ad,.ads,nav,.sidebar");'
-    'for(var i=0;i<rm.length;i++){if(rm[i].parentNode)rm[i].parentNode.removeChild(rm[i]);}'
-    'var words=(best.innerText||"").trim().split(/\s+/).length;'
-    'return JSON.stringify({title:title.trim(),html:clone.innerHTML,'
-    'wordCount:words,readTime:Math.max(1,Math.ceil(words/200))});'
-    '}catch(e){return JSON.stringify({error:e.message});}'
-    '})()';
-
-  Future<void> _toggleReaderMode() async {
-    if (_readerMode) {
-      setState(() => _readerMode = false);
-      if (_readerOriginalUrl != null) {
-        _wvc?.loadUrl(urlRequest: URLRequest(url: WebUri(_readerOriginalUrl!)));
-        _readerOriginalUrl = null;
-      }
-      return;
-    }
-    _snack('Extracting article…');
-    final result = await _wvc?.evaluateJavascript(source: _readerJs);
-    if (result == null) { _snack('Could not extract content'); return; }
-    try {
-      final data = jsonDecode(result.toString()) as Map<String, dynamic>;
-      if (data.containsKey('error')) {
-        _snack('Reader Mode: ${data["error"]}'); return;
-      }
-      final title     = (data['title'] as String?) ?? _pageTitle;
-      final html      = (data['html']  as String?) ?? '';
-      final wordCount = (data['wordCount'] as int?) ?? 0;
-      final readTime  = (data['readTime']  as int?) ?? 1;
-      if (html.isEmpty) { _snack('No article found on this page'); return; }
-      _readerOriginalUrl = _currentUrl;
-      setState(() => _readerMode = true);
-      final page = _buildReaderHtml(title, html, wordCount, readTime);
-      await _wvc?.loadData(data: page, mimeType: 'text/html', encoding: 'utf-8');
-    } catch (e) {
-      _snack('Reader Mode error: $e');
-    }
-  }
-
-  String _buildReaderHtml(String title, String html, int words, int mins) {
-    final themes = {
-      'dark':  {'bg':'#07101E','text':'#F1F5F9','card':'#111827','muted':'#94A3B8','border':'#1E293B','link':'#00D4FF'},
-      'light': {'bg':'#FAFAFA','text':'#1A1A2E','card':'#FFFFFF','muted':'#64748B','border':'#E2E8F0','link':'#0052CC'},
-      'sepia': {'bg':'#F4ECD8','text':'#4A3728','card':'#EDE0C4','muted':'#7A5C44','border':'#D4B896','link':'#C0392B'},
-    };
-    final t  = themes[_readerTheme] ?? themes['dark']!;
-    final fs = _readerFontSize.toInt();
-    final esc = title.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
-    return '<!DOCTYPE html><html><head><meta charset="UTF-8">'
-        '<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5">'
-        '<style>'
-        '*{box-sizing:border-box;margin:0;padding:0}'
-        'body{background:${t['bg']};color:${t['text']};'
-        'font-family:Georgia,serif;font-size:${fs}px;line-height:1.85;'
-        'max-width:720px;margin:0 auto;padding:28px 20px 120px}'
-        '.hdr{margin-bottom:28px;padding-bottom:20px;border-bottom:2px solid ${t['border']}}'
-        '.ttl{font-size:1.75em;font-weight:700;line-height:1.3;margin-bottom:12px}'
-        '.meta{font-size:13px;color:${t['muted']};font-family:sans-serif;display:flex;gap:12px;flex-wrap:wrap}'
-        '.badge{background:rgba(0,212,255,.12);color:#00D4FF;padding:3px 12px;border-radius:20px;font-weight:700;border:1px solid rgba(0,212,255,.2);font-size:11px}'
-        'h1,h2,h3{margin:1.5em 0 .5em;line-height:1.3}'
-        'h1{font-size:1.6em}h2{font-size:1.35em}h3{font-size:1.15em}'
-        'p{margin:1em 0}'
-        'a{color:${t['link']};text-decoration:none}'
-        'img{max-width:100%;height:auto;border-radius:10px;margin:1em 0;display:block}'
-        'blockquote{border-left:3px solid #00D4FF;padding:12px 20px;margin:1.5em 0;background:rgba(0,212,255,.05);border-radius:0 10px 10px 0;font-style:italic;color:${t['muted']}}'
-        'pre{background:${t['card']};border:1px solid ${t['border']};border-radius:10px;padding:16px;overflow-x:auto;margin:1em 0}'
-        'code{font-family:monospace;background:${t['card']};padding:2px 6px;border-radius:5px;font-size:.87em;border:1px solid ${t['border']}}'
-        'ul,ol{padding-left:1.8em;margin:1em 0}li{margin:.4em 0}'
-        'hr{border:none;border-top:1px solid ${t['border']};margin:2em 0}'
-        'table{border-collapse:collapse;width:100%;margin:1em 0;font-size:.9em}'
-        'th,td{border:1px solid ${t['border']};padding:10px 14px;text-align:left}'
-        'th{background:${t['card']};font-weight:700}'
-        '</style></head><body>'
-        '<div class="hdr"><div class="ttl">$esc</div>'
-        '<div class="meta"><span class="badge">📖 $mins min read</span>'
-        '<span>$words words</span><span style="opacity:.5">NOVA X Reader</span></div></div>'
-        '$html</body></html>';
-  }
-
-  Widget _buildReaderToolbar() {
-    if (!_readerMode) return const SizedBox.shrink();
-    return Container(
-      padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).padding.bottom + 4,
-          top: 8, left: 14, right: 14),
-      decoration: BoxDecoration(
-        color: AppTheme.bgCard,
-        border: Border(top: BorderSide(
-            color: AppTheme.warning.withOpacity(0.5), width: 1.5)),
-      ),
-      child: Row(children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: AppTheme.warning.withOpacity(0.12),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: AppTheme.warning.withOpacity(0.4)),
-          ),
-          child: Text('READER', style: GoogleFonts.spaceGrotesk(
-              color: AppTheme.warning, fontSize: 9, fontWeight: FontWeight.w800)),
-        ),
-        const SizedBox(width: 10),
-        // Font size
-        _rBtn(Icons.text_decrease_rounded, () async {
-          if (_readerFontSize > 12) {
-            _readerFontSize -= 2;
-            await _wvc?.evaluateJavascript(
-                source: "document.body.style.fontSize='${_readerFontSize.toInt()}px'");
-            if (mounted) setState(() {});
-          }
-        }),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6),
-          child: Text('${_readerFontSize.toInt()}px',
-              style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 11)),
-        ),
-        _rBtn(Icons.text_increase_rounded, () async {
-          if (_readerFontSize < 28) {
-            _readerFontSize += 2;
-            await _wvc?.evaluateJavascript(
-                source: "document.body.style.fontSize='${_readerFontSize.toInt()}px'");
-            if (mounted) setState(() {});
-          }
-        }),
-        const Spacer(),
-        // Themes
-        for (final entry in [['dark','🌙'],['light','☀️'],['sepia','📜']])
-          GestureDetector(
-            onTap: () {
-              setState(() => _readerTheme = entry[0]);
-              // Rebuild reader with new theme
-              final url = _readerOriginalUrl;
-              _toggleReaderMode().then((_) {
-                _readerOriginalUrl = url;
-                _toggleReaderMode();
-              });
-            },
-            child: Container(
-              width: 30, height: 30,
-              margin: const EdgeInsets.only(left: 4),
-              decoration: BoxDecoration(
-                color: _readerTheme == entry[0]
-                    ? AppTheme.warning.withOpacity(0.15) : AppTheme.bgElevated,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: _readerTheme == entry[0]
-                      ? AppTheme.warning : AppTheme.divider),
-              ),
-              child: Center(child: Text(entry[1],
-                  style: const TextStyle(fontSize: 13))),
-            ),
-          ),
-        const SizedBox(width: 8),
-        // Exit
-        GestureDetector(
-          onTap: _toggleReaderMode,
-          child: Container(
-            width: 30, height: 30,
-            decoration: BoxDecoration(
-              color: AppTheme.danger.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: AppTheme.danger.withOpacity(0.3)),
-            ),
-            child: const Icon(Icons.close_rounded,
-                color: AppTheme.danger, size: 15),
-          ),
-        ),
-      ]),
-    );
-  }
-
-  Widget _rBtn(IconData icon, VoidCallback onTap) => GestureDetector(
-    onTap: onTap,
-    child: Container(width: 28, height: 28,
-      decoration: BoxDecoration(color: AppTheme.bgElevated,
-          borderRadius: BorderRadius.circular(7),
-          border: Border.all(color: AppTheme.divider)),
-      child: Icon(icon, color: AppTheme.textSecondary, size: 13)),
-  );
 
   // ── Find in page ───────────────────────────────────────────────────────────
   void _showFindInPage() {

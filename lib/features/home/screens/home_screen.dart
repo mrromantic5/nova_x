@@ -385,21 +385,26 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<void> _doLensSearch({required bool fromCamera}) async {
     setState(() => _lensLoading = true);
-    _snack('🔍 Processing image…');
+    _snack('📷 Preparing image…');
 
-    final url = await LensService.search(fromCamera: fromCamera);
+    // Build an HTML page that uploads from within the WebView
+    // (same-origin fetch to Google — no 'image not associated' error)
+    final html = await LensService.buildSearchPage(fromCamera: fromCamera);
 
     setState(() => _lensLoading = false);
 
-    if (url == null) {
-      _snack('Search cancelled');
+    if (html == null) {
+      // User cancelled photo picker
       return;
     }
 
-    // Open result in NOVA X browser
+    // Open the upload page in NOVA X browser
     if (mounted) {
       Navigator.push(context, MaterialPageRoute(
-          builder: (_) => BrowserView(initialQuery: url)));
+          builder: (_) => BrowserView(
+            initialQuery: 'https://www.google.com',
+            htmlContent:  html,
+          )));
     }
   }
 

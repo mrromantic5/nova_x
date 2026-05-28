@@ -60,31 +60,70 @@ jobs:
             exit 1
           fi
 
-      # ── App icon: resize assets/images/logo.png to all mipmap sizes ─────
+      # ── App icon: styled icon with blue background + properly scaled logo ────
+      # Fixes: (1) transparent logo showing white bg on Android
+      #        (2) distorted aspect ratio from naive square resize
+      #        (3) logo too small — now fills 90% of icon space
       - name: Set app icon from logo.png
         run: |
           pip install Pillow --break-system-packages -q
-          python3 << 'PYEOF'
-          from PIL import Image
+          python3 << 'PYEOF2'
+          from PIL import Image, ImageDraw
           import os
+
           logo_path = 'assets/images/logo.png'
           if not os.path.exists(logo_path):
-              print(f'WARNING: {logo_path} not found — keeping default icon')
+              print(f'WARNING: {logo_path} not found')
               exit(0)
+
           sizes = {
               'mipmap-mdpi': 48, 'mipmap-hdpi': 72,
               'mipmap-xhdpi': 96, 'mipmap-xxhdpi': 144, 'mipmap-xxxhdpi': 192,
           }
+
+          # 1. Load and crop to content bounds
           logo = Image.open(logo_path).convert('RGBA')
-          for d, s in sizes.items():
-              out = f'android/app/src/main/res/{d}'
+          bbox = logo.getbbox()
+          if bbox:
+              logo = logo.crop(bbox)
+          lw, lh = logo.size
+
+          # 2. Center-square crop — logo is landscape (wide) due to lightning arms.
+          #    Taking the center square focuses on the main circular design,
+          #    keeping it bold and properly proportioned in the round/square icon.
+          half   = min(lw, lh) // 2
+          cx, cy = lw // 2, lh // 2
+          logo   = logo.crop((cx - half, cy - half, cx + half, cy + half))
+
+          for dir_name, size in sizes.items():
+              # 3. Create NOVA X blue gradient background (no more white bleed-through)
+              bg   = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+              draw = ImageDraw.Draw(bg)
+              for y in range(size):
+                  t = y / max(size - 1, 1)
+                  r = int(0   + 12 * t)
+                  g = int(40  + 75 * t)
+                  b = int(185 + 60 * t)
+                  draw.line([(0, y), (size - 1, y)], fill=(r, g, b, 255))
+
+              # 4. Scale logo to 90% fill — bold and clearly visible
+              logo_sz = int(size * 0.90)
+              logo_r  = logo.resize((logo_sz, logo_sz), Image.LANCZOS)
+
+              # 5. Center logo on background
+              off = (size - logo_sz) // 2
+              bg.paste(logo_r, (off, off), logo_r)
+
+              # 6. Save as RGB (remove alpha for launcher icon compatibility)
+              final = bg.convert('RGB')
+              out   = f'android/app/src/main/res/{dir_name}'
               os.makedirs(out, exist_ok=True)
-              r = logo.resize((s, s), Image.LANCZOS)
-              r.save(f'{out}/ic_launcher.png')
-              r.save(f'{out}/ic_launcher_round.png')
-              print(f'  ✓ {d}: {s}x{s}px')
-          print('✅ App icon set from logo.png')
-          PYEOF
+              final.save(f'{out}/ic_launcher.png')
+              final.save(f'{out}/ic_launcher_round.png')
+              print(f'  ✓ {dir_name}: {size}x{size}px — logo fills {logo_sz}px ({logo_sz*100//size}%)')
+
+          print('✅ App icon: blue gradient background + 90% bold logo')
+          PYEOF2
 
       # ── Firebase: add google-services plugin inside plugins {} block ──────
       - name: Apply Google Services Plugin (Firebase)
@@ -184,6 +223,108 @@ jobs:
           </resources>
           XMLEOF
           echo "✓ colors.xml created"
+
+
+      # ── App Shortcuts — long-press home screen icon ───────────────────────────
+      - name: Write MainActivity.kt with shortcut support
+        run: |
+          mkdir -p android/app/src/main/kotlin/com/example/nova_x
+          echo "cGFja2FnZSBjb20uZXhhbXBsZS5ub3ZhX3gKaW1wb3J0IGlvLmZsdXR0ZXIuZW1iZWRkaW5nLmFuZHJvaWQuRmx1dHRlckFjdGl2aXR5CmltcG9ydCBpby5mbHV0dGVyLmVtYmVkZGluZy5lbmdpbmUuRmx1dHRlckVuZ2luZQppbXBvcnQgaW8uZmx1dHRlci5wbHVnaW4uY29tbW9uLk1ldGhvZENoYW5uZWwKY2xhc3MgTWFpbkFjdGl2aXR5IDogRmx1dHRlckFjdGl2aXR5KCkgewogICAgY29tcGFuaW9uIG9iamVjdCB7IHByaXZhdGUgY29uc3QgdmFsIENIID0gImNvbS5leGFtcGxlLm5vdmFfeC9zaG9ydGN1dHMiIH0KICAgIHByaXZhdGUgdmFyIHBlbmRpbmcgPSAiIgogICAgb3ZlcnJpZGUgZnVuIGNvbmZpZ3VyZUZsdXR0ZXJFbmdpbmUoZmx1dHRlckVuZ2luZTogRmx1dHRlckVuZ2luZSkgewogICAgICAgIHN1cGVyLmNvbmZpZ3VyZUZsdXR0ZXJFbmdpbmUoZmx1dHRlckVuZ2luZSkKICAgICAgICBwZW5kaW5nID0gaW50ZW50Py5hY3Rpb24/LnRha2VJZiB7IGl0LmNvbnRhaW5zKCJub3ZhX3guIikgfSA/OiAiIgogICAgICAgIE1ldGhvZENoYW5uZWwoZmx1dHRlckVuZ2luZS5kYXJ0RXhlY3V0b3IuYmluYXJ5TWVzc2VuZ2VyLCBDSCkKICAgICAgICAgICAgLnNldE1ldGhvZENhbGxIYW5kbGVyIHsgY2FsbCwgcmVzdWx0IC0+CiAgICAgICAgICAgICAgICBpZiAoY2FsbC5tZXRob2QgPT0gImdldFNob3J0Y3V0IikgewogICAgICAgICAgICAgICAgICAgIHJlc3VsdC5zdWNjZXNzKHBlbmRpbmcpOyBwZW5kaW5nID0gIiIKICAgICAgICAgICAgICAgIH0gZWxzZSByZXN1bHQubm90SW1wbGVtZW50ZWQoKQogICAgICAgICAgICB9CiAgICB9CiAgICBvdmVycmlkZSBmdW4gb25OZXdJbnRlbnQoaW50ZW50OiBhbmRyb2lkLmNvbnRlbnQuSW50ZW50KSB7CiAgICAgICAgc3VwZXIub25OZXdJbnRlbnQoaW50ZW50KTsgc2V0SW50ZW50KGludGVudCkKICAgICAgICBwZW5kaW5nID0gaW50ZW50LmFjdGlvbj8udGFrZUlmIHsgaXQuY29udGFpbnMoIm5vdmFfeC4iKSB9ID86ICIiCiAgICB9Cn0=" | base64 -d > android/app/src/main/kotlin/com/example/nova_x/MainActivity.kt
+          echo "✓ MainActivity.kt written"
+
+      - name: Create shortcut resources
+        run: |
+          python3 - << 'PYEOF2'
+          import os, textwrap
+          os.makedirs('android/app/src/main/res/xml',      exist_ok=True)
+          os.makedirs('android/app/src/main/res/drawable', exist_ok=True)
+
+          open('android/app/src/main/res/xml/shortcuts.xml','w').write(textwrap.dedent('''
+            <?xml version="1.0" encoding="utf-8"?>
+            <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+              <shortcut android:shortcutId="new_tab" android:enabled="true"
+                  android:icon="@drawable/ic_sc_new_tab"
+                  android:shortcutShortLabel="@string/sc_new_tab_s"
+                  android:shortcutLongLabel="@string/sc_new_tab_l">
+                <intent android:action="com.example.nova_x.NEW_TAB"
+                    android:targetPackage="com.example.nova_x"
+                    android:targetClass="com.example.nova_x.MainActivity"/>
+              </shortcut>
+              <shortcut android:shortcutId="private_tab" android:enabled="true"
+                  android:icon="@drawable/ic_sc_private"
+                  android:shortcutShortLabel="@string/sc_private_s"
+                  android:shortcutLongLabel="@string/sc_private_l">
+                <intent android:action="com.example.nova_x.PRIVATE_TAB"
+                    android:targetPackage="com.example.nova_x"
+                    android:targetClass="com.example.nova_x.MainActivity"/>
+              </shortcut>
+              <shortcut android:shortcutId="business" android:enabled="true"
+                  android:icon="@drawable/ic_sc_business"
+                  android:shortcutShortLabel="@string/sc_business_s"
+                  android:shortcutLongLabel="@string/sc_business_l">
+                <intent android:action="com.example.nova_x.BUSINESS"
+                    android:targetPackage="com.example.nova_x"
+                    android:targetClass="com.example.nova_x.MainActivity"/>
+              </shortcut>
+            </shortcuts>
+          ''').strip())
+
+          open('android/app/src/main/res/drawable/ic_sc_new_tab.xml','w').write(
+            '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">'
+            '<path android:fillColor="#00D4FF" android:pathData="M19,13H13v6H11v-6H5v-2H11V5H13v6H19v2Z"/></vector>')
+
+          open('android/app/src/main/res/drawable/ic_sc_private.xml','w').write(
+            '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">'
+            '<path android:fillColor="#7C4DFF" android:pathData="M12,1L3,5v6c0,5.55 3.84,10.74 9,12 5.16,-1.26 9,-6.45 9,-12V5L12,1zM12,11.99h7c-0.53,4.12-3.28,7.79-7,8.94V12H5V6.3l7,-3.11v8.8z"/></vector>')
+
+          open('android/app/src/main/res/drawable/ic_sc_business.xml','w').write(
+            '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">'
+            '<path android:fillColor="#00D4FF" android:pathData="M12,7V3H2v18H22V7H12zM6,19H4v-2H6v2zM6,15H4v-2H6v2zM6,11H4V9H6v2zM6,7H4V5H6v2zM10,19H8v-2H10v2zM10,15H8v-2H10v2zM10,11H8V9H10v2zM10,7H8V5H10v2zM20,19H12v-2H14v-2H12v-2H14v-2H12V9H20v10zM18,11H16v2H18v-2zM18,15H16v2H18v-2z"/></vector>')
+
+          open('android/app/src/main/res/values/strings.xml','w').write(textwrap.dedent('''
+            <?xml version="1.0" encoding="utf-8"?>
+            <resources>
+              <string name="sc_new_tab_s">New Tab</string>
+              <string name="sc_new_tab_l">Open New Tab in NOVA X</string>
+              <string name="sc_private_s">Private Tab</string>
+              <string name="sc_private_l">Open Private Browsing</string>
+              <string name="sc_business_s">Business</string>
+              <string name="sc_business_l">NOVA X Business Directory</string>
+            </resources>
+          ''').strip())
+
+          print('shortcut XML, icons, strings created')
+          PYEOF2
+
+      - name: Patch AndroidManifest for shortcuts
+        run: |
+          python3 - << 'PYEOF3'
+          content = open('android/app/src/main/AndroidManifest.xml').read()
+          if 'android.app.shortcuts' not in content:
+              block = (
+                '        <meta-data android:name="android.app.shortcuts" '
+                'android:resource="@xml/shortcuts"/>\n'
+                '        <intent-filter>\n'
+                '            <action android:name="com.example.nova_x.NEW_TAB"/>\n'
+                '            <category android:name="android.intent.category.DEFAULT"/>\n'
+                '        </intent-filter>\n'
+                '        <intent-filter>\n'
+                '            <action android:name="com.example.nova_x.PRIVATE_TAB"/>\n'
+                '            <category android:name="android.intent.category.DEFAULT"/>\n'
+                '        </intent-filter>\n'
+                '        <intent-filter>\n'
+                '            <action android:name="com.example.nova_x.BUSINESS"/>\n'
+                '            <category android:name="android.intent.category.DEFAULT"/>\n'
+                '        </intent-filter>\n'
+                '    </activity>'
+              )
+              content = content.replace('    </activity>', block, 1)
+              open('android/app/src/main/AndroidManifest.xml','w').write(content)
+              print('Shortcut manifest metadata added')
+          import xml.etree.ElementTree as ET
+          ET.parse('android/app/src/main/AndroidManifest.xml')
+          print('AndroidManifest valid XML')
+          PYEOF3
 
       - name: Configure Gradle Java Home
         run: echo "org.gradle.java.home=$JAVA_HOME" >> android/gradle.properties

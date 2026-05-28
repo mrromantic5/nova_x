@@ -26,7 +26,7 @@
 import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
-import '../features/cyber/models/security_report.dart';
+import 'package:nova_x/features/cyber/models/security_report.dart';
 
 class CyberService {
   // ── Dio instances ────────────────────────────────────────────────────────────

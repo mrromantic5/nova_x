@@ -11,15 +11,14 @@ import 'features/auth/screens/auth_gate.dart';
 import 'features/business/screens/business_screen.dart';
 import 'features/browser/screens/browser_view.dart';
 
-/// Global navigator key — lets us navigate from outside widget tree (FCM handler)
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-/// Background message handler — must be a top-level function
+// Channel that reads which shortcut the user tapped from MainActivity.kt
+const _shortcutChannel = MethodChannel('com.example.nova_x/shortcuts');
+
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
-  // The system will show the notification automatically.
-  // Navigation happens when the user TAPS the notification (onMessageOpenedApp).
 }
 
 void main() async {
@@ -45,29 +44,61 @@ class _NovaXAppState extends State<NovaXApp> {
   void initState() {
     super.initState();
     _initFCM();
+    _initShortcuts();
   }
 
+  // ── App Shortcuts (long-press home screen icon) ────────────────────────────
+  // Reads the action sent by MainActivity.kt when a shortcut was tapped,
+  // then navigates to the correct screen after the widget tree is ready.
+  Future<void> _initShortcuts() async {
+    try {
+      // Small delay so AuthGate/HomeScreen finishes mounting first
+      await Future.delayed(const Duration(milliseconds: 1400));
+      if (!mounted) return;
+
+      final action = await _shortcutChannel.invokeMethod<String>('getShortcut') ?? '';
+      if (action.isEmpty) return;
+
+      final nav = navigatorKey.currentState;
+      if (nav == null) return;
+
+      switch (action) {
+        case 'com.example.nova_x.NEW_TAB':
+          // Open browser to Google (blank new tab)
+          nav.push(MaterialPageRoute(
+              builder: (_) => const BrowserView(initialQuery: 'https://www.google.com')));
+          break;
+        case 'com.example.nova_x.PRIVATE_TAB':
+          // Open incognito browser session
+          nav.push(MaterialPageRoute(
+              builder: (_) => const BrowserView(
+                  initialQuery: 'https://www.google.com', incognito: true)));
+          break;
+        case 'com.example.nova_x.BUSINESS':
+          // Open the business directory
+          nav.push(MaterialPageRoute(builder: (_) => const BusinessScreen()));
+          break;
+      }
+    } catch (_) {
+      // Shortcut channel not available (e.g. first install before MainActivity.kt deployed)
+    }
+  }
+
+  // ── FCM Push Notifications ─────────────────────────────────────────────────
   Future<void> _initFCM() async {
     final msg = FirebaseMessaging.instance;
 
-    // Request permission
     await msg.requestPermission(
       alert: true, badge: true, sound: true, provisional: false,
     );
-
-    // Set foreground notification options (show heads-up on Android)
     await msg.setForegroundNotificationPresentationOptions(
       alert: true, badge: true, sound: true,
     );
 
-    // Register FCM token with server
     final token = await msg.getToken();
     if (token != null) await ApiService.registerFcmToken(token);
-
-    // Token refresh
     msg.onTokenRefresh.listen((t) => ApiService.registerFcmToken(t));
 
-    // Foreground message — show in-app snackbar
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       final notif = message.notification;
       if (notif == null) return;
@@ -98,36 +129,27 @@ class _NovaXAppState extends State<NovaXApp> {
       ));
     });
 
-    // Background → app opened by tapping notification
     FirebaseMessaging.onMessageOpenedApp.listen(_handleMessage);
 
-    // Terminated → app opened by tapping notification
     final initial = await msg.getInitialMessage();
     if (initial != null) {
-      // Delay slightly to ensure the widget tree is ready
       await Future.delayed(const Duration(milliseconds: 800));
       _handleMessage(initial);
     }
   }
 
-  /// Route the user to the correct screen based on notification data payload
   void _handleMessage(RemoteMessage message) {
     final data   = message.data;
     final screen = data['screen'] ?? 'home';
     final url    = data['url']    ?? '';
-
-    final nav = navigatorKey.currentState;
+    final nav    = navigatorKey.currentState;
     if (nav == null) return;
 
     if (screen == 'business') {
-      // Open global business directory
       nav.push(MaterialPageRoute(builder: (_) => const BusinessScreen()));
     } else if (screen == 'url' && url.isNotEmpty) {
-      // Open a specific URL in the browser
-      nav.push(MaterialPageRoute(
-          builder: (_) => BrowserView(initialQuery: url)));
+      nav.push(MaterialPageRoute(builder: (_) => BrowserView(initialQuery: url)));
     }
-    // screen == 'home' → no navigation, app is already open or at home
   }
 
   @override
@@ -135,7 +157,7 @@ class _NovaXAppState extends State<NovaXApp> {
     return MaterialApp(
       title:                    'NOVA X',
       debugShowCheckedModeBanner: false,
-      navigatorKey:             navigatorKey, // ← required for push from outside widget tree
+      navigatorKey:             navigatorKey,
       theme: ThemeData(
         useMaterial3:            true,
         scaffoldBackgroundColor: AppTheme.bgDark,

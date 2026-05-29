@@ -368,7 +368,6 @@ class NovaShieldService {
     if (webrtcBlocking)        buf.write(webrtcPreventionJS);
     if (referrerSpoofing)      buf.write(referrerSpoofJS);
     if (fingerprintProtection) buf.write(buildFingerprintNoiseJS());
-    buf.write(securityHeadersJS);
     return buf.toString();
   }
 

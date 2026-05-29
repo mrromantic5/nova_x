@@ -159,6 +159,8 @@ jobs:
           sed -i 's/android:label="nova_x"/android:label="NOVA X"/' "$M"
           sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>|' "$M"
           sed -i 's|android:icon="@mipmap/ic_launcher">|android:icon="@mipmap/ic_launcher"\n        android:usesCleartextTraffic="true"\n        android:hardwareAccelerated="true">|' "$M"
+          # Add Maps API key and location permissions
+          sed -i 's|android:name="android.permission.POST_NOTIFICATIONS"/>|android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>|' "$M"
           echo "✓ AndroidManifest patched (label + permissions + app attributes)"
 
       # ── FCM tap fix — separate safe step using Python ─────────────────────
@@ -192,6 +194,7 @@ jobs:
                   '        <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="nova_x_channel"/>\n'
                   '        <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@mipmap/ic_launcher"/>\n'
                   '        <meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/nova_x_cyan"/>\n'
+                  '        <meta-data android:name="com.google.android.geo.API_KEY" android:value="AIzaSyBc_bNBj_hmsG5rNFXHC4Tmgp0BRBjyXos"/>\\n'
                   '    </application>'
               )
               content = content.replace('    </application>', fcm_meta, 1)

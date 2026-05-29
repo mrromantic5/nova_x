@@ -266,7 +266,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   Text(
                     NovaShieldService.isEnabled
                         ? '${NovaShieldService.protectionLevel} · '
-                          '7 layers active · Cloudflare DoH'
+                          '7 layers active · NovaX DoH'
                         : 'Protection disabled — tap to configure',
                     style: GoogleFonts.inter(
                         color: NovaShieldService.isEnabled

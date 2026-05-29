@@ -64,7 +64,6 @@ class NearbyPlace {
   final bool?   openNow;
   final String? photoRef;
   final List<String> types;
-  final double? distanceKm;
 
   const NearbyPlace({
     required this.placeId,
@@ -75,7 +74,6 @@ class NearbyPlace {
     this.openNow,
     this.photoRef,
     required this.types,
-    this.distanceKm,
   });
 }
 
@@ -147,17 +145,17 @@ class MapService {
     PlaceCategory(type: 'hospital',       label: 'Hospital',  emoji: '🏥'),
     PlaceCategory(type: 'bank',           label: 'Bank',      emoji: '🏦'),
     PlaceCategory(type: 'gas_station',    label: 'Fuel',      emoji: '⛽'),
-    PlaceCategory(type: 'lodging',         label: 'Hotel',     emoji: '🏨'),
-    PlaceCategory(type: 'pharmacy',       label: 'Pharmacy',  emoji: '💊'),
-    PlaceCategory(type: 'supermarket',    label: 'Market',    emoji: '🛒'),
-    PlaceCategory(type: 'atm',            label: 'ATM',       emoji: '🏧'),
-    PlaceCategory(type: 'police',         label: 'Police',    emoji: '👮'),
-    PlaceCategory(type: 'school',         label: 'School',    emoji: '🏫'),
+    PlaceCategory(type: 'lodging',        label: 'Hotel',     emoji: '🏨'),
     PlaceCategory(type: 'cafe',           label: 'Café',      emoji: '☕'),
     PlaceCategory(type: 'shopping_mall',  label: 'Shopping',  emoji: '🛍️'),
     PlaceCategory(type: 'church',         label: 'Church',    emoji: '⛪'),
     PlaceCategory(type: 'mosque',         label: 'Mosque',    emoji: '🕌'),
     PlaceCategory(type: 'parking',        label: 'Parking',   emoji: '🅿️'),
+    PlaceCategory(type: 'pharmacy',       label: 'Pharmacy',  emoji: '💊'),
+    PlaceCategory(type: 'supermarket',    label: 'Market',    emoji: '🛒'),
+    PlaceCategory(type: 'atm',            label: 'ATM',       emoji: '🏧'),
+    PlaceCategory(type: 'police',         label: 'Police',    emoji: '👮'),
+    PlaceCategory(type: 'school',         label: 'School',    emoji: '🏫'),
   ];
 
   // ── Places Autocomplete ───────────────────────────────────────────────────
@@ -246,50 +244,60 @@ class MapService {
     }
   }
 
-  // ── Nearby Places ─────────────────────────────────────────────────────────
+  // ── Nearby Places ─────────────────────────────────────────────
+  // Type search first; keyword fallback ensures results always appear.
   static Future<List<NearbyPlace>> getNearbyPlaces(
       LatLng location, String type,
       {int radius = 5000, LatLng? currentLoc}) async {
+    final cl = currentLoc ?? location;
+    final r1 = await _nearbyCall(location, cl, type: type);
+    if (r1.isNotEmpty) return r1;
+    // Keyword fallback catches places misclassified or not typed
+    final label = categories.where((c) => c.type == type)
+        .map((c) => c.label).firstOrNull ?? type;
+    return _nearbyCall(location, cl, keyword: label);
+  }
+
+  static Future<List<NearbyPlace>> _nearbyCall(
+      LatLng location, LatLng currentLoc,
+      {String? type, String? keyword}) async {
     try {
+      final p = <String, dynamic>{
+        'location': '${location.latitude},${location.longitude}',
+        'rankby':   'distance',
+        'key':      _apiKey,
+        'language': 'en',
+      };
+      if (type    != null) p['type']    = type;
+      if (keyword != null) p['keyword'] = keyword;
       final r = await _dio.get('$_baseUrl/place/nearbysearch/json',
-          queryParameters: {
-            'location': '${location.latitude},${location.longitude}',
-            'radius':   radius,
-            'type':     type,
-            'key':      _apiKey,
-            'language': 'en',
-          });
-      final data = r.data as Map<String, dynamic>;
-      if (data['status'] != 'OK' && data['status'] != 'ZERO_RESULTS') {
-        return [];
-      }
-      return ((data['results'] as List?) ?? []).take(20).map((p) {
-        final geo = p['geometry']['location'];
-        final oh  = p['opening_hours'];
-        final ph  = p['photos'] as List?;
+          queryParameters: p);
+      final data = r.data as Map<String, dynamic>?;
+      if (data == null) return [];
+      if ((data['status'] as String? ?? '') != 'OK') return [];
+      return ((data['results'] as List?) ?? []).take(20).map((pl) {
+        final g  = pl['geometry']['location'];
+        final oh = pl['opening_hours'];
+        final ph = pl['photos'] as List?;
+        final loc = LatLng((g['lat'] as num).toDouble(),
+                          (g['lng'] as num).toDouble());
         return NearbyPlace(
-          placeId:  p['place_id'] ?? '',
-          name:     p['name'] ?? '',
-          vicinity: p['vicinity'] ?? '',
-          location: LatLng(
-              (geo['lat'] as num).toDouble(),
-              (geo['lng'] as num).toDouble()),
-          rating:   (p['rating'] as num?)?.toDouble(),
-          openNow:  oh?['open_now'] as bool?,
-          photoRef: ph?.isNotEmpty == true
-              ? ph!.first['photo_reference'] as String?
-              : null,
-          types: List<String>.from(p['types'] ?? []),
-          distanceKm: currentLoc != null ? _calcDistKm(currentLoc, LatLng(
-              (geo['lat'] as num).toDouble(),
-              (geo['lng'] as num).toDouble())) : null,
+          placeId:    pl['place_id'] ?? '',
+          name:       pl['name'] ?? '',
+          vicinity:   pl['vicinity'] ?? '',
+          location:   loc,
+          rating:     (pl['rating'] as num?)?.toDouble(),
+          openNow:    oh?['open_now'] as bool?,
+          photoRef:   ph?.isNotEmpty == true
+              ? ph!.first['photo_reference'] as String? : null,
+          types:      List<String>.from(pl['types'] ?? []),
+          distanceKm: _calcDistKm(currentLoc, loc),
         );
       }).toList()
-        ..sort((a, b) => (a.distanceKm ?? 99).compareTo(b.distanceKm ?? 99));
-    } catch (_) {
-      return [];
-    }
+        ..sort((a,b) => (a.distanceKm ?? 99).compareTo(b.distanceKm ?? 99));
+    } catch (_) { return []; }
   }
+
 
   // ── Directions ────────────────────────────────────────────────────────────
   static Future<DirectionsResult?> getDirections({
@@ -381,42 +389,6 @@ class MapService {
     } catch (_) {
       return null;
     }
-  }
-
-  // ── Text search (more flexible than nearbysearch) ─────────────────────────
-  static Future<List<NearbyPlace>> textSearch(
-      String query, LatLng location) async {
-    try {
-      final r = await _dio.get('\$_baseUrl/place/textsearch/json',
-          queryParameters: {
-            'query':    query,
-            'location': '\${location.latitude},\${location.longitude}',
-            'radius':   10000,
-            'key':      _apiKey,
-            'language': 'en',
-          });
-      final data = r.data as Map<String, dynamic>;
-      if (data['status'] != 'OK') return [];
-      return ((data['results'] as List?) ?? []).take(20).map((p) {
-        final geo = p['geometry']['location'];
-        final oh  = p['opening_hours'];
-        final ph  = p['photos'] as List?;
-        final loc = LatLng((geo['lat'] as num).toDouble(),
-                           (geo['lng'] as num).toDouble());
-        return NearbyPlace(
-          placeId:  p['place_id'] ?? '',
-          name:     p['name'] ?? '',
-          vicinity: p['formatted_address'] ?? '',
-          location: loc,
-          rating:   (p['rating'] as num?)?.toDouble(),
-          openNow:  oh?['open_now'] as bool?,
-          photoRef: ph?.isNotEmpty == true ? ph!.first['photo_reference'] as String? : null,
-          types:    List<String>.from(p['types'] ?? []),
-          distanceKm: _calcDistKm(location, loc),
-        );
-      }).toList()
-        ..sort((a,b) => (a.distanceKm ?? 99).compareTo(b.distanceKm ?? 99));
-    } catch (_) { return []; }
   }
 
   // ── Photo URL ─────────────────────────────────────────────────────────────

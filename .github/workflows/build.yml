@@ -29,6 +29,7 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
+
       - name: Patch flutter_inappwebview ProGuard
         run: |
           CACHE="${PUB_CACHE:-$HOME/.pub-cache}"
@@ -346,6 +347,25 @@ jobs:
               exit(1)
           "
           echo "✅ All verified — starting Gradle build"
+
+      # ── Fix geolocator_android compileSdkVersion (runs last, before build) ─
+      # geolocator_android 4.5.0+ uses `flutter.compileSdkVersion` which fails
+      # with "Could not get unknown property 'flutter'" in library context.
+      # Patches whatever version resolved — bulletproof, runs after all
+      # regeneration steps so nothing can undo it.
+      - name: Patch geolocator_android build.gradle
+        run: |
+          CACHE="${PUB_CACHE:-$HOME/.pub-cache}"
+          find "$CACHE" -name "build.gradle" -path "*geolocator_android*" 2>/dev/null | while read -r f; do
+            echo "Patching $f"
+            sed -i 's/flutter\.compileSdkVersion/35/g'        "$f"
+            sed -i 's/flutter\.minSdkVersion/21/g'            "$f"
+            sed -i 's/flutter\.targetSdkVersion/35/g'         "$f"
+            sed -i 's/flutter\.ndkVersion/"25.1.8937393"/g'   "$f"
+            echo "--- patched build.gradle ---"
+            grep -n "compileSdk\|minSdk\|targetSdk" "$f" || true
+          done
+          echo "✓ geolocator_android patched"
 
       - name: Build Release APK
         run: flutter build apk --release

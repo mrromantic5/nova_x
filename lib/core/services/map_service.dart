@@ -64,6 +64,7 @@ class NearbyPlace {
   final bool?   openNow;
   final String? photoRef;
   final List<String> types;
+  final double? distanceKm;
 
   const NearbyPlace({
     required this.placeId,
@@ -74,6 +75,7 @@ class NearbyPlace {
     this.openNow,
     this.photoRef,
     required this.types,
+    this.distanceKm,
   });
 }
 
@@ -145,12 +147,17 @@ class MapService {
     PlaceCategory(type: 'hospital',       label: 'Hospital',  emoji: '🏥'),
     PlaceCategory(type: 'bank',           label: 'Bank',      emoji: '🏦'),
     PlaceCategory(type: 'gas_station',    label: 'Fuel',      emoji: '⛽'),
-    PlaceCategory(type: 'hotel',          label: 'Hotel',     emoji: '🏨'),
+    PlaceCategory(type: 'lodging',         label: 'Hotel',     emoji: '🏨'),
     PlaceCategory(type: 'pharmacy',       label: 'Pharmacy',  emoji: '💊'),
     PlaceCategory(type: 'supermarket',    label: 'Market',    emoji: '🛒'),
     PlaceCategory(type: 'atm',            label: 'ATM',       emoji: '🏧'),
     PlaceCategory(type: 'police',         label: 'Police',    emoji: '👮'),
     PlaceCategory(type: 'school',         label: 'School',    emoji: '🏫'),
+    PlaceCategory(type: 'cafe',           label: 'Café',      emoji: '☕'),
+    PlaceCategory(type: 'shopping_mall',  label: 'Shopping',  emoji: '🛍️'),
+    PlaceCategory(type: 'church',         label: 'Church',    emoji: '⛪'),
+    PlaceCategory(type: 'mosque',         label: 'Mosque',    emoji: '🕌'),
+    PlaceCategory(type: 'parking',        label: 'Parking',   emoji: '🅿️'),
   ];
 
   // ── Places Autocomplete ───────────────────────────────────────────────────
@@ -242,7 +249,7 @@ class MapService {
   // ── Nearby Places ─────────────────────────────────────────────────────────
   static Future<List<NearbyPlace>> getNearbyPlaces(
       LatLng location, String type,
-      {int radius = 2000}) async {
+      {int radius = 5000, LatLng? currentLoc}) async {
     try {
       final r = await _dio.get('$_baseUrl/place/nearbysearch/json',
           queryParameters: {
@@ -273,8 +280,12 @@ class MapService {
               ? ph!.first['photo_reference'] as String?
               : null,
           types: List<String>.from(p['types'] ?? []),
+          distanceKm: currentLoc != null ? _calcDistKm(currentLoc, LatLng(
+              (geo['lat'] as num).toDouble(),
+              (geo['lng'] as num).toDouble())) : null,
         );
-      }).toList();
+      }).toList()
+        ..sort((a, b) => (a.distanceKm ?? 99).compareTo(b.distanceKm ?? 99));
     } catch (_) {
       return [];
     }
@@ -370,6 +381,42 @@ class MapService {
     } catch (_) {
       return null;
     }
+  }
+
+  // ── Text search (more flexible than nearbysearch) ─────────────────────────
+  static Future<List<NearbyPlace>> textSearch(
+      String query, LatLng location) async {
+    try {
+      final r = await _dio.get('\$_baseUrl/place/textsearch/json',
+          queryParameters: {
+            'query':    query,
+            'location': '\${location.latitude},\${location.longitude}',
+            'radius':   10000,
+            'key':      _apiKey,
+            'language': 'en',
+          });
+      final data = r.data as Map<String, dynamic>;
+      if (data['status'] != 'OK') return [];
+      return ((data['results'] as List?) ?? []).take(20).map((p) {
+        final geo = p['geometry']['location'];
+        final oh  = p['opening_hours'];
+        final ph  = p['photos'] as List?;
+        final loc = LatLng((geo['lat'] as num).toDouble(),
+                           (geo['lng'] as num).toDouble());
+        return NearbyPlace(
+          placeId:  p['place_id'] ?? '',
+          name:     p['name'] ?? '',
+          vicinity: p['formatted_address'] ?? '',
+          location: loc,
+          rating:   (p['rating'] as num?)?.toDouble(),
+          openNow:  oh?['open_now'] as bool?,
+          photoRef: ph?.isNotEmpty == true ? ph!.first['photo_reference'] as String? : null,
+          types:    List<String>.from(p['types'] ?? []),
+          distanceKm: _calcDistKm(location, loc),
+        );
+      }).toList()
+        ..sort((a,b) => (a.distanceKm ?? 99).compareTo(b.distanceKm ?? 99));
+    } catch (_) { return []; }
   }
 
   // ── Photo URL ─────────────────────────────────────────────────────────────

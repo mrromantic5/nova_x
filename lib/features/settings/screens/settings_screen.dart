@@ -6,6 +6,8 @@ import 'package:nova_x/core/database/local_db.dart';
 import 'package:nova_x/core/services/password_service.dart';
 import '../../password/password_manager_screen.dart';
 import '../../legal/screens/terms_screen.dart';
+import 'package:nova_x/features/shield/screens/nova_shield_screen.dart';
+import 'package:nova_x/core/services/nova_shield_service.dart';
 import '../../legal/screens/privacy_screen.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
 import '../../profile/screens/profile_screen.dart';
@@ -206,6 +208,77 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ]),
 
           // ── Privacy ────────────────────────────────────────────────────
+          // ── NOVA Shield ───────────────────────────────────────────────────────
+          _sectionHeader('NOVA Shield'),
+          GestureDetector(
+            onTap: () => _push(const NovaShieldScreen()),
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: NovaShieldService.isEnabled
+                      ? [AppTheme.accentCyan.withOpacity(0.12),
+                         AppTheme.accentPurple.withOpacity(0.08)]
+                      : [AppTheme.bgCard, AppTheme.bgCard],
+                  begin: Alignment.topLeft, end: Alignment.bottomRight),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: NovaShieldService.isEnabled
+                      ? AppTheme.accentCyan.withOpacity(0.35)
+                      : AppTheme.divider,
+                  width: NovaShieldService.isEnabled ? 1.5 : 1)),
+              child: Row(children: [
+                Container(
+                  width: 46, height: 46,
+                  decoration: BoxDecoration(
+                    gradient: NovaShieldService.isEnabled
+                        ? AppTheme.primaryGradient : null,
+                    color: NovaShieldService.isEnabled
+                        ? null : AppTheme.bgElevated,
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: NovaShieldService.isEnabled
+                        ? AppTheme.glowShadow : null),
+                  child: const Icon(Icons.shield_rounded,
+                      color: Colors.white, size: 22)),
+                const SizedBox(width: 14),
+                Expanded(child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  Row(children: [
+                    Text('NOVA Shield', style: GoogleFonts.spaceGrotesk(
+                        color: AppTheme.textPrimary, fontSize: 16,
+                        fontWeight: FontWeight.w800)),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 7, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: AppTheme.success.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                            color: AppTheme.success.withOpacity(0.3))),
+                      child: Text('NEW', style: GoogleFonts.inter(
+                          color: AppTheme.success, fontSize: 8,
+                          fontWeight: FontWeight.w800))),
+                  ]),
+                  const SizedBox(height: 4),
+                  Text(
+                    NovaShieldService.isEnabled
+                        ? '${NovaShieldService.protectionLevel} · '
+                          '7 layers active · Cloudflare DoH'
+                        : 'Protection disabled — tap to configure',
+                    style: GoogleFonts.inter(
+                        color: NovaShieldService.isEnabled
+                            ? AppTheme.accentCyan : AppTheme.textHint,
+                        fontSize: 12)),
+                ])),
+                const Icon(Icons.arrow_forward_ios_rounded,
+                    color: AppTheme.textHint, size: 14),
+              ]),
+            ),
+          ),
+
           // ── Security & Passwords ──────────────────────────────────────────
           _sectionHeader('Security & Passwords'),
           _card([

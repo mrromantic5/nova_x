@@ -111,8 +111,7 @@ class _NovaMapScreenState extends State<NovaMapScreen>
         return;
       }
       final pos = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.high,
-          timeLimit: const Duration(seconds: 8));
+          desiredAccuracy: LocationAccuracy.high);
       final loc = LatLng(pos.latitude, pos.longitude);
       setState(() {
         _currentLoc = loc;

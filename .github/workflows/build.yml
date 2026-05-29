@@ -29,7 +29,6 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
-
       - name: Patch flutter_inappwebview ProGuard
         run: |
           CACHE="${PUB_CACHE:-$HOME/.pub-cache}"
@@ -72,53 +71,74 @@ jobs:
           from PIL import Image, ImageDraw
           import os
 
-          logo_path = 'assets/images/logo.png'
-          if not os.path.exists(logo_path):
-              print(f'WARNING: {logo_path} not found')
-              exit(0)
-
-          sizes = {
-              'mipmap-mdpi': 48, 'mipmap-hdpi': 72,
-              'mipmap-xhdpi': 96, 'mipmap-xxhdpi': 144, 'mipmap-xxxhdpi': 192,
-          }
-
-          # 1. Load and crop to content bounds
-          logo = Image.open(logo_path).convert('RGBA')
+          BG = (7, 16, 30, 255)
+          logo = Image.open('assets/images/logo.png').convert('RGBA')
           bbox = logo.getbbox()
-          if bbox:
-              logo = logo.crop(bbox)
+          if bbox: logo = logo.crop(bbox)
           lw, lh = logo.size
-
-          # 2. Center-square crop — logo is landscape (wide) due to lightning arms.
-          #    Taking the center square focuses on the main circular design,
-          #    keeping it bold and properly proportioned in the round/square icon.
-          half   = min(lw, lh) // 2
+          half = min(lw, lh) // 2
           cx, cy = lw // 2, lh // 2
-          logo   = logo.crop((cx - half, cy - half, cx + half, cy + half))
+          logo = logo.crop((cx-half, cy-half, cx+half, cy+half))
 
-          for dir_name, size in sizes.items():
-              # 3. White background
-              bg   = Image.new('RGBA', (size, size), (255, 255, 255, 255))
-
-              # 4. Scale logo to 90% fill — bold and clearly visible
-              logo_sz = int(size * 0.90)
-              logo_r  = logo.resize((logo_sz, logo_sz), Image.LANCZOS)
-
-              # 5. Center logo on background
-              off = (size - logo_sz) // 2
-              bg.paste(logo_r, (off, off), logo_r)
-
-              # 6. Save as RGB (remove alpha for launcher icon compatibility)
-              final = bg.convert('RGB')
-              out   = f'android/app/src/main/res/{dir_name}'
+          std = {'mipmap-mdpi':48,'mipmap-hdpi':72,'mipmap-xhdpi':96,
+                 'mipmap-xxhdpi':144,'mipmap-xxxhdpi':192}
+          for d, sz in std.items():
+              out = 'android/app/src/main/res/' + d
               os.makedirs(out, exist_ok=True)
-              final.save(f'{out}/ic_launcher.png')
-              final.save(f'{out}/ic_launcher_round.png')
-              print(f'  ✓ {dir_name}: {size}x{size}px — logo fills {logo_sz}px ({logo_sz*100//size}%)')
+              bg = Image.new('RGBA',(sz,sz),BG)
+              ls = int(sz*0.78)
+              lr = logo.resize((ls,ls),Image.LANCZOS)
+              off = (sz-ls)//2
+              bg.paste(lr,(off,off),lr)
+              bg.convert('RGB').save(out+'/ic_launcher.png')
+              circ = Image.new('RGBA',(sz,sz),(0,0,0,0))
+              msk  = Image.new('L',(sz,sz),0)
+              ImageDraw.Draw(msk).ellipse((0,0,sz,sz),fill=255)
+              circ.paste(bg.convert('RGBA'),(0,0),msk)
+              circ.save(out+'/ic_launcher_round.png')
 
-          print('✅ App icon: blue gradient background + 90% bold logo')
+          adapt = {'mipmap-mdpi':72,'mipmap-hdpi':108,'mipmap-xhdpi':144,
+                   'mipmap-xxhdpi':216,'mipmap-xxxhdpi':288}
+          for d, sz in adapt.items():
+              out = 'android/app/src/main/res/' + d
+              os.makedirs(out, exist_ok=True)
+              fg = Image.new('RGBA',(sz,sz),(0,0,0,0))
+              ls = int(sz*0.64)
+              lr = logo.resize((ls,ls),Image.LANCZOS)
+              off = (sz-ls)//2
+              fg.paste(lr,(off,off),lr)
+              fg.save(out+'/ic_launcher_foreground.png')
+
+          # Write XML resource files (all in Python to avoid YAML heredoc issues)
+          anydpi = 'android/app/src/main/res/mipmap-anydpi-v26'
+          values = 'android/app/src/main/res/values'
+          os.makedirs(anydpi, exist_ok=True)
+          os.makedirs(values, exist_ok=True)
+
+          bg_xml = (
+              '<?xml version="1.0" encoding="utf-8"?>\n'
+              '<resources>\n'
+              '    <color name="ic_launcher_background">#07101E</color>\n'
+              '</resources>\n'
+          )
+          with open(values+'/ic_launcher_background.xml','w') as f: f.write(bg_xml)
+
+          adaptive_xml = (
+              '<?xml version="1.0" encoding="utf-8"?>\n'
+              '<adaptive-icon xmlns:android='
+              '"http://schemas.android.com/apk/res/android">\n'
+              '    <background android:drawable="@color/ic_launcher_background"/>\n'
+              '    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>\n'
+              '</adaptive-icon>\n'
+          )
+          with open(anydpi+'/ic_launcher.xml','w') as f: f.write(adaptive_xml)
+          with open(anydpi+'/ic_launcher_round.xml','w') as f: f.write(adaptive_xml)
+
+          print('Icon + adaptive XML done')
           PYEOF2
 
+      # ── Firebase: add google-services plugin inside plugins {} block ──────
+      # ── Firebase: add google-services plugin inside plugins {} block ──────
       # ── Firebase: add google-services plugin inside plugins {} block ──────
       - name: Apply Google Services Plugin (Firebase)
         run: |
@@ -347,25 +367,6 @@ jobs:
               exit(1)
           "
           echo "✅ All verified — starting Gradle build"
-
-      # ── Fix geolocator_android compileSdkVersion (runs last, before build) ─
-      # geolocator_android 4.5.0+ uses `flutter.compileSdkVersion` which fails
-      # with "Could not get unknown property 'flutter'" in library context.
-      # Patches whatever version resolved — bulletproof, runs after all
-      # regeneration steps so nothing can undo it.
-      - name: Patch geolocator_android build.gradle
-        run: |
-          CACHE="${PUB_CACHE:-$HOME/.pub-cache}"
-          find "$CACHE" -name "build.gradle" -path "*geolocator_android*" 2>/dev/null | while read -r f; do
-            echo "Patching $f"
-            sed -i 's/flutter\.compileSdkVersion/35/g'        "$f"
-            sed -i 's/flutter\.minSdkVersion/21/g'            "$f"
-            sed -i 's/flutter\.targetSdkVersion/35/g'         "$f"
-            sed -i 's/flutter\.ndkVersion/"25.1.8937393"/g'   "$f"
-            echo "--- patched build.gradle ---"
-            grep -n "compileSdk\|minSdk\|targetSdk" "$f" || true
-          done
-          echo "✓ geolocator_android patched"
 
       - name: Build Release APK
         run: flutter build apk --release

@@ -154,7 +154,7 @@ class NovaShieldService {
   }
 
   // ── Settings getters / setters ─────────────────────────────────────────────
-  static bool  get isEnabled        => _prefs?.getBool(_kEnabled)     ?? true;
+  static bool  get isEnabled        => _prefs?.getBool(_kEnabled)     ?? false;
   static bool  get httpsOnlyEnabled => _prefs?.getBool(_kHttps)       ?? true;
   static bool  get webrtcBlocking   => _prefs?.getBool(_kWebrtc)      ?? true;
   static bool  get fingerprintProtection => _prefs?.getBool(_kFingerprint) ?? true;

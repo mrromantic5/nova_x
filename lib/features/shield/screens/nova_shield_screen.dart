@@ -108,7 +108,7 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
                                 color: Colors.white, fontSize: 30,
                                 fontWeight: FontWeight.w900)),
                       ),
-                      Text('7-Layer Protection Engine  •  Cloudflare DoH',
+                      Text('7-Layer Protection Engine  •  Encrypted DNS',
                           style: GoogleFonts.inter(
                               color: AppTheme.textHint, fontSize: 11)),
                     ],
@@ -262,7 +262,7 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
               _card([
                 _layerTile(
                   Icons.cloud_rounded, 'DNS-over-HTTPS',
-                  'Encrypts all DNS queries via ${NovaShieldService.providers[NovaShieldService.activeProvider]!.name}',
+                  'All DNS queries encrypted via NOVA DNS',
                   AppTheme.accentCyan, true, null, // always on when shield is on
                 ),
                 _divider(),
@@ -296,10 +296,8 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
               ]),
               const SizedBox(height: 24),
 
-              // ── How NOVA Shield compares ───────────────────────────────
-              _sectionLabel('HOW IT COMPARES'),
-              const SizedBox(height: 10),
-              _comparisonCard(),
+              // Comparison table removed — replaced with feature highlights
+              _featureHighlightsCard(),
               const SizedBox(height: 20),
 
               // ── Footer note ────────────────────────────────────────────
@@ -317,7 +315,7 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
                   Expanded(child: Text(
                     'NOVA Shield operates entirely within the NOVA X browser. '
                     'It does not encrypt system-wide traffic. '
-                    'DNS checks use Cloudflare\'s servers — no data is sent to Tech Lyfe.',
+                    'DNS queries are encrypted end-to-end — no browsing data is sent to Tech Lyfe.',
                     style: GoogleFonts.inter(color: AppTheme.textHint,
                         fontSize: 11, height: 1.5),
                   )),
@@ -381,55 +379,61 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
     );
   }
 
-  // ── Comparison card ────────────────────────────────────────────────────────
-  Widget _comparisonCard() {
-    final rows = [
-      ('Feature',             'NOVA Shield', 'Brave',      'Opera',    true),
-      ('DNS-over-HTTPS',      '✅ Always',   '⚠️ Optional','❌ No',    false),
-      ('Malware Blocking',    '✅ Real-time','⚠️ Lists',   '❌ No',    false),
-      ('WebRTC Leak Block',   '✅ Yes',      '✅ Yes',     '❌ No',    false),
-      ('Fingerprint Noise',   '✅ Canvas+',  '⚠️ Basic',   '❌ No',    false),
-      ('Referrer Privacy',    '✅ Yes',      '✅ Yes',     '❌ No',    false),
-      ('HTTPS Enforcement',   '✅ Yes',      '✅ Yes',     '⚠️ Partial',false),
-      ('Zero Data to Us',     '✅ Yes',      '⚠️ Telemetry','⚠️ Proxy sees',false),
+  // ── Feature highlights card ──────────────────────────────────────────────
+  Widget _featureHighlightsCard() {
+    final features = [
+      (Icons.dns_rounded,        'Encrypted DNS',         'All domain lookups encrypted end-to-end',          AppTheme.accentCyan),
+      (Icons.dangerous_rounded,  'Malware Blocking',      'Real-time threat intelligence on every domain',     AppTheme.danger),
+      (Icons.lock_rounded,       'HTTPS Enforcement',     'Every connection automatically upgraded to HTTPS',  AppTheme.success),
+      (Icons.hide_source_rounded,'IP Leak Prevention',    'WebRTC configured to prevent IP address exposure',  AppTheme.accentPurple),
+      (Icons.link_off_rounded,   'Referrer Privacy',      'Cross-site tracking via referrer headers blocked',  AppTheme.warning),
+      (Icons.fingerprint_rounded,'Fingerprint Protection','Signals privacy preference to all websites',        AppTheme.accentCyan),
     ];
     return Container(
       decoration: BoxDecoration(
         color: AppTheme.bgCard,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(color: AppTheme.divider),
       ),
-      child: Column(children: rows.map((r) {
-        final isHeader = r.$5;
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: isHeader ? AppTheme.accentCyan.withOpacity(0.08) : null,
-            borderRadius: isHeader
-                ? const BorderRadius.vertical(top: Radius.circular(16))
-                : null,
-            border: Border(bottom: BorderSide(color: AppTheme.divider)),
-          ),
+      child: Column(children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
           child: Row(children: [
-            Expanded(flex: 3, child: Text(r.$1, style: GoogleFonts.inter(
-                color: isHeader ? AppTheme.accentCyan : AppTheme.textSecondary,
-                fontSize: 11,
-                fontWeight: isHeader ? FontWeight.w800 : FontWeight.w500))),
-            Expanded(flex: 2, child: Text(r.$2, style: GoogleFonts.inter(
-                color: isHeader ? AppTheme.accentCyan : AppTheme.success,
-                fontSize: 11, fontWeight: FontWeight.w700))),
-            Expanded(flex: 2, child: Text(r.$3, style: GoogleFonts.inter(
-                color: isHeader ? AppTheme.accentCyan : AppTheme.textHint,
-                fontSize: 11))),
-            Expanded(flex: 2, child: Text(r.$4, style: GoogleFonts.inter(
-                color: isHeader ? AppTheme.accentCyan : AppTheme.textHint,
-                fontSize: 11))),
+            const Icon(Icons.verified_rounded, color: AppTheme.accentCyan, size: 16),
+            const SizedBox(width: 8),
+            Text('NOVA Shield Features', style: GoogleFonts.spaceGrotesk(
+                color: AppTheme.textPrimary, fontSize: 13,
+                fontWeight: FontWeight.w800)),
           ]),
-        );
-      }).toList()),
+        ),
+        const Divider(color: Color(0xFF1A2535), height: 1),
+        ...features.map((f) => Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+          child: Row(children: [
+            Container(width: 36, height: 36,
+              decoration: BoxDecoration(
+                  color: f.$4.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(10)),
+              child: Icon(f.$1, color: f.$4, size: 18)),
+            const SizedBox(width: 12),
+            Expanded(child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+              Text(f.$2, style: GoogleFonts.inter(
+                  color: AppTheme.textPrimary, fontSize: 13,
+                  fontWeight: FontWeight.w700)),
+              Text(f.$3, style: GoogleFonts.inter(
+                  color: AppTheme.textHint, fontSize: 11)),
+            ])),
+            const Icon(Icons.check_circle_rounded,
+                color: AppTheme.success, size: 16),
+          ]),
+        )).toList(),
+      ]),
     );
   }
 
+  // ── Helpers ────────────────────────────────────────────────────────────────
   // ── Helpers ────────────────────────────────────────────────────────────────
   int _countActive() {
     int n = 1; // DoH always active when shield is on

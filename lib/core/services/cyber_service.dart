@@ -23,9 +23,7 @@
 //   • JavaScript library CVE fingerprinting
 //   • OWASP Top 10 mapping on every finding
 
-import 'dart:io';
 import 'package:dio/dio.dart';
-import 'package:dio/io.dart';
 import 'package:nova_x/features/cyber/models/security_report.dart';
 
 class CyberService {
@@ -34,7 +32,10 @@ class CyberService {
   static final Dio _dioInsecure = _makeDio(badCerts: true);
 
   static Dio _makeDio({required bool badCerts}) {
-    final dio = Dio(BaseOptions(
+    // Note: badCerts param kept for API compatibility but we no longer
+    // disable SSL verification — this was flagged by Play Protect as MITM.
+    // Security scanner still works; sites with truly broken SSL will timeout.
+    return Dio(BaseOptions(
       connectTimeout:  const Duration(seconds: 8),
       receiveTimeout:  const Duration(seconds: 8),
       validateStatus:  (_) => true,
@@ -46,14 +47,6 @@ class CyberService {
         'Accept-Language': 'en-US,en;q=0.9',
       },
     ));
-    if (badCerts) {
-      (dio.httpClientAdapter as IOHttpClientAdapter).createHttpClient = () {
-        final c = HttpClient();
-        c.badCertificateCallback = (_, __, ___) => true;
-        return c;
-      };
-    }
-    return dio;
   }
 
   // ── Main entry ───────────────────────────────────────────────────────────────

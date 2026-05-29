@@ -19,6 +19,8 @@ import 'package:speech_to_text/speech_to_text.dart';
 import 'package:nova_x/core/database/local_db.dart';
 import 'package:nova_x/core/services/lens_service.dart';
 import 'package:nova_x/features/cyber/screens/cyber_screen.dart';
+import 'package:nova_x/features/shield/screens/nova_shield_screen.dart';
+import 'package:nova_x/core/services/nova_shield_service.dart';
 import 'package:nova_x/features/map/screens/nova_map_screen.dart';
 import 'package:nova_x/core/services/api_service.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
@@ -387,21 +389,20 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<void> _doLensSearch({required bool fromCamera}) async {
     setState(() => _lensLoading = true);
-    _snack('🔍 Processing image…');
+    _snack('📷 Preparing image…');
 
-    final url = await LensService.search(fromCamera: fromCamera);
+    final html = await LensService.buildSearchPage(fromCamera: fromCamera);
 
     setState(() => _lensLoading = false);
 
-    if (url == null) {
-      _snack('Search cancelled');
-      return;
-    }
+    if (html == null) return;
 
-    // Open result in NOVA X browser
     if (mounted) {
       Navigator.push(context, MaterialPageRoute(
-          builder: (_) => BrowserView(initialQuery: url)));
+          builder: (_) => BrowserView(
+            initialQuery: 'https://www.google.com',
+            htmlContent: html,
+          )));
     }
   }
 
@@ -1313,7 +1314,9 @@ class _MenuSheet extends StatelessWidget {
        'fn': () { Navigator.pop(context); onPush(const SettingsScreen()); }},
       {'icon': Icons.map_rounded,               'label': 'NOVA Map',   'color': const Color(0xFF00C853),
        'fn': () { Navigator.pop(context); onPush(const NovaMapScreen()); }},
-      {'icon': Icons.security_rounded,          'label': 'NOVA Cyber', 'color': AppTheme.accentCyan,
+      {'icon': Icons.shield_rounded,            'label': 'NOVA Shield','color': AppTheme.accentCyan,
+       'fn': () { Navigator.pop(context); onPush(const NovaShieldScreen()); }},
+      {'icon': Icons.security_rounded,          'label': 'NOVA Cyber', 'color': const Color(0xFF7C4DFF),
        'fn': () { Navigator.pop(context); onPush(const CyberScreen()); }},
       {'icon': Icons.person_off_outlined,       'label': 'Incognito',  'color': AppTheme.accentPurple,
        'fn': () { Navigator.pop(context); onIncognito(); }},

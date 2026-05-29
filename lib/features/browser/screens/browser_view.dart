@@ -9,8 +9,10 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:nova_x/core/services/password_service.dart';
+import 'package:nova_x/core/services/nova_shield_service.dart';
 import 'package:nova_x/features/cookie/cookie_editor_screen.dart';
 import 'package:nova_x/features/cyber/screens/cyber_screen.dart';
+import 'package:nova_x/features/shield/screens/nova_shield_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -461,6 +463,28 @@ class _BrowserViewState extends State<BrowserView>
       },
 
       onLoadStart: (c, url) async {
+        if (url != null && NovaShieldService.isEnabled) {
+          final urlStr = url.toString();
+          // Layer 3: HTTPS enforcement
+          final httpsUrl = NovaShieldService.enforceHttps(urlStr);
+          if (httpsUrl != null) {
+            await NovaShieldService.recordHttpsUpgrade();
+            await c.loadUrl(urlRequest: URLRequest(url: WebUri(httpsUrl)));
+            return;
+          }
+          // Layer 1+2: Domain threat check via Cloudflare DoH
+          if (!urlStr.startsWith('data:') && !urlStr.startsWith('about:') &&
+              !urlStr.startsWith('blob:')) {
+            final threat = await NovaShieldService.checkDomain(urlStr);
+            if (threat.isThreat && mounted) {
+              // Block the navigation and show warning
+              await c.loadData(
+                data: _buildBlockPage(threat.domain, threat.threatType),
+                mimeType: 'text/html', encoding: 'utf-8');
+              return;
+            }
+          }
+        }
         if (url == null || !mounted) return;
         final u = url.toString();
         setState(() {
@@ -490,6 +514,13 @@ class _BrowserViewState extends State<BrowserView>
         // Inject password detection
         if (!widget.incognito && _savePasswords)
           await c.evaluateJavascript(source: PasswordService.pwDetectJS);
+        // NOVA Shield: inject all protection layers
+        if (NovaShieldService.isEnabled) {
+          final js = NovaShieldService.buildProtectionBundle(
+              incognito: widget.incognito);
+          if (js.isNotEmpty)
+            await c.evaluateJavascript(source: js);
+        }
         // Check for saved credentials for this domain
         if (!widget.incognito && _savePasswords) {
           final creds = await PasswordService.getCredentials(LocalDB.extractDomain(u));
@@ -784,6 +815,44 @@ class _BrowserViewState extends State<BrowserView>
               );
             },
             color: AppTheme.accentPurple,
+          ),
+
+          // ── NOVA SHIELD ────────────────────────────────────────────────
+          ListTile(
+            contentPadding: EdgeInsets.zero, dense: true,
+            leading: Container(
+              width: 34, height: 34,
+              decoration: BoxDecoration(
+                gradient: NovaShieldService.isEnabled
+                    ? AppTheme.primaryGradient : null,
+                color: NovaShieldService.isEnabled ? null : AppTheme.bgElevated,
+                borderRadius: BorderRadius.circular(10)),
+              child: const Icon(Icons.shield_rounded,
+                  color: Colors.white, size: 17)),
+            title: Text('NOVA Shield', style: GoogleFonts.spaceGrotesk(
+                color: AppTheme.textPrimary, fontSize: 14,
+                fontWeight: FontWeight.w700)),
+            subtitle: Text(
+              NovaShieldService.isEnabled
+                  ? '${NovaShieldService.protectionLevel} protection — ON'
+                  : 'Protection disabled',
+              style: GoogleFonts.inter(
+                  color: NovaShieldService.isEnabled
+                      ? AppTheme.success : AppTheme.textHint, fontSize: 11)),
+            trailing: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: AppTheme.success.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: AppTheme.success.withOpacity(0.3))),
+              child: Text('NEW', style: GoogleFonts.inter(
+                  color: AppTheme.success, fontSize: 9,
+                  fontWeight: FontWeight.w800))),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => const NovaShieldScreen()));
+            },
           ),
 
           // ── NOVA CYBER ─────────────────────────────────────────────────────
@@ -1121,6 +1190,42 @@ class _BrowserViewState extends State<BrowserView>
       child: Icon(icon, color: AppTheme.textSecondary, size:13)));
 
   // ── Find in page ───────────────────────────────────────────────────────────────
+  // ── NOVA Shield malware block page ───────────────────────────────────────
+  String _buildBlockPage(String domain, String type) {
+    return '''<!DOCTYPE html><html><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#07101E;color:#F1F5F9;font-family:-apple-system,sans-serif;
+     display:flex;flex-direction:column;align-items:center;justify-content:center;
+     min-height:100vh;padding:32px;text-align:center;gap:16px}
+.icon{width:80px;height:80px;background:rgba(255,23,68,.15);border-radius:24px;
+      display:flex;align-items:center;justify-content:center;font-size:40px;
+      border:2px solid rgba(255,23,68,.4);box-shadow:0 0 40px rgba(255,23,68,.2)}
+h1{font-size:22px;font-weight:800;color:#FF5252;letter-spacing:-.3px}
+.sub{font-size:13px;color:#94A3B8;max-width:300px;line-height:1.65}
+.domain{font-family:monospace;background:#111827;padding:10px 18px;
+        border-radius:10px;color:#FF5252;font-size:12px;
+        border:1px solid rgba(255,23,68,.2);word-break:break-all}
+.back{color:#00D4FF;background:#1E293B;padding:14px 32px;border-radius:14px;
+      border:1px solid rgba(0,212,255,.3);font-size:14px;font-weight:700;
+      text-decoration:none;display:inline-block}
+.badge{background:rgba(255,23,68,.1);border:1px solid rgba(255,23,68,.3);
+       color:#FF5252;padding:5px 14px;border-radius:20px;font-size:10px;
+       font-weight:800;letter-spacing:1px}
+.cf{font-size:11px;color:#475569;margin-top:4px}
+</style></head><body>
+<div class="icon">🛑</div>
+<span class="badge">NOVA SHIELD BLOCKED</span>
+<h1>Dangerous Site Blocked</h1>
+<div class="domain">''' + domain + r'''</div>
+<p class="sub">NOVA Shield detected this site as <strong style="color:#FF5252">''' + type + r'''</strong>
+using Cloudflare threat intelligence. Your connection is protected.</p>
+<p class="cf">Powered by Cloudflare DNS-over-HTTPS · NOVA Shield v2.0</p>
+<a class="back" href="javascript:history.back()">← Go Back to Safety</a>
+</body></html>''';
+  }
+
   void _showFindInPage() {
     final ctrl = TextEditingController();
     showModalBottomSheet(

@@ -10,6 +10,8 @@ import 'package:nova_x/core/services/api_service.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
 import 'features/auth/screens/auth_gate.dart';
 import 'features/business/screens/business_screen.dart';
+import 'features/notifications/screens/notifications_screen.dart';
+import 'package:nova_x/core/services/advert_service.dart';
 import 'features/browser/screens/browser_view.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -29,6 +31,7 @@ void main() async {
   ]);
   await LocalDB.initialize();
   await NovaShieldService.init();
+  await AdvertService.init();
   await Firebase.initializeApp();
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   runApp(const ProviderScope(child: NovaXApp()));
@@ -85,6 +88,11 @@ class _NovaXAppState extends State<NovaXApp> {
         nav.push(MaterialPageRoute(
             builder: (_) => const BusinessScreen()));
         break;
+      case 'adverts':
+        nav.push(MaterialPageRoute(
+            builder: (_) => const NotificationsScreen()));
+        break;
+
       case 'url':
         if (url.isNotEmpty) {
           nav.push(MaterialPageRoute(

@@ -59,7 +59,9 @@ class _HomeScreenState extends State<HomeScreen>
 
   // Speed Dial
   bool _searching   = false;
-  bool _lensLoading = false;  // true while uploading image to Google
+  bool _lensLoading  = false;
+  int  _notifBadge   = 0;   // unread advert count
+  List<AdvertModel> _adverts = [];  // true while uploading image to Google
   List<Map<String, dynamic>> _speedDial = [];
 
   // News
@@ -148,6 +150,8 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void initState() {
     super.initState();
+    _loadNotifBadge();
+    AdvertService.init();
     _subtitle = _buildSubtitle();
     _animCtrl = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 800));
@@ -487,6 +491,24 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // ── Notification badge ─────────────────────────────────────────────────
+  Future<void> _loadNotifBadge() async {
+    await AdvertService.init();
+    final ads = await AdvertService.fetchAdverts();
+    if (!mounted) return;
+    setState(() {
+      _adverts    = ads;
+      _notifBadge = AdvertService.getUnreadCount(ads);
+    });
+  }
+
+  Future<void> _openNotifications() async {
+    await Navigator.push(context, MaterialPageRoute(
+        builder: (_) => const NotificationsScreen()));
+    // After returning, reload badge (user may have read some)
+    _loadNotifBadge();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1231,6 +1253,7 @@ class _HomeScreenState extends State<HomeScreen>
       _navBtn(Icons.bookmark_rounded,        'Saved',    () => _push(const BookmarksScreen()),  false),
       _navBtn(Icons.download_rounded,        'Downloads',() => _push(const DownloadsScreen()),   false),
       _navBtn(Icons.business_center_rounded, 'Business', () => _push(const BusinessScreen()),    false),
+      _notifNavBtn(),
       _navBtn(Icons.more_horiz_rounded,      'Menu',     _showMenu,                             false),
     ]),
   );
@@ -1254,6 +1277,49 @@ class _HomeScreenState extends State<HomeScreen>
           ]),
         ),
       );
+
+  // Bell icon with badge count overlay
+  Widget _notifNavBtn() => GestureDetector(
+    onTap: _openNotifications,
+    child: SizedBox(
+      width: 56,
+      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Stack(clipBehavior: Clip.none, children: [
+          Icon(Icons.notifications_rounded,
+              color: _notifBadge > 0
+                  ? AppTheme.accentCyan : AppTheme.textHint,
+              size: 24),
+          if (_notifBadge > 0)
+            Positioned(
+              top: -4, right: -6,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                decoration: BoxDecoration(
+                  color: AppTheme.danger,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppTheme.bgCard, width: 1.5),
+                ),
+                constraints: const BoxConstraints(minWidth: 16),
+                child: Text(
+                  _notifBadge > 99 ? '99+' : '$_notifBadge',
+                  style: GoogleFonts.inter(
+                      color: Colors.white, fontSize: 9,
+                      fontWeight: FontWeight.w900),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+        ]),
+        const SizedBox(height: 3),
+        Text('Notifications', style: GoogleFonts.inter(
+            color: _notifBadge > 0
+                ? AppTheme.accentCyan : AppTheme.textHint,
+            fontSize: 9.5, fontWeight: FontWeight.w600),
+            overflow: TextOverflow.ellipsis),
+      ]),
+    ),
+  );
+
 
   Widget _buildListeningOverlay() => Positioned(
     bottom: 100, left: 0, right: 0,
@@ -1292,6 +1358,24 @@ class _MenuSheet extends StatelessWidget {
   final void Function(Widget) onPush;
   final VoidCallback onIncognito;
   const _MenuSheet({required this.onPush, required this.onIncognito});
+
+  // ── Notification badge ─────────────────────────────────────────────────
+  Future<void> _loadNotifBadge() async {
+    await AdvertService.init();
+    final ads = await AdvertService.fetchAdverts();
+    if (!mounted) return;
+    setState(() {
+      _adverts    = ads;
+      _notifBadge = AdvertService.getUnreadCount(ads);
+    });
+  }
+
+  Future<void> _openNotifications() async {
+    await Navigator.push(context, MaterialPageRoute(
+        builder: (_) => const NotificationsScreen()));
+    // After returning, reload badge (user may have read some)
+    _loadNotifBadge();
+  }
 
   @override
   Widget build(BuildContext context) {

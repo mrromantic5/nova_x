@@ -64,6 +64,7 @@ class NearbyPlace {
   final bool?   openNow;
   final String? photoRef;
   final List<String> types;
+  final double? distanceKm;
 
   const NearbyPlace({
     required this.placeId,
@@ -74,6 +75,7 @@ class NearbyPlace {
     this.openNow,
     this.photoRef,
     required this.types,
+    this.distanceKm,
   });
 }
 

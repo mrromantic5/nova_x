@@ -368,6 +368,20 @@ jobs:
           "
           echo "✅ All verified — starting Gradle build"
 
+      - name: Patch geolocator_android build.gradle
+        run: |
+          CACHE="${PUB_CACHE:-$HOME/.pub-cache}"
+          find "$CACHE" -name "build.gradle" -path "*geolocator_android*" 2>/dev/null | while read -r f; do
+            echo "Patching $f"
+            sed -i 's/flutter\.compileSdkVersion/35/g'       "$f"
+            sed -i 's/flutter\.minSdkVersion/21/g'           "$f"
+            sed -i 's/flutter\.targetSdkVersion/35/g'        "$f"
+            sed -i 's/flutter\.ndkVersion/"25.1.8937393"/g'  "$f"
+            echo "Patched:"
+            grep -n "compileSdk\|minSdk\|targetSdk" "$f" || true
+          done
+          echo "geolocator_android patch done"
+
       - name: Build Release APK
         run: flutter build apk --release
 

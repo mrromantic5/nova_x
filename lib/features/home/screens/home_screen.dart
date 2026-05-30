@@ -36,6 +36,7 @@ import '../../business/screens/business_screen.dart';
 import '../../customization/screens/customization_screen.dart';
 import '../../customization/screens/speed_dial_editor_screen.dart';
 import 'package:nova_x/core/services/advert_service.dart';
+import 'package:nova_x/core/services/business_badge_service.dart';
 import 'package:nova_x/features/notifications/screens/notifications_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -63,6 +64,7 @@ class _HomeScreenState extends State<HomeScreen>
   bool _searching   = false;
   bool _lensLoading  = false;
   int  _notifBadge   = 0;   // unread advert count
+  int  _bizBadge     = 0;   // new (unseen) business count
   List<AdvertModel> _adverts = [];  // true while uploading image to Google
   List<Map<String, dynamic>> _speedDial = [];
 
@@ -153,6 +155,7 @@ class _HomeScreenState extends State<HomeScreen>
   void initState() {
     super.initState();
     _loadNotifBadge();
+    _loadBizBadge();
     AdvertService.init();
     _subtitle = _buildSubtitle();
     _animCtrl = AnimationController(
@@ -453,7 +456,7 @@ class _HomeScreenState extends State<HomeScreen>
             builder: (_) => BrowserView(initialQuery: LocalDB.buildSearchUrl(q))));
   }
 
-  void _push(Widget screen) => Navigator.push(context,
+  Future<void> _push(Widget screen) => Navigator.push(context,
       PageRouteBuilder(
         pageBuilder: (_, a, __) => screen,
         transitionsBuilder: (_, a, __, child) => SlideTransition(
@@ -509,6 +512,29 @@ class _HomeScreenState extends State<HomeScreen>
         builder: (_) => const NotificationsScreen()));
     // After returning, reload badge (user may have read some)
     _loadNotifBadge();
+  }
+
+  // ── Business badge ─────────────────────────────────────────────────────
+  Future<void> _loadBizBadge() async {
+    await BusinessBadgeService.init();
+    final businesses = await ApiService.getBusinesses();
+    if (!mounted) return;
+    setState(() {
+      _bizBadge = BusinessBadgeService.unseenCount(businesses);
+    });
+  }
+
+  Future<void> _openBusiness() async {
+    // Mark everything currently in the directory as seen → clears the badge,
+    // then open the page. On return, recompute (covers anything added while
+    // the page was open).
+    await BusinessBadgeService.init();
+    final businesses = await ApiService.getBusinesses();
+    await BusinessBadgeService.markAllSeen(businesses);
+    if (mounted) setState(() => _bizBadge = 0);
+    if (!mounted) return;
+    await _push(const BusinessScreen());
+    _loadBizBadge();
   }
 
   @override
@@ -973,7 +999,7 @@ class _HomeScreenState extends State<HomeScreen>
        'fn': () => _push(const DownloadsScreen())},
       {'icon': Icons.business_center_outlined, 'label': 'Business',
        'color': AppTheme.accentPurple,
-       'fn': () => _push(const BusinessScreen())},
+       'fn': () => _openBusiness()},
     ];
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -1254,7 +1280,7 @@ class _HomeScreenState extends State<HomeScreen>
       _navBtn(Icons.home_rounded,            'Home',     null,                                  true),
       _navBtn(Icons.bookmark_rounded,        'Saved',    () => _push(const BookmarksScreen()),  false),
       _navBtn(Icons.download_rounded,        'Downloads',() => _push(const DownloadsScreen()),   false),
-      _navBtn(Icons.business_center_rounded, 'Business', () => _push(const BusinessScreen()),    false),
+      _bizNavBtn(),
       _notifNavBtn(),
       _navBtn(Icons.more_horiz_rounded,      'Menu',     _showMenu,                             false),
     ]),
@@ -1322,6 +1348,46 @@ class _HomeScreenState extends State<HomeScreen>
     ),
   );
 
+  // Business icon with badge count overlay (new/unseen businesses)
+  Widget _bizNavBtn() => GestureDetector(
+    onTap: _openBusiness,
+    child: SizedBox(
+      width: 56,
+      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Stack(clipBehavior: Clip.none, children: [
+          Icon(Icons.business_center_rounded,
+              color: _bizBadge > 0 ? AppTheme.accentCyan : AppTheme.textHint,
+              size: 24),
+          if (_bizBadge > 0)
+            Positioned(
+              top: -4, right: -6,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                decoration: BoxDecoration(
+                  color: AppTheme.danger,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppTheme.bgCard, width: 1.5),
+                ),
+                constraints: const BoxConstraints(minWidth: 16),
+                child: Text(
+                  _bizBadge > 99 ? '99+' : '$_bizBadge',
+                  style: GoogleFonts.inter(
+                      color: Colors.white, fontSize: 9,
+                      fontWeight: FontWeight.w900),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+        ]),
+        const SizedBox(height: 3),
+        Text('Business', style: GoogleFonts.inter(
+            color: _bizBadge > 0 ? AppTheme.accentCyan : AppTheme.textHint,
+            fontSize: 9.5, fontWeight: FontWeight.w600),
+            overflow: TextOverflow.ellipsis),
+      ]),
+    ),
+  );
+
 
   Widget _buildListeningOverlay() => Positioned(
     bottom: 100, left: 0, right: 0,
@@ -1348,6 +1414,7 @@ class _HomeScreenState extends State<HomeScreen>
     isScrollControlled: true,
     builder: (_) => _MenuSheet(
       onPush: _push,
+      onBusiness: () { Navigator.pop(context); _openBusiness(); },
       onIncognito: () => Navigator.push(context, MaterialPageRoute(
           builder: (_) => const BrowserView(
               initialQuery: 'https://www.google.com', incognito: true))),
@@ -1358,8 +1425,13 @@ class _HomeScreenState extends State<HomeScreen>
 // ═════════════════════════════════════════════════════════════════════════════
 class _MenuSheet extends StatelessWidget {
   final void Function(Widget) onPush;
+  final VoidCallback onBusiness;
   final VoidCallback onIncognito;
-  const _MenuSheet({required this.onPush, required this.onIncognito});
+  const _MenuSheet({
+    required this.onPush,
+    required this.onBusiness,
+    required this.onIncognito,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1373,7 +1445,7 @@ class _MenuSheet extends StatelessWidget {
       {'icon': Icons.history_rounded,          'label': 'History',     'color': AppTheme.accentPurple,
        'fn': () { Navigator.pop(context); onPush(const HistoryScreen()); }},
       {'icon': Icons.business_center_outlined, 'label': 'Business',    'color': const Color(0xFFFF6B6B),
-       'fn': () { Navigator.pop(context); onPush(const BusinessScreen()); }},
+       'fn': () { onBusiness(); }},
       {'icon': Icons.palette_outlined,         'label': 'Customize',   'color': AppTheme.accentCyan,
        'fn': () { Navigator.pop(context); onPush(const CustomizationScreen()); }},
       {'icon': Icons.person_outline_rounded,   'label': 'Profile',     'color': AppTheme.success,

@@ -35,6 +35,8 @@ import '../../downloads/screens/downloads_screen.dart';
 import '../../business/screens/business_screen.dart';
 import '../../customization/screens/customization_screen.dart';
 import '../../customization/screens/speed_dial_editor_screen.dart';
+import 'package:nova_x/core/services/advert_service.dart';
+import 'package:nova_x/features/notifications/screens/notifications_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -1358,24 +1360,6 @@ class _MenuSheet extends StatelessWidget {
   final void Function(Widget) onPush;
   final VoidCallback onIncognito;
   const _MenuSheet({required this.onPush, required this.onIncognito});
-
-  // ── Notification badge ─────────────────────────────────────────────────
-  Future<void> _loadNotifBadge() async {
-    await AdvertService.init();
-    final ads = await AdvertService.fetchAdverts();
-    if (!mounted) return;
-    setState(() {
-      _adverts    = ads;
-      _notifBadge = AdvertService.getUnreadCount(ads);
-    });
-  }
-
-  Future<void> _openNotifications() async {
-    await Navigator.push(context, MaterialPageRoute(
-        builder: (_) => const NotificationsScreen()));
-    // After returning, reload badge (user may have read some)
-    _loadNotifBadge();
-  }
 
   @override
   Widget build(BuildContext context) {

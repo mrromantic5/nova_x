@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'package:nova_x/core/services/rewards_service.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -149,6 +150,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
   Future<void> _send(String text) async {
     final t = text.trim();
     if (t.isEmpty) return;
+    RewardsService.earn(RewardTaskKey.useAi); // auto-claim: real AI use (server caps 1/day)
     _ctrl.clear();
     HapticFeedback.lightImpact();
     if (!mounted) return;

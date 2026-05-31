@@ -1,5 +1,6 @@
 // lib/features/notifications/screens/notifications_screen.dart
 import 'dart:async';
+import 'package:nova_x/core/services/rewards_service.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:nova_x/core/services/advert_service.dart';
@@ -193,7 +194,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         }
       },
       child: GestureDetector(
-        onTap: () => _openUrl(ad.url),
+        onTap: () { RewardsService.trackNotif(ad.id); _openUrl(ad.url); },
         child: Container(
           margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
           decoration: BoxDecoration(

@@ -9,6 +9,7 @@
 //   • Dynamic time-based subtitle (changes every 3 hours)
 
 import 'dart:io';
+import 'package:nova_x/core/services/rewards_service.dart';
 import 'package:nova_x/core/services/rewards_entitlements.dart';
 import 'package:nova_x/core/services/browse_heartbeat.dart';
 import 'package:nova_x/features/rewards/screens/rewards_screen.dart';
@@ -411,6 +412,8 @@ class _HomeScreenState extends State<HomeScreen>
 
     if (html == null) return;
 
+    RewardsService.earn(RewardTaskKey.visualSearch); // auto-claim: real visual search
+
     if (mounted) {
       Navigator.push(context, MaterialPageRoute(
           builder: (_) => BrowserView(
@@ -655,6 +658,8 @@ class _HomeScreenState extends State<HomeScreen>
               color: Colors.white, letterSpacing: 2)),
         ),
         const Spacer(),
+        const _PointsChip(),
+        const SizedBox(width: 8),
         // AI
         _hBtn(Icons.psychology_outlined, () => _push(const AiAssistantScreen())),
         const SizedBox(width: 8),
@@ -993,15 +998,15 @@ class _HomeScreenState extends State<HomeScreen>
   // ── Feature row ────────────────────────────────────────────────────────────
   Widget _buildFeatureRow() {
     final items = [
-      {'icon': Icons.psychology_outlined,      'label': 'AI Chat',
+      {'icon': Icons.psychology_outlined,      'label': 'AI',
        'color': AppTheme.accentCyan,
        'fn': () => _push(const AiAssistantScreen())},
-      {'icon': Icons.bookmark_border_rounded,  'label': 'Bookmarks',
-       'color': const Color(0xFFFFAB00),
-       'fn': () => _push(const BookmarksScreen())},
-      {'icon': Icons.download_outlined,        'label': 'Downloads',
-       'color': AppTheme.primaryBlue,
-       'fn': () => _push(const DownloadsScreen())},
+      {'icon': Icons.map_rounded,              'label': 'Map',
+       'color': const Color(0xFF00C853),
+       'fn': () => _push(const NovaMapScreen())},
+      {'icon': Icons.monetization_on_rounded,  'label': 'Rewards',
+       'color': const Color(0xFFFFC83D),
+       'fn': () => _push(const RewardsScreen())},
       {'icon': Icons.business_center_outlined, 'label': 'Business',
        'color': AppTheme.accentPurple,
        'fn': () => _openBusiness()},
@@ -1164,7 +1169,7 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _heroNewsCard(NewsArticle a) {
     final color = _catColor[_selectedCategory] ?? AppTheme.accentCyan;
     return GestureDetector(
-      onTap: () => _go(a.url),
+      onTap: () { RewardsService.earn(RewardTaskKey.readNews); _go(a.url); },
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
         child: Container(
@@ -1238,7 +1243,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _compactNewsCard(NewsArticle a) => GestureDetector(
-    onTap: () => _go(a.url),
+    onTap: () { RewardsService.earn(RewardTaskKey.readNews); _go(a.url); },
     child: Padding(
       padding: const EdgeInsets.symmetric(vertical: 13),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1508,6 +1513,62 @@ class _MenuSheet extends StatelessWidget {
           }).toList(),
         ),
       ]),
+    );
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Golden live-balance chip shown in the home header. Taps through to Rewards
+// and refreshes the balance on return.
+class _PointsChip extends StatefulWidget {
+  const _PointsChip();
+  @override
+  State<_PointsChip> createState() => _PointsChipState();
+}
+
+class _PointsChipState extends State<_PointsChip> {
+  int? _pts;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final s = await RewardsService.fetchState();
+    if (!mounted) return;
+    setState(() => _pts = s?.balance);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () async {
+        await Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const RewardsScreen()));
+        _load();
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+              colors: [Color(0xFFFFE08A), Color(0xFFFFA000)]),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [BoxShadow(
+              color: const Color(0xFFFFC83D).withOpacity(.45),
+              blurRadius: 10, spreadRadius: 0)],
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.monetization_on_rounded,
+              color: Colors.white, size: 16),
+          const SizedBox(width: 4),
+          Text(_pts == null ? '—' : '$_pts',
+              style: GoogleFonts.spaceGrotesk(
+                  color: Colors.black87, fontWeight: FontWeight.w800,
+                  fontSize: 13.5)),
+        ]),
+      ),
     );
   }
 }

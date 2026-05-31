@@ -1,5 +1,8 @@
 // lib/features/shield/screens/nova_shield_screen.dart
 import 'dart:math' as math;
+import 'package:nova_x/core/services/rewards_entitlements.dart';
+import 'package:nova_x/core/services/rewards_service.dart';
+import 'package:nova_x/core/widgets/feature_lock.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:nova_x/core/services/nova_shield_service.dart';
@@ -41,6 +44,12 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
 
   @override
   Widget build(BuildContext context) {
+    if (!RewardsEntitlements.isUnlocked(RewardFeature.shield)) {
+      return FeatureLockScreen(
+        featureKey: RewardFeature.shield,
+        onUnlocked: () => setState(() {}),
+      );
+    }
     final score    = NovaShieldService.protectionScore;
     final level    = NovaShieldService.protectionLevel;
     final enabled  = NovaShieldService.isEnabled;

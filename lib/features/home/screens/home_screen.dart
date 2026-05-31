@@ -9,6 +9,7 @@
 //   • Dynamic time-based subtitle (changes every 3 hours)
 
 import 'dart:io';
+import 'package:nova_x/core/services/default_browser_service.dart';
 import 'package:nova_x/core/services/rewards_service.dart';
 import 'package:nova_x/core/services/rewards_entitlements.dart';
 import 'package:nova_x/core/services/browse_heartbeat.dart';
@@ -50,7 +51,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final TextEditingController _searchCtrl  = TextEditingController();
   final FocusNode             _searchFocus = FocusNode();
   final ScrollController      _scrollCtrl  = ScrollController();
@@ -163,6 +164,9 @@ class _HomeScreenState extends State<HomeScreen>
     AdvertService.init();
     RewardsEntitlements.refresh();
     BrowseHeartbeat.start();
+    WidgetsBinding.instance.addObserver(this);
+    DefaultBrowserService.onIncomingUrl = _openIncomingUrl;
+    _handleDefaultBrowser();
     _subtitle = _buildSubtitle();
     _animCtrl = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 800));
@@ -178,6 +182,8 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    BrowseHeartbeat.stop();
     _searchCtrl.removeListener(_onSearchChanged);
     _searchFocus.removeListener(_onFocusChanged);
     _searchCtrl.dispose();
@@ -186,6 +192,77 @@ class _HomeScreenState extends State<HomeScreen>
     _animCtrl.dispose();
     _speech.stop();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // When the user returns (e.g. after setting NOVA X as default), award once.
+    if (state == AppLifecycleState.resumed) {
+      DefaultBrowserService.checkAndAward();
+    }
+  }
+
+  // ── Default browser: open incoming links, first-run prompt, award ─────────
+  void _openIncomingUrl(String url) {
+    if (!mounted) return;
+    _push(BrowserView(initialQuery: url));
+  }
+
+  Future<void> _handleDefaultBrowser() async {
+    // Open a link that launched the app from another app.
+    final initial = await DefaultBrowserService.initialUrl();
+    if (initial != null && mounted) _push(BrowserView(initialQuery: initial));
+
+    // If already default (e.g. set previously), claim the one-time reward.
+    await DefaultBrowserService.checkAndAward();
+
+    // Show the first-run prompt once, only if not already default.
+    if (!LocalDB.getAskedDefaultBrowser()) {
+      await LocalDB.setAskedDefaultBrowser(true);
+      final isDef = await DefaultBrowserService.isDefault();
+      if (!isDef && mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _showDefaultBrowserPrompt();
+        });
+      }
+    }
+  }
+
+  void _showDefaultBrowserPrompt() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppTheme.bgCard,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(children: [
+          const Icon(Icons.public_rounded, color: Color(0xFFFFC83D)),
+          const SizedBox(width: 10),
+          Expanded(child: Text('Make NOVA X your browser?',
+              style: GoogleFonts.spaceGrotesk(
+                  color: AppTheme.textPrimary, fontWeight: FontWeight.w700,
+                  fontSize: 17))),
+        ]),
+        content: Text(
+            'Set NOVA X as your default browser so every link opens here — '
+            'with ad-blocking and NOVA Shield always on. Earn 5 points for setting it!',
+            style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 13.5)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Maybe later',
+                style: GoogleFonts.inter(color: AppTheme.textHint)),
+          ),
+          ElevatedButton(
+            onPressed: () { Navigator.pop(context); DefaultBrowserService.request(); },
+            style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFFFC83D),
+                foregroundColor: Colors.black87),
+            child: Text('Set as default',
+                style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
   }
 
   void _loadAll() {

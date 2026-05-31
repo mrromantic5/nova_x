@@ -1,5 +1,6 @@
 // lib/features/profile/screens/profile_screen.dart
 import 'dart:io';
+import 'package:nova_x/core/services/rewards_service.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
@@ -100,6 +101,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     setState(() => _savingProfile = true);
     final ok = await ApiService.updateProfile(
         username: name, avatarColor: _avatarColor);
+    if (ok) RewardsService.earn(RewardTaskKey.completeProfile); // server verifies + once-ever
     if (mounted) setState(() => _savingProfile = false);
     _snack(ok ? 'Profile saved ✓' : 'Could not save. Try again.');
   }

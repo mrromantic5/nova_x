@@ -9,6 +9,7 @@
 
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:nova_x/features/devtools/screens/code_editor_screen.dart';
 import 'package:nova_x/core/services/rewards_entitlements.dart';
 import 'package:nova_x/core/services/rewards_service.dart';
 import 'package:nova_x/core/widgets/feature_lock.dart';
@@ -107,6 +108,9 @@ class _DevToolsPanelState extends State<_DevToolsPanel>
   // Console REPL
   final TextEditingController _replCtrl = TextEditingController();
 
+  // Sources URL bar
+  final TextEditingController _urlCtrl = TextEditingController();
+
   // Search / filter
   final TextEditingController _filterCtrl = TextEditingController();
   String _filter = '';
@@ -125,6 +129,7 @@ class _DevToolsPanelState extends State<_DevToolsPanel>
     _tabCtrl.dispose();
     _filterCtrl.dispose();
     _replCtrl.dispose();
+    _urlCtrl.dispose();
     super.dispose();
   }
 
@@ -228,6 +233,23 @@ class _DevToolsPanelState extends State<_DevToolsPanel>
     } catch (e) {
       if (mounted) setState(() => _sourceView = '// Error: $e');
     }
+  }
+
+  void _openEditor({String? url, String? content, String name = 'untitled.html'}) {
+    CodeLang lang = kLangs[0];
+    final dot = name.lastIndexOf('.');
+    if (dot >= 0) {
+      final ext = name.substring(dot + 1).toLowerCase();
+      for (final l in kLangs) { if (l.ext == ext) { lang = l; break; } }
+    }
+    Navigator.of(context, rootNavigator: true).push(MaterialPageRoute(
+      builder: (_) => CodeEditorScreen(
+        initialUrl: url,
+        initialContent: content,
+        initialLang: lang,
+        initialFileName: name,
+      ),
+    ));
   }
 
   // ── Console REPL ─────────────────────────────────────────────────────────
@@ -621,14 +643,85 @@ class _DevToolsPanelState extends State<_DevToolsPanel>
                 style: GoogleFonts.jetBrainsMono(
                     color: AppTheme.textSecondary, fontSize: 12))),
           ]),
-          right: const SizedBox.shrink(),
+          right: _toolBtn(Icons.edit_rounded, 'Edit in code editor',
+              () => _openEditor(content: _sourceView, name: _sourceTitle)),
         ),
         Expanded(child: _buildHtmlSource(_sourceView!)),
       ]);
     }
     return Column(children: [
+      // URL fetch bar + open editor
+      Container(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+        decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: Color(0xFF1A2E45))),
+        ),
+        child: Column(children: [
+          Row(children: [
+            Expanded(
+              child: Container(
+                height: 40,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  color: AppTheme.bgElevated,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppTheme.glassBorder),
+                ),
+                child: Row(children: [
+                  const Icon(Icons.link_rounded, color: AppTheme.textHint, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: _urlCtrl,
+                      style: GoogleFonts.jetBrainsMono(
+                          color: AppTheme.textPrimary, fontSize: 12.5),
+                      decoration: InputDecoration(
+                        isDense: true, border: InputBorder.none,
+                        hintText: 'Paste a file URL to view / edit',
+                        hintStyle: GoogleFonts.inter(
+                            color: AppTheme.textHint, fontSize: 12.5),
+                      ),
+                      keyboardType: TextInputType.url,
+                      textInputAction: TextInputAction.go,
+                      onSubmitted: (v) {
+                        if (v.trim().isNotEmpty) _openEditor(url: v.trim());
+                      },
+                    ),
+                  ),
+                ]),
+              ),
+            ),
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: () {
+                if (_urlCtrl.text.trim().isNotEmpty) _openEditor(url: _urlCtrl.text.trim());
+              },
+              child: Container(
+                height: 40,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                      colors: [AppTheme.accentCyan, AppTheme.accentPurple]),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Center(child: Text('Open',
+                    style: GoogleFonts.spaceGrotesk(
+                        color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13))),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(child: _editorChip(Icons.note_add_rounded, 'New file',
+                () => _openEditor(name: 'untitled.html'))),
+            const SizedBox(width: 8),
+            Expanded(child: _editorChip(Icons.folder_open_rounded, 'Open from device',
+                () => _openEditor(name: 'untitled.txt'))),
+          ]),
+        ]),
+      ),
       _tabToolbar(
-        left: _toolBtn(Icons.refresh_rounded, 'Reload', _loadSources),
+        left: _toolBtn(Icons.refresh_rounded, 'List page resources', _loadSources),
         right: Text('${_sources.length} files',
             style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11)),
       ),
@@ -636,7 +729,7 @@ class _DevToolsPanelState extends State<_DevToolsPanel>
         child: _loadingSources
             ? const Center(child: CircularProgressIndicator(color: AppTheme.accentCyan))
             : _sources.isEmpty
-                ? Center(child: Text('Tap to list page resources',
+                ? Center(child: Text('Tap refresh to list page resources',
                     style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 13)))
                 : ListView.builder(
                     controller: widget.scrollController,
@@ -659,12 +752,40 @@ class _DevToolsPanelState extends State<_DevToolsPanel>
                         subtitle: Text(s['url'] ?? '', maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 10.5)),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.edit_rounded,
+                              color: AppTheme.textHint, size: 17),
+                          onPressed: () => _openEditor(
+                              url: (s['kind'] == 'document') ? null : s['url'],
+                              content: (s['kind'] == 'document') ? null : null,
+                              name: s['name'] ?? 'file.txt'),
+                        ),
                         onTap: () => _openSource(s),
                       );
                     },
                   ),
       ),
     ]);
+  }
+
+  Widget _editorChip(IconData icon, String label, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: 38,
+        decoration: BoxDecoration(
+          color: AppTheme.bgElevated,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppTheme.glassBorder),
+        ),
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Icon(icon, color: AppTheme.accentCyan, size: 16),
+          const SizedBox(width: 7),
+          Text(label, style: GoogleFonts.inter(
+              color: AppTheme.textSecondary, fontSize: 12.5, fontWeight: FontWeight.w500)),
+        ]),
+      ),
+    );
   }
 
   // ── Network tab ────────────────────────────────────────────────────────────

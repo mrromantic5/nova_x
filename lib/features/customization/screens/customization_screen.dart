@@ -4,6 +4,9 @@
 // or upload from device. Selection persists across launches.
 
 import 'dart:convert';
+import 'package:nova_x/core/services/rewards_entitlements.dart';
+import 'package:nova_x/core/services/rewards_service.dart';
+import 'package:nova_x/core/widgets/feature_lock.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -100,6 +103,12 @@ class _CustomizationScreenState extends State<CustomizationScreen>
   // ═══════════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
+    if (!RewardsEntitlements.isUnlocked(RewardFeature.customization)) {
+      return FeatureLockScreen(
+        featureKey: RewardFeature.customization,
+        onUnlocked: () => setState(() {}),
+      );
+    }
     return Scaffold(
       backgroundColor: AppTheme.bgDark,
       body: FadeTransition(

@@ -6,6 +6,9 @@
 //   • Custom site form: enter name + URL to add anything
 
 import 'package:flutter/material.dart';
+import 'package:nova_x/core/services/rewards_entitlements.dart';
+import 'package:nova_x/core/services/rewards_service.dart';
+import 'package:nova_x/core/widgets/feature_lock.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:nova_x/core/database/local_db.dart';
@@ -232,6 +235,12 @@ class _SpeedDialEditorScreenState extends State<SpeedDialEditorScreen>
   // ═══════════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
+    if (!RewardsEntitlements.isUnlocked(RewardFeature.speeddial)) {
+      return FeatureLockScreen(
+        featureKey: RewardFeature.speeddial,
+        onUnlocked: () => setState(() {}),
+      );
+    }
     final unaddedRecommended = _recommended
         .where((s) => !_isAlreadyAdded(s['url'] as String))
         .toList();

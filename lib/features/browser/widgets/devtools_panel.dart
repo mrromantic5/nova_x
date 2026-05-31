@@ -7,6 +7,7 @@
 //   showDevTools(context, wvc: _wvc, url: _currentUrl, title: _pageTitle,
 //                consoleLogs: _consoleLogs, onClear: () => setState(() => _consoleLogs.clear()));
 
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:nova_x/core/services/rewards_entitlements.dart';
 import 'package:nova_x/core/services/rewards_service.dart';
@@ -26,6 +27,8 @@ void showDevTools(
   required String pageTitle,
   required List<Map<String, dynamic>> consoleLogs,
   required VoidCallback onClearConsole,
+  List<Map<String, dynamic>> networkLogs = const [],
+  VoidCallback? onClearNetwork,
 }) {
   if (!RewardsEntitlements.isUnlocked(RewardFeature.devtools)) {
     showFeatureUnlockSheet(context, RewardFeature.devtools);
@@ -47,6 +50,8 @@ void showDevTools(
         pageTitle:       pageTitle,
         consoleLogs:     consoleLogs,
         onClearConsole:  onClearConsole,
+        networkLogs:     networkLogs,
+        onClearNetwork:  onClearNetwork,
         scrollController: scrollCtrl,
       ),
     ),
@@ -62,6 +67,8 @@ class _DevToolsPanel extends StatefulWidget {
   final String pageTitle;
   final List<Map<String, dynamic>> consoleLogs;
   final VoidCallback onClearConsole;
+  final List<Map<String, dynamic>> networkLogs;
+  final VoidCallback? onClearNetwork;
   final ScrollController scrollController;
 
   const _DevToolsPanel({
@@ -70,6 +77,8 @@ class _DevToolsPanel extends StatefulWidget {
     required this.pageTitle,
     required this.consoleLogs,
     required this.onClearConsole,
+    required this.networkLogs,
+    required this.onClearNetwork,
     required this.scrollController,
   });
 
@@ -89,6 +98,15 @@ class _DevToolsPanelState extends State<_DevToolsPanel>
   List<Cookie> _cookies = [];
   bool _loadingCookies = false;
 
+  // Sources
+  List<Map<String, String>> _sources = [];
+  bool _loadingSources = false;
+  String? _sourceView;        // currently-open source content
+  String  _sourceTitle = '';
+
+  // Console REPL
+  final TextEditingController _replCtrl = TextEditingController();
+
   // Search / filter
   final TextEditingController _filterCtrl = TextEditingController();
   String _filter = '';
@@ -96,7 +114,7 @@ class _DevToolsPanelState extends State<_DevToolsPanel>
   @override
   void initState() {
     super.initState();
-    _tabCtrl = TabController(length: 4, vsync: this);
+    _tabCtrl = TabController(length: 6, vsync: this);
     _tabCtrl.addListener(_onTabSwitch);
     _loadHtml();  // pre-load on open
   }
@@ -106,14 +124,16 @@ class _DevToolsPanelState extends State<_DevToolsPanel>
     _tabCtrl.removeListener(_onTabSwitch);
     _tabCtrl.dispose();
     _filterCtrl.dispose();
+    _replCtrl.dispose();
     super.dispose();
   }
 
   void _onTabSwitch() {
     if (!_tabCtrl.indexIsChanging) return;
     switch (_tabCtrl.index) {
-      case 0: _loadHtml();    break;
-      case 2: _loadCookies(); break;
+      case 0: _loadHtml();    break;  // Elements
+      case 2: _loadSources(); break;  // Sources
+      case 4: _loadCookies(); break;  // Storage
     }
     setState(() => _filter = '');
     _filterCtrl.clear();
@@ -154,6 +174,78 @@ class _DevToolsPanelState extends State<_DevToolsPanel>
     await widget.wvc!.clearCache();
     _snack('Cache and storage cleared');
   }
+
+  // ── Sources ────────────────────────────────────────────────────────────────
+  Future<void> _loadSources() async {
+    if (widget.wvc == null) return;
+    setState(() { _loadingSources = true; _sourceView = null; });
+    try {
+      final res = await widget.wvc!.evaluateJavascript(source: r'''
+(function(){
+  var out=[];
+  out.push({name:'(document)', url:location.href, kind:'document'});
+  document.querySelectorAll('script[src]').forEach(function(s){
+    out.push({name:(s.src.split('/').pop()||s.src), url:s.src, kind:'script'}); });
+  document.querySelectorAll('link[rel="stylesheet"]').forEach(function(l){
+    out.push({name:(l.href.split('/').pop()||l.href), url:l.href, kind:'style'}); });
+  return JSON.stringify(out);
+})();
+''');
+      final list = <Map<String, String>>[];
+      if (res != null) {
+        final decoded = jsonDecode(res.toString());
+        if (decoded is List) {
+          for (final e in decoded) {
+            list.add({
+              'name': e['name']?.toString() ?? '',
+              'url':  e['url']?.toString() ?? '',
+              'kind': e['kind']?.toString() ?? '',
+            });
+          }
+        }
+      }
+      if (mounted) setState(() { _sources = list; _loadingSources = false; });
+    } catch (_) {
+      if (mounted) setState(() => _loadingSources = false);
+    }
+  }
+
+  Future<void> _openSource(Map<String, String> s) async {
+    if (widget.wvc == null) return;
+    setState(() { _sourceTitle = s['name'] ?? ''; _sourceView = '// loading…'; });
+    try {
+      String content;
+      if (s['kind'] == 'document') {
+        content = await widget.wvc!.getHtml() ?? '';
+      } else {
+        final js = "(async function(){try{var r=await fetch(" +
+            jsonEncode(s['url']) + ");return await r.text();}"
+            "catch(e){return '// Could not fetch: '+e;}})()";
+        final r = await widget.wvc!.evaluateJavascript(source: js);
+        content = r?.toString() ?? '// (empty)';
+      }
+      if (mounted) setState(() => _sourceView = content);
+    } catch (e) {
+      if (mounted) setState(() => _sourceView = '// Error: $e');
+    }
+  }
+
+  // ── Console REPL ─────────────────────────────────────────────────────────
+  Future<void> _runRepl() async {
+    final code = _replCtrl.text.trim();
+    if (code.isEmpty || widget.wvc == null) return;
+    _replCtrl.clear();
+    widget.consoleLogs.add({'type': 'input', 'msg': '\u203A $code', 'time': ''});
+    try {
+      final r = await widget.wvc!.evaluateJavascript(source: code);
+      widget.consoleLogs.add(
+          {'type': 'log', 'msg': r == null ? 'undefined' : r.toString(), 'time': ''});
+    } catch (e) {
+      widget.consoleLogs.add({'type': 'error', 'msg': e.toString(), 'time': ''});
+    }
+    if (mounted) setState(() {});
+  }
+
 
   void _snack(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -235,6 +327,8 @@ class _DevToolsPanelState extends State<_DevToolsPanel>
             tabs: const [
               Tab(text: 'Elements'),
               Tab(text: 'Console'),
+              Tab(text: 'Sources'),
+              Tab(text: 'Network'),
               Tab(text: 'Storage'),
               Tab(text: 'Info'),
             ],
@@ -248,6 +342,8 @@ class _DevToolsPanelState extends State<_DevToolsPanel>
             children: [
               _buildElementsTab(),
               _buildConsoleTab(),
+              _buildSourcesTab(),
+              _buildNetworkTab(),
               _buildStorageTab(),
               _buildInfoTab(),
             ],
@@ -481,7 +577,170 @@ class _DevToolsPanelState extends State<_DevToolsPanel>
             },
           ),
         ),
+      _buildRepl(),
     ]);
+  }
+
+  Widget _buildRepl() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 6, 8, 8),
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: Color(0xFF1A2E45))),
+      ),
+      child: Row(children: [
+        const Icon(Icons.chevron_right_rounded, color: AppTheme.accentCyan, size: 20),
+        Expanded(
+          child: TextField(
+            controller: _replCtrl,
+            style: GoogleFonts.jetBrainsMono(color: AppTheme.textPrimary, fontSize: 12.5),
+            decoration: InputDecoration(
+              isDense: true,
+              border: InputBorder.none,
+              hintText: 'Run JavaScript…',
+              hintStyle: GoogleFonts.jetBrainsMono(color: AppTheme.textHint, fontSize: 12.5),
+            ),
+            textInputAction: TextInputAction.go,
+            onSubmitted: (_) => _runRepl(),
+          ),
+        ),
+        _toolBtn(Icons.play_arrow_rounded, 'Run', _runRepl),
+      ]),
+    );
+  }
+
+  // ── Sources tab ────────────────────────────────────────────────────────────
+  Widget _buildSourcesTab() {
+    if (_sourceView != null) {
+      return Column(children: [
+        _tabToolbar(
+          left: Row(children: [
+            _toolBtn(Icons.arrow_back_rounded, 'Back',
+                () => setState(() => _sourceView = null)),
+            const SizedBox(width: 8),
+            Flexible(child: Text(_sourceTitle, overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.jetBrainsMono(
+                    color: AppTheme.textSecondary, fontSize: 12))),
+          ]),
+          right: const SizedBox.shrink(),
+        ),
+        Expanded(child: _buildHtmlSource(_sourceView!)),
+      ]);
+    }
+    return Column(children: [
+      _tabToolbar(
+        left: _toolBtn(Icons.refresh_rounded, 'Reload', _loadSources),
+        right: Text('${_sources.length} files',
+            style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11)),
+      ),
+      Expanded(
+        child: _loadingSources
+            ? const Center(child: CircularProgressIndicator(color: AppTheme.accentCyan))
+            : _sources.isEmpty
+                ? Center(child: Text('Tap to list page resources',
+                    style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 13)))
+                : ListView.builder(
+                    controller: widget.scrollController,
+                    itemCount: _sources.length,
+                    itemBuilder: (_, i) {
+                      final s = _sources[i];
+                      final kind = s['kind'] ?? '';
+                      final color = kind == 'script'
+                          ? const Color(0xFFE5C07B)
+                          : kind == 'style' ? AppTheme.accentPurple : AppTheme.accentCyan;
+                      final icon = kind == 'script'
+                          ? Icons.javascript_rounded
+                          : kind == 'style' ? Icons.style_rounded : Icons.description_rounded;
+                      return ListTile(
+                        dense: true,
+                        leading: Icon(icon, color: color, size: 20),
+                        title: Text(s['name'] ?? '', overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.jetBrainsMono(
+                                color: AppTheme.textPrimary, fontSize: 12.5)),
+                        subtitle: Text(s['url'] ?? '', maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 10.5)),
+                        onTap: () => _openSource(s),
+                      );
+                    },
+                  ),
+      ),
+    ]);
+  }
+
+  // ── Network tab ────────────────────────────────────────────────────────────
+  Widget _buildNetworkTab() {
+    final logs = _filter.isEmpty
+        ? widget.networkLogs
+        : widget.networkLogs
+            .where((l) => (l['url']?.toString() ?? '')
+                .toLowerCase()
+                .contains(_filter.toLowerCase()))
+            .toList();
+    return Column(children: [
+      _tabToolbar(
+        left: _toolBtn(Icons.delete_outline_rounded, 'Clear',
+            () { widget.onClearNetwork?.call(); setState(() {}); }),
+        right: _filterField('Filter requests…'),
+      ),
+      if (logs.isEmpty)
+        Expanded(
+          child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.lan_outlined, color: AppTheme.textHint, size: 36),
+            const SizedBox(height: 10),
+            Text('No network activity yet',
+                style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 13)),
+            const SizedBox(height: 4),
+            Text('fetch / XHR requests will appear here',
+                style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11)),
+          ])),
+        )
+      else
+        Expanded(
+          child: ListView.builder(
+            controller: widget.scrollController,
+            itemCount: logs.length,
+            itemBuilder: (_, i) => _netEntry(logs[logs.length - 1 - i]),
+          ),
+        ),
+    ]);
+  }
+
+  Widget _netEntry(Map<String, dynamic> n) {
+    final status = n['status'] is int ? n['status'] as int : 0;
+    final ok = status >= 200 && status < 400;
+    final statusColor = status == 0
+        ? AppTheme.danger
+        : ok ? AppTheme.success : const Color(0xFFE5C07B);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: Color(0xFF14233A))),
+      ),
+      child: Row(children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: statusColor.withOpacity(0.15),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(status == 0 ? 'ERR' : '$status',
+              style: GoogleFonts.jetBrainsMono(
+                  color: statusColor, fontSize: 11, fontWeight: FontWeight.w700)),
+        ),
+        const SizedBox(width: 8),
+        Text(n['method']?.toString() ?? 'GET',
+            style: GoogleFonts.jetBrainsMono(color: AppTheme.textSecondary, fontSize: 11)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(n['url']?.toString() ?? '', maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: GoogleFonts.inter(color: AppTheme.textPrimary, fontSize: 11.5)),
+        ),
+        const SizedBox(width: 8),
+        Text('${n['ms'] ?? 0}ms',
+            style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 10.5)),
+      ]),
+    );
   }
 
   Widget _consoleEntry(String type, String msg, String time) {

@@ -1,5 +1,8 @@
 // lib/features/cyber/screens/cyber_screen.dart
 import 'dart:math' as math;
+import 'package:nova_x/core/services/rewards_entitlements.dart';
+import 'package:nova_x/core/services/rewards_service.dart';
+import 'package:nova_x/core/widgets/feature_lock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -89,6 +92,12 @@ class _CyberScreenState extends State<CyberScreen>
 
   @override
   Widget build(BuildContext context) {
+    if (!RewardsEntitlements.isUnlocked(RewardFeature.cyber)) {
+      return FeatureLockScreen(
+        featureKey: RewardFeature.cyber,
+        onUnlocked: () => setState(() {}),
+      );
+    }
     return Scaffold(
       backgroundColor: AppTheme.bgDark,
       body: Stack(children: [

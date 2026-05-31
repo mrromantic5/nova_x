@@ -1,5 +1,6 @@
 // lib/features/settings/screens/settings_screen.dart
 import 'package:flutter/material.dart';
+import 'package:nova_x/core/services/default_browser_service.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:nova_x/core/database/local_db.dart';
@@ -23,6 +24,8 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool   _adBlock       = false;
   bool   _savePasswords = true;
+  bool   _biometricLock = true;
+  bool   _isDefaultBrowser = false;
   int    _savedPwCount  = 0;
 
   String _engine = 'google';
@@ -34,8 +37,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _engine        = LocalDB.getSearchEngine();
     _adBlock       = LocalDB.getAdBlockEnabled();
     _savePasswords = LocalDB.getSavePasswordsEnabled();
+    _biometricLock = LocalDB.getBiometricLockEnabled();
+    _checkDefaultBrowser();
     _loadPwCount();
     _profile = LocalDB.getProfile();
+  }
+
+  Future<void> _checkDefaultBrowser() async {
+    final d = await DefaultBrowserService.isDefault();
+    if (mounted) setState(() => _isDefaultBrowser = d);
   }
 
   Future<void> _loadPwCount() async {
@@ -323,10 +333,62 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 activeColor: AppTheme.accentCyan,
               ),
             ),
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal:16, vertical:4),
+              leading: Container(width:34, height:34,
+                decoration: BoxDecoration(
+                  color: AppTheme.success.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(10)),
+                child: const Icon(Icons.fingerprint_rounded, color: AppTheme.success, size:17)),
+              title: Text('Unlock with biometrics', style: GoogleFonts.inter(
+                  color: AppTheme.textPrimary, fontSize:14, fontWeight: FontWeight.w500)),
+              subtitle: Text(_biometricLock
+                  ? 'Verify with fingerprint / PIN before using passwords'
+                  : 'No verification before autofill',
+                  style: GoogleFonts.inter(color: AppTheme.textHint, fontSize:11)),
+              trailing: Switch(
+                value: _biometricLock,
+                onChanged: (v) async {
+                  await LocalDB.setBiometricLockEnabled(v);
+                  setState(() => _biometricLock = v);
+                },
+                activeColor: AppTheme.success,
+              ),
+            ),
             _navTile(Icons.password_rounded, 'Saved Passwords',
               '$_savedPwCount password${_savedPwCount == 1 ? '' : 's'} stored',
               AppTheme.accentPurple,
               () async { await _push(const PasswordManagerScreen()); _loadPwCount(); }),
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal:16, vertical:4),
+              leading: Container(width:34, height:34,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFC83D).withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(10)),
+                child: const Icon(Icons.public_rounded, color: Color(0xFFFFC83D), size:17)),
+              title: Text('Default Browser', style: GoogleFonts.inter(
+                  color: AppTheme.textPrimary, fontSize:14, fontWeight: FontWeight.w500)),
+              subtitle: Text(_isDefaultBrowser
+                  ? 'NOVA X is your default browser ✓'
+                  : 'Set NOVA X as default — earn 5 points',
+                  style: GoogleFonts.inter(
+                      color: _isDefaultBrowser ? AppTheme.success : AppTheme.textHint,
+                      fontSize:11)),
+              trailing: _isDefaultBrowser
+                  ? const Icon(Icons.check_circle_rounded, color: AppTheme.success, size:20)
+                  : TextButton(
+                      onPressed: () async {
+                        await DefaultBrowserService.request();
+                        await Future.delayed(const Duration(seconds: 1));
+                        await DefaultBrowserService.checkAndAward();
+                        _checkDefaultBrowser();
+                      },
+                      child: Text('Set',
+                          style: GoogleFonts.spaceGrotesk(
+                              color: const Color(0xFFFFC83D),
+                              fontWeight: FontWeight.w700)),
+                    ),
+            ),
           ]),
 
           // ── Privacy & Data ────────────────────────────────────────────────

@@ -7,6 +7,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:nova_x/core/database/local_db.dart';
 import 'package:nova_x/core/services/nova_shield_service.dart';
 import 'package:nova_x/core/services/api_service.dart';
+import 'package:nova_x/core/services/rewards_entitlements.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
 import 'features/auth/screens/auth_gate.dart';
 import 'features/business/screens/business_screen.dart';
@@ -32,6 +33,7 @@ void main() async {
   await LocalDB.initialize();
   await NovaShieldService.init();
   await AdvertService.init();
+  await RewardsEntitlements.loadCache();
   await Firebase.initializeApp();
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   runApp(const ProviderScope(child: NovaXApp()));

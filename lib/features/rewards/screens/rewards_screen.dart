@@ -51,6 +51,7 @@ class _RewardsScreenState extends State<RewardsScreen>
     RewardTaskKey.openNotifications,
     RewardTaskKey.useAi,
     RewardTaskKey.visualSearch,
+    RewardTaskKey.defaultBrowser,
     RewardTaskKey.completeProfile,
   ];
 
@@ -66,6 +67,7 @@ class _RewardsScreenState extends State<RewardsScreen>
     RewardTaskKey.readNews,
     RewardTaskKey.useAi,
     RewardTaskKey.visualSearch,
+    RewardTaskKey.defaultBrowser,
     RewardTaskKey.completeProfile,
   };
 
@@ -328,6 +330,9 @@ class _RewardsScreenState extends State<RewardsScreen>
       case RewardTaskKey.completeProfile:
         return {'icon': Icons.person_rounded, 'title': 'Complete your profile',
           'sub': 'One-time reward'};
+      case RewardTaskKey.defaultBrowser:
+        return {'icon': Icons.public_rounded, 'title': 'Make NOVA X your default browser',
+          'sub': 'One-time reward — set it in the popup or Settings'};
       default:
         return {'icon': Icons.star_rounded, 'title': key, 'sub': ''};
     }

@@ -7,8 +7,10 @@
 //   • Zoom controls (text zoom slider + reset)
 
 import 'dart:convert';
+import 'dart:collection';
 import 'package:nova_x/core/services/biometric_service.dart';
 import 'dart:io';
+import 'package:speech_to_text/speech_to_text.dart';
 import 'package:nova_x/core/services/password_service.dart';
 import 'package:nova_x/core/services/nova_shield_service.dart';
 import 'package:nova_x/features/cookie/cookie_editor_screen.dart';
@@ -31,11 +33,16 @@ class BrowserView extends StatefulWidget {
   /// When set, loaded via loadData() with baseUrl=google.com
   final String? htmlContent;
 
+  /// When true, the Developer Tools panel opens automatically after first load
+  /// (used by the "Dev Tools" shortcut in the home more-menu).
+  final bool autoOpenDevTools;
+
   const BrowserView({
     super.key,
     required this.initialQuery,
     this.incognito = false,
     this.htmlContent,
+    this.autoOpenDevTools = false,
   });
 
   @override
@@ -73,6 +80,11 @@ class _BrowserViewState extends State<BrowserView>
   // ── DevTools ──────────────────────────────────────────────────────────────
   final List<Map<String, dynamic>> _consoleLogs = [];
   final List<Map<String, dynamic>> _networkLogs = [];
+
+  // In-page voice bridge (Web Speech API -> native speech_to_text)
+  final SpeechToText _speech = SpeechToText();
+  bool _speechAvail = false;
+  bool _devToolsAutoOpened = false;
 
   // ── Zoom ──────────────────────────────────────────────────────────────────
   double _textZoom    = 100; // 50 – 200
@@ -172,7 +184,77 @@ class _BrowserViewState extends State<BrowserView>
 })();
 ''';
 
-  // ── URL helpers ────────────────────────────────────────────────────────────
+  // Polyfills the Web Speech API (webkitSpeechRecognition / SpeechRecognition),
+  // which Android System WebView does NOT implement. Calls bridge to the native
+  // speech_to_text plugin. Injected at document START so sites that feature-check
+  // on load see the API as available.
+  static const String _speechShim = r'''
+(function(){
+  if (window.__nxSpeechPatched) return; window.__nxSpeechPatched = true;
+  function R(){
+    this.lang='en-US'; this.continuous=false; this.interimResults=false;
+    this.maxAlternatives=1; this._active=false;
+    this.onresult=null; this.onerror=null; this.onend=null; this.onstart=null;
+    this.onspeechstart=null; this.onspeechend=null; this.onaudiostart=null;
+    this.onaudioend=null; this.onnomatch=null; this.onsoundstart=null; this.onsoundend=null;
+  }
+  R.prototype.start=function(){
+    if(this._active) return; this._active=true; window.__nxActiveRec=this;
+    try{ this.onstart && this.onstart(new Event('start')); }catch(e){}
+    try{ this.onaudiostart && this.onaudiostart(new Event('audiostart')); }catch(e){}
+    try{ window.flutter_inappwebview.callHandler('nxSpeechStart', this.lang||'en-US'); }
+    catch(e){ try{ this.onerror && this.onerror({error:'not-allowed'}); }catch(_){ } this._active=false; }
+  };
+  R.prototype.stop=function(){ this._active=false;
+    try{ window.flutter_inappwebview.callHandler('nxSpeechStop',''); }catch(e){} };
+  R.prototype.abort=function(){ this.stop(); };
+  R.prototype.addEventListener=function(t,cb){ this['on'+t]=cb; };
+  R.prototype.removeEventListener=function(t){ this['on'+t]=null; };
+  R.prototype.dispatchEvent=function(){ return true; };
+  window.__nxSpeechResult=function(text, isFinal){
+    var rec=window.__nxActiveRec; if(!rec) return;
+    var alt={transcript:String(text||''), confidence:0.9};
+    var res=[alt]; res[0]=alt; res.length=1; res.isFinal=!!isFinal;
+    res.item=function(i){return res[i];};
+    var list=[res]; list[0]=res; list.length=1; list.item=function(i){return list[i];};
+    var ev; try{ ev=new Event('result'); }catch(e){ ev={type:'result'}; }
+    ev.results=list; ev.resultIndex=0;
+    try{ rec.onresult && rec.onresult(ev); }catch(e){}
+    if(isFinal){ rec._active=false;
+      try{ rec.onspeechend && rec.onspeechend(new Event('speechend')); }catch(e){}
+      try{ rec.onend && rec.onend(new Event('end')); }catch(e){}
+      window.__nxActiveRec=null; }
+  };
+  window.__nxSpeechError=function(err){
+    var rec=window.__nxActiveRec; if(!rec) return; rec._active=false;
+    try{ rec.onerror && rec.onerror({error:String(err||'no-speech')}); }catch(e){}
+    try{ rec.onend && rec.onend(new Event('end')); }catch(e){}
+    window.__nxActiveRec=null;
+  };
+  window.__nxSpeechEnd=function(){
+    var rec=window.__nxActiveRec; if(!rec) return; rec._active=false;
+    try{ rec.onend && rec.onend(new Event('end')); }catch(e){}
+    window.__nxActiveRec=null;
+  };
+  window.SpeechRecognition = R;
+  window.webkitSpeechRecognition = R;
+})();
+''';
+
+  // ── Developer Tools ──────────────────────────────────────────────────────
+  void _openDevTools() {
+    showDevTools(
+      context,
+      wvc:            _wvc,
+      url:            _currentUrl,
+      pageTitle:      _pageTitle,
+      consoleLogs:    _consoleLogs,
+      onClearConsole: () => setState(() => _consoleLogs.clear()),
+      networkLogs:    _networkLogs,
+      onClearNetwork: () => setState(() => _networkLogs.clear()),
+    );
+  }
+
   String _buildUrl(String query) {
     final q = query.trim();
     if (q.isEmpty) return 'https://www.google.com';
@@ -210,6 +292,7 @@ class _BrowserViewState extends State<BrowserView>
       CookieManager.instance().deleteAllCookies();
     }
     _urlCtrl.dispose();
+    try { _speech.stop(); } catch (_) {}
     _wvc = null;
     super.dispose();
   }
@@ -473,6 +556,20 @@ class _BrowserViewState extends State<BrowserView>
             ? PasswordService.buildAdBlockers() : [],
       ),
 
+      initialUserScripts: UnmodifiableListView([
+        UserScript(source: _speechShim,
+            injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START),
+      ]),
+
+      // Grant in-page media permissions (microphone / camera) so getUserMedia
+      // and voice features work inside the WebView.
+      onPermissionRequest: (controller, request) async {
+        return PermissionResponse(
+          resources: request.resources,
+          action: PermissionResponseAction.GRANT,
+        );
+      },
+
       onWebViewCreated: (c) {
         _wvc = c;
         // Register the console log handler BEFORE any page loads
@@ -549,6 +646,58 @@ class _BrowserViewState extends State<BrowserView>
             );
           });
         }
+
+        // ── Voice bridge: page calls webkitSpeechRecognition → native STT ──
+        c.addJavaScriptHandler(
+          handlerName: 'nxSpeechStart',
+          callback: (args) async {
+            final raw = args.isNotEmpty ? args[0].toString() : 'en-US';
+            final locale = raw.replaceAll('-', '_');
+            try {
+              if (!_speechAvail) {
+                _speechAvail = await _speech.initialize(
+                  onError: (e) {
+                    _wvc?.evaluateJavascript(
+                        source: 'window.__nxSpeechError && window.__nxSpeechError(${jsonEncode(e.errorMsg)})');
+                  },
+                  onStatus: (s) {
+                    if (s == 'done' || s == 'notListening') {
+                      _wvc?.evaluateJavascript(
+                          source: 'window.__nxSpeechEnd && window.__nxSpeechEnd()');
+                    }
+                  },
+                );
+              }
+              if (!_speechAvail) {
+                _wvc?.evaluateJavascript(
+                    source: "window.__nxSpeechError && window.__nxSpeechError('not-allowed')");
+                return null;
+              }
+              await _speech.listen(
+                localeId: locale,
+                partialResults: true,
+                cancelOnError: true,
+                onResult: (r) {
+                  _wvc?.evaluateJavascript(
+                      source: 'window.__nxSpeechResult && window.__nxSpeechResult('
+                          '${jsonEncode(r.recognizedWords)}, ${r.finalResult})');
+                },
+              );
+            } catch (_) {
+              _wvc?.evaluateJavascript(
+                  source: "window.__nxSpeechError && window.__nxSpeechError('audio-capture')");
+            }
+            return null;
+          },
+        );
+        c.addJavaScriptHandler(
+          handlerName: 'nxSpeechStop',
+          callback: (args) async {
+            try { await _speech.stop(); } catch (_) {}
+            _wvc?.evaluateJavascript(source: 'window.__nxSpeechEnd && window.__nxSpeechEnd()');
+            return null;
+          },
+        );
       },
 
       onLoadStart: (c, url) async {
@@ -627,6 +776,13 @@ class _BrowserViewState extends State<BrowserView>
             _savedCreds = creds;
             _showAutofillSnack(LocalDB.extractDomain(u));
           }
+        }
+        // Auto-open Developer Tools when launched from the home shortcut
+        if (widget.autoOpenDevTools && !_devToolsAutoOpened && mounted) {
+          _devToolsAutoOpened = true;
+          Future.delayed(const Duration(milliseconds: 250), () {
+            if (mounted) _openDevTools();
+          });
         }
       },
 
@@ -885,16 +1041,7 @@ class _BrowserViewState extends State<BrowserView>
             'Developer tools',
             () {
               Navigator.pop(context);
-              showDevTools(
-                context,
-                wvc:            _wvc,
-                url:            _currentUrl,
-                pageTitle:      _pageTitle,
-                consoleLogs:    _consoleLogs,
-                onClearConsole: () => setState(() => _consoleLogs.clear()),
-                networkLogs:    _networkLogs,
-                onClearNetwork: () => setState(() => _networkLogs.clear()),
-              );
+              _openDevTools();
             },
             color: AppTheme.accentCyan,
           ),

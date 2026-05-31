@@ -14,6 +14,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:dio/dio.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -79,17 +80,72 @@ class _PFile {
   _PFile(this.name, this.content, this.lang);
 }
 
+/// Shared persistence for the code editor. Both the editor inside Developer
+/// Tools and the standalone "X Code Editor" load and save the SAME workspace,
+/// so a file saved in one is available in the other.
+class CodeWorkspaceStore {
+  static Future<File> _file() async {
+    final dir = await getApplicationDocumentsDirectory();
+    final d = Directory('${dir.path}/nova_x_editor');
+    if (!await d.exists()) await d.create(recursive: true);
+    return File('${d.path}/workspace.json');
+  }
+
+  static Future<List<_PFile>> load() async {
+    try {
+      final f = await _file();
+      if (!await f.exists()) return [];
+      final data = jsonDecode(await f.readAsString());
+      if (data is! List) return [];
+      final out = <_PFile>[];
+      for (final e in data) {
+        if (e is Map) {
+          final name = (e['name'] ?? 'untitled.txt').toString();
+          out.add(_PFile(name, (e['content'] ?? '').toString(), _langForExt(name)));
+        }
+      }
+      return out;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<void> save(List<_PFile> files) async {
+    try {
+      final f = await _file();
+      await f.writeAsString(jsonEncode(
+          files.map((p) => {'name': p.name, 'content': p.content}).toList()));
+    } catch (_) {}
+  }
+
+  /// Append (or replace by name) a single file into the shared workspace.
+  static Future<void> addFile(String name, String content) async {
+    final list = await load();
+    final i = list.indexWhere((p) => p.name == name);
+    if (i >= 0) {
+      list[i].content = content;
+    } else {
+      list.add(_PFile(name, content, _langForExt(name)));
+    }
+    await save(list);
+  }
+}
+
 class CodeEditorScreen extends StatefulWidget {
   final String? initialUrl;
   final String? initialContent;
   final CodeLang? initialLang;
   final String   initialFileName;
+  /// When true, this editor loads/saves the shared workspace (so the editor in
+  /// Developer Tools and the standalone X Code Editor stay in sync).
+  final bool sharedWorkspace;
   const CodeEditorScreen({
     super.key,
     this.initialUrl,
     this.initialContent,
     this.initialLang,
     this.initialFileName = 'index.html',
+    this.sharedWorkspace = false,
   });
 
   @override
@@ -217,6 +273,12 @@ button {
         r.readAsText(f);
       });
       try{ window.flutter_inappwebview.callHandler('nxReady',''); }catch(_){}
+      editor.session.on('change', function(){
+        if (window.__nxT) clearTimeout(window.__nxT);
+        window.__nxT = setTimeout(function(){
+          try{ window.flutter_inappwebview.callHandler('nxChanged',''); }catch(_){}
+        }, 800);
+      });
     }catch(err){ try{ window.flutter_inappwebview.callHandler('nxErr', String(err)); }catch(_){} }
   }
   function nxSetMode(m){ if(editor) editor.session.setMode('ace/mode/'+m); }
@@ -245,8 +307,24 @@ button {
     if (_ready && _active < _files.length) _cur.content = await _getCode();
   }
 
+  /// Persist to the shared workspace (no-op when not in shared mode).
+  Future<void> _persist() async {
+    if (!widget.sharedWorkspace) return;
+    await CodeWorkspaceStore.save(_files);
+  }
+
   Future<void> _onReady() async {
     setState(() => _ready = true);
+    // Shared mode: replace the seeded starter with the saved workspace (if any).
+    if (widget.sharedWorkspace &&
+        widget.initialContent == null && widget.initialUrl == null) {
+      final loaded = await CodeWorkspaceStore.load();
+      if (loaded.isNotEmpty) {
+        setState(() { _files..clear()..addAll(loaded); _active = 0; });
+      } else {
+        await CodeWorkspaceStore.save(_files); // persist the starter once
+      }
+    }
     await _setMode(_cur.lang.mode);
     await _setCode(_cur.content);
     if (widget.initialUrl != null && widget.initialUrl!.isNotEmpty) {
@@ -258,6 +336,7 @@ button {
   Future<void> _switchTo(int i) async {
     if (i == _active) return;
     await _syncActive();
+    await _persist();
     setState(() => _active = i);
     await _setMode(_cur.lang.mode);
     await _setCode(_cur.content);
@@ -318,6 +397,7 @@ button {
     });
     await _setMode(_cur.lang.mode);
     await _setCode('');
+    await _persist();
   }
 
   Future<void> _deleteFile(int i) async {
@@ -329,6 +409,7 @@ button {
     });
     await _setMode(_cur.lang.mode);
     await _setCode(_cur.content);
+    await _persist();
   }
 
   void _renameDialog(int i) {
@@ -353,6 +434,7 @@ button {
               if (n.isNotEmpty) {
                 setState(() { _files[i].name = n; _files[i].lang = _langForExt(n); });
                 if (i == _active) _setMode(_cur.lang.mode);
+                _persist();
               }
               Navigator.pop(context);
             },
@@ -401,11 +483,47 @@ button {
       final body = res.data ?? '';
       await _setCode(body);
       _cur.content = body;
+      await _persist();
       _snack('Loaded ${body.length} chars');
     } catch (e) {
       _snack('Could not fetch: $e', error: true);
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  // Open a real file from the device using the system file picker.
+  Future<void> _openFromDevice() async {
+    try {
+      final res = await FilePicker.platform.pickFiles(withData: false);
+      if (res == null || res.files.isEmpty) return;
+      final pf = res.files.first;
+      final path = pf.path;
+      if (path == null) { _snack('Could not read that file', error: true); return; }
+      String content;
+      try {
+        content = await File(path).readAsString();
+      } catch (_) {
+        content = utf8.decode(await File(path).readAsBytes(), allowMalformed: true);
+      }
+      final name = pf.name.isNotEmpty ? pf.name : 'file.txt';
+      await _syncActive();
+      setState(() {
+        final existing = _files.indexWhere((f) => f.name == name);
+        if (existing >= 0) {
+          _files[existing].content = content;
+          _active = existing;
+        } else {
+          _files.add(_PFile(name, content, _langForExt(name)));
+          _active = _files.length - 1;
+        }
+      });
+      await _setMode(_cur.lang.mode);
+      await _setCode(content);
+      await _persist();
+      _snack('Opened $name');
+    } catch (e) {
+      _snack('Open failed: $e', error: true);
     }
   }
 
@@ -418,6 +536,7 @@ button {
 
   Future<void> _saveProject() async {
     await _syncActive();
+    await _persist();
     try {
       final base = await getExternalStorageDirectory()
           ?? await getApplicationDocumentsDirectory();
@@ -427,6 +546,20 @@ button {
         await File('${dir.path}/${f.name}').writeAsString(f.content);
       }
       _snack('Saved ${_files.length} files to ${dir.path}');
+    } catch (e) {
+      _snack('Save failed: $e', error: true);
+    }
+  }
+
+  // Push the current file(s) into the shared X Code Editor workspace so a file
+  // opened transiently (URL fetch / page source) becomes available there too.
+  Future<void> _saveToWorkspace() async {
+    await _syncActive();
+    try {
+      for (final f in _files) {
+        await CodeWorkspaceStore.addFile(f.name, f.content);
+      }
+      _snack('Saved to X Code Editor workspace');
     } catch (e) {
       _snack('Save failed: $e', error: true);
     }
@@ -453,6 +586,7 @@ button {
 
   Future<void> _run() async {
     await _syncActive();
+    await _persist();
     final index = _indexName();
     if (index == null) { _snack('Add an .html file to run a preview', error: true); return; }
     setState(() => _busy = true);
@@ -546,7 +680,8 @@ button {
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             const Icon(Icons.code_rounded, color: AppTheme.accentCyan, size: 20),
             const SizedBox(width: 8),
-            Text('Code Editor', style: GoogleFonts.spaceGrotesk(
+            Text(widget.sharedWorkspace ? 'X Code Editor' : 'Code Editor',
+                style: GoogleFonts.spaceGrotesk(
                 color: AppTheme.textPrimary, fontSize: 16, fontWeight: FontWeight.w700)),
           ]),
         ),
@@ -569,15 +704,18 @@ button {
             color: AppTheme.bgElevated,
             icon: const Icon(Icons.more_vert_rounded, color: AppTheme.textSecondary),
             onSelected: (v) {
-              if (v == 'open') _wvc?.evaluateJavascript(source: 'nxOpenFile()');
+              if (v == 'open') _openFromDevice();
               if (v == 'copy') _copy();
               if (v == 'save') _saveProject();
+              if (v == 'workspace') _saveToWorkspace();
               if (v == 'lang') _pickLanguage();
             },
             itemBuilder: (_) => [
               _mi('open', Icons.folder_open_rounded, 'Open file from device', AppTheme.accentCyan),
               _mi('copy', Icons.copy_rounded, 'Copy current file', AppTheme.textSecondary),
               _mi('save', Icons.save_alt_rounded, 'Save project to device', AppTheme.accentPurple),
+              if (!widget.sharedWorkspace)
+                _mi('workspace', Icons.bookmark_add_rounded, 'Save to X Code Editor', const Color(0xFF00D4FF)),
               _mi('lang', Icons.palette_rounded, 'Change language', _cur.lang.color),
             ],
           ),
@@ -599,17 +737,12 @@ button {
               c.addJavaScriptHandler(handlerName: 'nxReady', callback: (_) { _onReady(); return null; });
               c.addJavaScriptHandler(handlerName: 'nxErr', callback: (a) {
                 _snack('Editor error: ${a.isNotEmpty ? a[0] : ''}', error: true); return null; });
-              c.addJavaScriptHandler(handlerName: 'nxFile', callback: (a) async {
-                if (a.isNotEmpty) {
-                  final name = a[0].toString();
-                  final code = await _getCode();
-                  await _syncActive();
-                  setState(() {
-                    _files.add(_PFile(name, code, _langForExt(name)));
-                    _active = _files.length - 1;
-                  });
-                  await _setMode(_cur.lang.mode);
-                }
+              // Debounced autosave: persist the active file to the shared
+              // workspace shortly after the user stops typing.
+              c.addJavaScriptHandler(handlerName: 'nxChanged', callback: (_) async {
+                if (!_ready) return null;
+                await _syncActive();
+                await _persist();
                 return null;
               });
             },

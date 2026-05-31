@@ -43,6 +43,7 @@ import '../../customization/screens/speed_dial_editor_screen.dart';
 import 'package:nova_x/core/services/advert_service.dart';
 import 'package:nova_x/core/services/business_badge_service.dart';
 import 'package:nova_x/features/notifications/screens/notifications_screen.dart';
+import 'package:nova_x/features/devtools/screens/code_editor_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -1545,6 +1546,11 @@ class _MenuSheet extends StatelessWidget {
        'fn': () { Navigator.pop(context); onPush(const NovaShieldScreen()); }},
       {'icon': Icons.security_rounded,          'label': 'NOVA Cyber', 'color': const Color(0xFF7C4DFF),
        'fn': () { Navigator.pop(context); onPush(const CyberScreen()); }},
+      {'icon': Icons.developer_mode_rounded,    'label': 'Dev Tools',  'color': AppTheme.accentCyan,
+       'fn': () { Navigator.pop(context); onPush(const BrowserView(
+           initialQuery: 'about:blank', autoOpenDevTools: true)); }},
+      {'icon': Icons.code_rounded,              'label': 'X Code Editor', 'color': const Color(0xFF00D4FF),
+       'fn': () { Navigator.pop(context); onPush(const CodeEditorScreen(sharedWorkspace: true)); }},
       {'icon': Icons.person_off_outlined,       'label': 'Incognito',  'color': AppTheme.accentPurple,
        'fn': () { Navigator.pop(context); onIncognito(); }},
       {'icon': Icons.monetization_on_rounded,   'label': 'Rewards',    'color': const Color(0xFFFFC83D),

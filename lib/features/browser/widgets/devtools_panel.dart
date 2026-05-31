@@ -8,6 +8,9 @@
 //                consoleLogs: _consoleLogs, onClear: () => setState(() => _consoleLogs.clear()));
 
 import 'package:flutter/material.dart';
+import 'package:nova_x/core/services/rewards_entitlements.dart';
+import 'package:nova_x/core/services/rewards_service.dart';
+import 'package:nova_x/core/widgets/feature_lock.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -24,6 +27,10 @@ void showDevTools(
   required List<Map<String, dynamic>> consoleLogs,
   required VoidCallback onClearConsole,
 }) {
+  if (!RewardsEntitlements.isUnlocked(RewardFeature.devtools)) {
+    showFeatureUnlockSheet(context, RewardFeature.devtools);
+    return;
+  }
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,

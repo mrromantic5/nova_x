@@ -1,5 +1,6 @@
 // lib/features/password/password_manager_screen.dart
 import 'package:flutter/material.dart';
+import 'package:nova_x/core/services/biometric_service.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:nova_x/core/services/password_service.dart';
@@ -14,12 +15,21 @@ class PasswordManagerScreen extends StatefulWidget {
 class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
   List<Map<String, String>> _creds = [];
   bool _loading = true;
+  bool _unlocked = false;
   final Set<int> _revealed = {};
   String _search = '';
 
   @override
   void initState() {
     super.initState();
+    _gate();
+  }
+
+  Future<void> _gate() async {
+    final ok = await BiometricService.verify('Verify it\'s you to view saved passwords');
+    if (!mounted) return;
+    if (!ok) { Navigator.pop(context); return; }
+    setState(() => _unlocked = true);
     _load();
   }
 
@@ -99,6 +109,14 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (!_unlocked) {
+      return const Scaffold(
+        backgroundColor: AppTheme.bgDark,
+        body: Center(
+          child: Icon(Icons.lock_rounded, color: AppTheme.textHint, size: 48),
+        ),
+      );
+    }
     return Scaffold(
       backgroundColor: AppTheme.bgDark,
       appBar: AppBar(

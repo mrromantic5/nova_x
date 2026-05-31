@@ -60,6 +60,15 @@ class _RewardsScreenState extends State<RewardsScreen>
     RewardFeature.business,
   ];
 
+  // These tasks cannot be claimed by a button — they auto-award only when the
+  // user genuinely performs the action in the app. Card shows Locked → Claimed.
+  static const _autoTasks = {
+    RewardTaskKey.readNews,
+    RewardTaskKey.useAi,
+    RewardTaskKey.visualSearch,
+    RewardTaskKey.completeProfile,
+  };
+
   // ── Claim / redeem ──────────────────────────────────────────────────────
   Future<void> _doClaim(String taskKey) async {
     if (_busyKey != null) return;
@@ -407,8 +416,44 @@ class _RewardsScreenState extends State<RewardsScreen>
             )
           else
             const Spacer(),
-          _claimButton(key, done, claimable, busy),
+          if (_autoTasks.contains(key))
+            _autoStatus(done)
+          else
+            _claimButton(key, done, claimable, busy),
         ]),
+      ]),
+    );
+  }
+
+  // Non-tappable status for auto-award tasks (earned by doing the real action).
+  Widget _autoStatus(bool done) {
+    if (done) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+        decoration: BoxDecoration(
+          color: AppTheme.success.withOpacity(.15),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.check_circle_rounded, color: AppTheme.success, size: 16),
+          const SizedBox(width: 5),
+          Text('Claimed',
+              style: GoogleFonts.spaceGrotesk(
+                  color: AppTheme.success, fontWeight: FontWeight.w700, fontSize: 13)),
+        ]),
+      );
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+      decoration: BoxDecoration(
+        color: AppTheme.bgElevated, borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        const Icon(Icons.lock_outline_rounded, color: AppTheme.textHint, size: 15),
+        const SizedBox(width: 5),
+        Text('Locked',
+            style: GoogleFonts.spaceGrotesk(
+                color: AppTheme.textHint, fontWeight: FontWeight.w700, fontSize: 13)),
       ]),
     );
   }

@@ -46,6 +46,7 @@ class RewardTaskKey {
   static const completeProfile  = 'complete_profile';
   static const openNotifications= 'open_notifications';
   static const visualSearch     = 'visual_search';
+  static const defaultBrowser   = 'default_browser';
   static const dailyStreak      = 'daily_streak';
 }
 

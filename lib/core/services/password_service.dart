@@ -206,6 +206,40 @@ class PasswordService {
       'onetag\\.net',
       'spotxchange\\.com',
       'smartadserver\\.com',
+      // ── Extra networks & trackers (added) ──
+      'adroll\\.com',
+      'serving-sys\\.com',
+      'yieldmo\\.com',
+      'gumgum\\.com',
+      'districtm\\.io',
+      '3lift\\.com',
+      'pubnative\\.net',
+      'mgid\\.com',
+      'revcontent\\.com',
+      'propellerads\\.com',
+      'popads\\.net',
+      'adsterra\\.com',
+      'hilltopads\\.com',
+      'exoclick\\.com',
+      'juicyads\\.com',
+      'trafficjunky\\.com',
+      'bidvertiser\\.com',
+      'chartbeat\\.com',
+      'hotjar\\.com',
+      'mixpanel\\.com',
+      'segment\\.io',
+      'amplitude\\.com',
+      'fullstory\\.com',
+      'mouseflow\\.com',
+      'securepubads\\.g\\.doubleclick\\.net',
+      'imasdk\\.googleapis\\.com',
+      'ad\\.doubleclick\\.net',
+      'static\\.doubleclick\\.net',
+      'stats\\.g\\.doubleclick\\.net',
+      'ssl\\.google-analytics\\.com',
+      'pixel\\.facebook\\.com',
+      'ads\\.tiktok\\.com',
+      'analytics\\.tiktok\\.com',
     ];
 
     return patterns.map((pattern) => ContentBlocker(
@@ -226,4 +260,30 @@ class PasswordService {
       ),
     )).toList();
   }
+
+  // ── Cosmetic ad filtering: hide common ad containers (no blank gaps) ────────
+  // Injected on page load when the ad blocker is ON. Conservative selectors to
+  // avoid breaking real content; pairs with the network-level blockers above.
+  static const String adCosmeticJS = '''
+(function(){
+  try {
+    if (document.getElementById('nx-adblock-style')) return;
+    var css = [
+      '[id^="google_ads_"]','[id^="div-gpt-ad"]','[id^="ad-"]','[id\$="-ad"]',
+      'ins.adsbygoogle','.adsbygoogle','.ad-container','.ad-wrapper','.ad-banner',
+      '.ad-slot','.ad-unit','.advert','.advertisement','.sponsored-ad',
+      '[class^="ad-"]','[class*=" ad-"]','[class\$="-ads"]','[class*="-ads-"]',
+      'iframe[src*="doubleclick"]','iframe[src*="googlesyndication"]',
+      'iframe[src*="/ads/"]','iframe[id^="google_ads"]',
+      '.taboola','.trc_related_container','[id^="taboola"]','[id^="outbrain"]',
+      '.OUTBRAIN','#disqus_ad','.adsbox','.banner-ads'
+    ].join(',') + '{display:none !important;height:0 !important;min-height:0 !important;}';
+    var s = document.createElement('style');
+    s.id = 'nx-adblock-style';
+    s.type = 'text/css';
+    s.appendChild(document.createTextNode(css));
+    (document.head || document.documentElement).appendChild(s);
+  } catch(e){}
+})();
+''';
 }

@@ -7,6 +7,7 @@
 //   • Zoom controls (text zoom slider + reset)
 
 import 'dart:convert';
+import 'package:nova_x/core/services/biometric_service.dart';
 import 'dart:io';
 import 'package:nova_x/core/services/password_service.dart';
 import 'package:nova_x/core/services/nova_shield_service.dart';
@@ -71,6 +72,7 @@ class _BrowserViewState extends State<BrowserView>
 
   // ── DevTools ──────────────────────────────────────────────────────────────
   final List<Map<String, dynamic>> _consoleLogs = [];
+  final List<Map<String, dynamic>> _networkLogs = [];
 
   // ── Zoom ──────────────────────────────────────────────────────────────────
   double _textZoom    = 100; // 50 – 200
@@ -81,27 +83,92 @@ class _BrowserViewState extends State<BrowserView>
       'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
-  // JS that patches console.* to forward logs to Flutter
+  // Forces a wide desktop layout that zooms out to fit the screen (Kiwi-style).
+  // Without this, sites with `width=device-width` ignore the desktop UA and
+  // never zoom out. We override the viewport to a fixed width and let
+  // loadWithOverviewMode scale it down to the screen.
+  static const String _desktopViewportJS = r'''
+(function(){
+  try{
+    var W = 1024;
+    var v = document.querySelector('meta[name="viewport"]');
+    if(!v){ v = document.createElement('meta'); v.setAttribute('name','viewport');
+            (document.head||document.documentElement).appendChild(v); }
+    v.setAttribute('content','width='+W+', initial-scale='+(window.screen.width/W).toFixed(3)+', user-scalable=yes');
+    document.documentElement.style.minWidth = W+'px';
+  }catch(e){}
+})();
+''';
+
+  // JS that patches console.*, window.onerror and unhandledrejection to
+  // forward everything to Flutter (so the Console tab shows real errors).
   static const String _consoleHook = r'''
 (function() {
   if (window.__novax_patched) return;
   window.__novax_patched = true;
+  function send(type, msg){
+    try {
+      window.flutter_inappwebview.callHandler(
+        'novaxLog', { type: type, msg: msg, time: new Date().toLocaleTimeString() }
+      );
+    } catch(e) {}
+  }
+  function fmt(a){
+    try { return typeof a === 'object' ? JSON.stringify(a) : String(a); }
+    catch(e){ return '[Object]'; }
+  }
   ['log','warn','error','info','debug'].forEach(function(t) {
-    var orig = console[t].bind(console);
+    var orig = console[t] ? console[t].bind(console) : function(){};
     console[t] = function() {
-      var msg = Array.prototype.slice.call(arguments).map(function(a) {
-        try {
-          return typeof a === 'object' ? JSON.stringify(a) : String(a);
-        } catch(e) { return '[Object]'; }
-      }).join(' ');
-      try {
-        window.flutter_inappwebview.callHandler(
-          'novaxLog', { type: t, msg: msg, time: new Date().toLocaleTimeString() }
-        );
-      } catch(e) {}
+      send(t, Array.prototype.slice.call(arguments).map(fmt).join(' '));
       orig.apply(console, arguments);
     };
   });
+  window.addEventListener('error', function(e){
+    send('error', (e.message || 'Error') + (e.filename ? '  ('+e.filename+':'+e.lineno+')' : ''));
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e.reason; send('error', 'Uncaught (in promise) ' + (r && r.message ? r.message : fmt(r)));
+  });
+})();
+''';
+
+  // JS that records fetch() + XHR network calls and forwards them to Flutter.
+  static const String _netHook = r'''
+(function(){
+  if (window.__novax_net) return;
+  window.__novax_net = true;
+  function send(o){
+    try { window.flutter_inappwebview.callHandler('novaxNet', o); } catch(e){}
+  }
+  if (window.fetch){
+    var of = window.fetch;
+    window.fetch = function(){
+      var args = arguments;
+      var url = (args[0] && args[0].url) ? args[0].url : String(args[0]);
+      var method = (args[1] && args[1].method) ? args[1].method : 'GET';
+      var t0 = Date.now();
+      return of.apply(this, args).then(function(res){
+        send({url:url, method:method, status:res.status, ms:(Date.now()-t0), type:'fetch'});
+        return res;
+      }).catch(function(err){
+        send({url:url, method:method, status:0, ms:(Date.now()-t0), type:'fetch', error:String(err)});
+        throw err;
+      });
+    };
+  }
+  var OX = window.XMLHttpRequest;
+  if (OX){
+    var oo = OX.prototype.open, os = OX.prototype.send;
+    OX.prototype.open = function(m,u){ this.__nx={m:m,u:u}; return oo.apply(this, arguments); };
+    OX.prototype.send = function(){
+      var self=this, t0=Date.now();
+      this.addEventListener('loadend', function(){
+        if(self.__nx) send({url:self.__nx.u, method:self.__nx.m, status:self.status, ms:(Date.now()-t0), type:'xhr'});
+      });
+      return os.apply(this, arguments);
+    };
+  }
 })();
 ''';
 
@@ -448,8 +515,30 @@ class _BrowserViewState extends State<BrowserView>
             return null;
           },
         );
-        // Visual search: load HTML with google.com base URL
-        // so fetch() is same-origin and cookies are included
+
+        c.addJavaScriptHandler(
+          handlerName: 'novaxNet',
+          callback: (args) {
+            if (args.isNotEmpty && mounted) {
+              try {
+                final d = args[0] is Map
+                    ? args[0] as Map<String, dynamic>
+                    : jsonDecode(args[0].toString()) as Map<String, dynamic>;
+                setState(() {
+                  _networkLogs.add({
+                    'url':    d['url']?.toString() ?? '',
+                    'method': d['method']?.toString() ?? 'GET',
+                    'status': d['status'] is num ? (d['status'] as num).toInt() : 0,
+                    'ms':     d['ms'] is num ? (d['ms'] as num).toInt() : 0,
+                    'type':   d['type']?.toString() ?? '',
+                  });
+                  if (_networkLogs.length > 300) _networkLogs.removeAt(0);
+                });
+              } catch (_) {}
+            }
+            return null;
+          },
+        );
         if (widget.htmlContent != null) {
           Future.delayed(const Duration(milliseconds: 80), () {
             c.loadData(
@@ -495,6 +584,9 @@ class _BrowserViewState extends State<BrowserView>
         });
         // Inject console patch as early as possible
         await c.evaluateJavascript(source: _consoleHook);
+        await c.evaluateJavascript(source: _netHook);
+        if (_desktopMode)
+          await c.evaluateJavascript(source: _desktopViewportJS);
       },
 
       onTitleChanged: (_, title) {
@@ -509,6 +601,13 @@ class _BrowserViewState extends State<BrowserView>
         if (mounted) setState(() => _currentUrl = u);
         // Re-inject console hook (catches any page that replaced window context)
         await c.evaluateJavascript(source: _consoleHook);
+        await c.evaluateJavascript(source: _netHook);
+        if (_desktopMode)
+          await c.evaluateJavascript(source: _desktopViewportJS);
+        // Ad blocker: cosmetic filtering — hide common ad containers so blocked
+        // ads don't leave blank gaps. Pairs with the network-level ContentBlockers.
+        if (_adBlockEnabled)
+          await c.evaluateJavascript(source: PasswordService.adCosmeticJS);
         // Don't save history in incognito
         if (!widget.incognito) await LocalDB.saveHistoryItem(u, _pageTitle);
         // Inject password detection
@@ -793,6 +892,8 @@ class _BrowserViewState extends State<BrowserView>
                 pageTitle:      _pageTitle,
                 consoleLogs:    _consoleLogs,
                 onClearConsole: () => setState(() => _consoleLogs.clear()),
+                networkLogs:    _networkLogs,
+                onClearNetwork: () => setState(() => _networkLogs.clear()),
               );
             },
             color: AppTheme.accentCyan,
@@ -1032,6 +1133,8 @@ class _BrowserViewState extends State<BrowserView>
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       action: SnackBarAction(label:'Fill', textColor: AppTheme.accentCyan,
         onPressed: () async {
+          final ok = await BiometricService.verify('Verify it\'s you to fill your saved password');
+          if (!ok) return;
           final js = PasswordService.autofillJS(
               creds['username'] ?? '', creds['password'] ?? '');
           await _wvc?.evaluateJavascript(source: js);

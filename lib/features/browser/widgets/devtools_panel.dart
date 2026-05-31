@@ -235,7 +235,7 @@ class _DevToolsPanelState extends State<_DevToolsPanel>
     }
   }
 
-  void _openEditor({String? url, String? content, String name = 'untitled.html'}) {
+  void _openEditor({String? url, String? content, String name = 'untitled.html', bool shared = false}) {
     CodeLang lang = kLangs[0];
     final dot = name.lastIndexOf('.');
     if (dot >= 0) {
@@ -248,6 +248,7 @@ class _DevToolsPanelState extends State<_DevToolsPanel>
         initialContent: content,
         initialLang: lang,
         initialFileName: name,
+        sharedWorkspace: shared,
       ),
     ));
   }
@@ -712,11 +713,11 @@ class _DevToolsPanelState extends State<_DevToolsPanel>
           ]),
           const SizedBox(height: 8),
           Row(children: [
-            Expanded(child: _editorChip(Icons.note_add_rounded, 'New file',
-                () => _openEditor(name: 'untitled.html'))),
+            Expanded(child: _editorChip(Icons.note_add_rounded, 'X Code Editor',
+                () => _openEditor(shared: true))),
             const SizedBox(width: 8),
             Expanded(child: _editorChip(Icons.folder_open_rounded, 'Open from device',
-                () => _openEditor(name: 'untitled.txt'))),
+                () => _openEditor(shared: true))),
           ]),
         ]),
       ),

@@ -9,6 +9,9 @@
 //   • Dynamic time-based subtitle (changes every 3 hours)
 
 import 'dart:io';
+import 'package:nova_x/core/services/rewards_entitlements.dart';
+import 'package:nova_x/core/services/browse_heartbeat.dart';
+import 'package:nova_x/features/rewards/screens/rewards_screen.dart';
 import 'dart:math';
 import 'dart:ui';
 import 'package:dio/dio.dart';
@@ -157,6 +160,8 @@ class _HomeScreenState extends State<HomeScreen>
     _loadNotifBadge();
     _loadBizBadge();
     AdvertService.init();
+    RewardsEntitlements.refresh();
+    BrowseHeartbeat.start();
     _subtitle = _buildSubtitle();
     _animCtrl = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 800));
@@ -1460,6 +1465,8 @@ class _MenuSheet extends StatelessWidget {
        'fn': () { Navigator.pop(context); onPush(const CyberScreen()); }},
       {'icon': Icons.person_off_outlined,       'label': 'Incognito',  'color': AppTheme.accentPurple,
        'fn': () { Navigator.pop(context); onIncognito(); }},
+      {'icon': Icons.monetization_on_rounded,   'label': 'Rewards',    'color': const Color(0xFFFFC83D),
+       'fn': () { Navigator.pop(context); onPush(const RewardsScreen()); }},
     ];
     return Container(
       decoration: const BoxDecoration(

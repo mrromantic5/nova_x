@@ -5,6 +5,9 @@
 // including HttpOnly cookies (which JavaScript cannot read).
 
 import 'package:flutter/material.dart';
+import 'package:nova_x/core/services/rewards_entitlements.dart';
+import 'package:nova_x/core/services/rewards_service.dart';
+import 'package:nova_x/core/widgets/feature_lock.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -283,6 +286,12 @@ class _CookieEditorScreenState extends State<CookieEditorScreen>
   // ════════════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
+    if (!RewardsEntitlements.isUnlocked(RewardFeature.cookie)) {
+      return FeatureLockScreen(
+        featureKey: RewardFeature.cookie,
+        onUnlocked: () => setState(() {}),
+      );
+    }
     final domain = _domainFromUrl(widget.url);
     return Scaffold(
       backgroundColor: AppTheme.bgDark,

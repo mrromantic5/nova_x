@@ -5,6 +5,7 @@
 // Tap → opens the business website + bumps search_count server-side.
 
 import 'dart:math';
+import 'package:nova_x/core/services/rewards_service.dart';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -152,7 +153,10 @@ class _BusinessScreenState extends State<BusinessScreen>
     }
     // Record visit on server (increments visit_count)
     final bizId = biz['id'] as int?;
-    if (bizId != null) ApiService.recordBusinessVisit(bizId);
+    if (bizId != null) {
+      ApiService.recordBusinessVisit(bizId);
+      RewardsService.trackBusiness(bizId);   // counts toward the daily reward
+    }
     Navigator.push(context, MaterialPageRoute(
         builder: (_) => BrowserView(initialQuery: url)))
         .then((_) => _load());

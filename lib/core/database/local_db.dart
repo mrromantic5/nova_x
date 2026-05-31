@@ -341,6 +341,16 @@ class LocalDB {
   static Future<void> setSavePasswordsEnabled(bool v) async =>
       _p.setBool(_kSavePasswords, v);
 
+  // ── Biometric lock for passwords (default ON) ───────────────────────────
+  static bool  getBiometricLockEnabled()   => _p.getBool('nx_biometric_lock') ?? true;
+  static Future<void> setBiometricLockEnabled(bool v) async =>
+      _p.setBool('nx_biometric_lock', v);
+
+  // ── Default-browser first-run prompt (show once) ────────────────────────
+  static bool  getAskedDefaultBrowser()    => _p.getBool('nx_asked_default_browser') ?? false;
+  static Future<void> setAskedDefaultBrowser(bool v) async =>
+      _p.setBool('nx_asked_default_browser', v);
+
   static Future<void> clearAll() async {
     await clearSearchHistory();
     await clearHistory();

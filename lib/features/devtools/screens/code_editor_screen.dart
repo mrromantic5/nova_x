@@ -22,6 +22,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:path_provider/path_provider.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../browser/screens/browser_view.dart';
+import '../../../core/services/rewards_entitlements.dart';
+import '../../../core/services/subscription_service.dart';
+import '../../premium/screens/subscription_screen.dart';
 
 class CodeLang {
   final String label;
@@ -166,6 +169,7 @@ class _CodeEditorScreenState extends State<CodeEditorScreen> {
   @override
   void initState() {
     super.initState();
+    SubscriptionService.fetchStatus();   // refresh premium (controls Save)
     if (widget.initialContent != null || widget.initialUrl != null) {
       // Single file opened from DevTools (URL fetch fills it on ready)
       final name = widget.initialFileName;
@@ -310,7 +314,28 @@ button {
   /// Persist to the shared workspace (no-op when not in shared mode).
   Future<void> _persist() async {
     if (!widget.sharedWorkspace) return;
+    if (!RewardsEntitlements.isPremium) return;   // saving is a Premium feature
     await CodeWorkspaceStore.save(_files);
+  }
+
+  // ── Premium save gate ───────────────────────────────────────────────────────
+  bool get _canSave => RewardsEntitlements.isPremium;
+
+  void _premiumUpsell() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('Saving projects is a Premium feature. You can keep writing and running code for free.',
+          style: GoogleFonts.inter(color: Colors.white, fontSize: 13)),
+      backgroundColor: AppTheme.bgElevated,
+      behavior: SnackBarBehavior.floating,
+      duration: const Duration(seconds: 5),
+      action: SnackBarAction(
+        label: 'Go Premium',
+        textColor: const Color(0xFFFFC83D),
+        onPressed: () => Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const SubscriptionScreen())),
+      ),
+    ));
   }
 
   Future<void> _onReady() async {
@@ -535,6 +560,7 @@ button {
   }
 
   Future<void> _saveProject() async {
+    if (!_canSave) { _premiumUpsell(); return; }
     await _syncActive();
     await _persist();
     try {
@@ -554,6 +580,7 @@ button {
   // Push the current file(s) into the shared X Code Editor workspace so a file
   // opened transiently (URL fetch / page source) becomes available there too.
   Future<void> _saveToWorkspace() async {
+    if (!_canSave) { _premiumUpsell(); return; }
     await _syncActive();
     try {
       for (final f in _files) {

@@ -8,6 +8,9 @@ import 'package:path_provider/path_provider.dart';
 import 'package:nova_x/core/database/local_db.dart';
 import 'package:nova_x/core/services/api_service.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
+import 'package:nova_x/core/services/subscription_service.dart';
+import 'package:nova_x/core/services/rewards_entitlements.dart';
+import 'package:nova_x/features/premium/screens/subscription_screen.dart';
 import '../../auth/screens/auth_screen.dart';
 
 const List<String> _bizCategories = [
@@ -48,6 +51,12 @@ class _ProfileScreenState extends State<ProfileScreen>
     _fadeAnim = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
     _animCtrl.forward();
     _loadAll();
+    _refreshPremium();
+  }
+
+  Future<void> _refreshPremium() async {
+    await SubscriptionService.fetchStatus();
+    if (mounted) setState(() {});
   }
 
   @override
@@ -367,6 +376,8 @@ class _ProfileScreenState extends State<ProfileScreen>
     return Column(children: [
       const SizedBox(height: 16),
       _buildAvatar(color, initial),
+      const SizedBox(height: 22),
+      _buildPremiumCard(),
       const SizedBox(height: 28),
       _section('ACCOUNT DETAILS', _buildAccountDetails()),
       const SizedBox(height: 14),
@@ -378,6 +389,51 @@ class _ProfileScreenState extends State<ProfileScreen>
       _section('NOVA X BUSINESS', _buildBizSection()),
       const SizedBox(height: 40),
     ]);
+  }
+
+  // ── Premium / Go Premium card ──────────────────────────────────
+  Widget _buildPremiumCard() {
+    final premium = RewardsEntitlements.isPremium;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: GestureDetector(
+        onTap: () => Navigator.push(context, MaterialPageRoute(
+            builder: (_) => const SubscriptionScreen())).then((_) => _refreshPremium()),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [const Color(0xFFFFC83D).withOpacity(0.16),
+                       const Color(0xFFE8A317).withOpacity(0.05)],
+              begin: Alignment.topLeft, end: Alignment.bottomRight),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: const Color(0xFFFFC83D).withOpacity(0.45)),
+          ),
+          child: Row(children: [
+            Container(
+              width: 46, height: 46,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(colors: [Color(0xFFFFC83D), Color(0xFFE8A317)])),
+              child: const Icon(Icons.workspace_premium_rounded,
+                  color: Color(0xFF1A1300), size: 24),
+            ),
+            const SizedBox(width: 14),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(premium ? 'NOVA X Premium' : 'Go Premium',
+                  style: GoogleFonts.spaceGrotesk(color: AppTheme.textPrimary,
+                      fontSize: 15.5, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 2),
+              Text(premium
+                      ? 'Active — every feature unlocked'
+                      : 'Unlock every feature · Mobile Money & Card',
+                  style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 12)),
+            ])),
+            const Icon(Icons.chevron_right_rounded, color: Color(0xFFFFC83D)),
+          ]),
+        ),
+      ),
+    );
   }
 
   Widget _section(String label, Widget child) => Padding(
@@ -428,6 +484,24 @@ class _ProfileScreenState extends State<ProfileScreen>
             color: AppTheme.danger, fontSize: 11,
             decoration: TextDecoration.underline,
             decorationColor: AppTheme.danger)),
+      ),
+    ],
+    if (RewardsEntitlements.isPremium) ...[
+      const SizedBox(height: 12),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 6),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(colors: [Color(0xFFFFC83D), Color(0xFFE8A317)]),
+          borderRadius: BorderRadius.circular(999),
+          boxShadow: [BoxShadow(color: const Color(0xFFFFC83D).withOpacity(0.45), blurRadius: 14)],
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.workspace_premium_rounded, color: Color(0xFF1A1300), size: 15),
+          const SizedBox(width: 5),
+          Text('PREMIUM', style: GoogleFonts.spaceGrotesk(
+              color: const Color(0xFF1A1300), fontSize: 11,
+              fontWeight: FontWeight.w800, letterSpacing: 0.6)),
+        ]),
       ),
     ],
     const SizedBox(height: 16),

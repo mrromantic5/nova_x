@@ -12,6 +12,8 @@ import 'dart:io';
 import 'package:nova_x/core/services/default_browser_service.dart';
 import 'package:nova_x/core/services/rewards_service.dart';
 import 'package:nova_x/core/services/rewards_entitlements.dart';
+import 'package:nova_x/core/services/subscription_service.dart';
+import 'package:nova_x/features/premium/screens/subscription_screen.dart';
 import 'package:nova_x/core/services/browse_heartbeat.dart';
 import 'package:nova_x/features/rewards/screens/rewards_screen.dart';
 import 'dart:math';
@@ -164,6 +166,7 @@ class _HomeScreenState extends State<HomeScreen>
     _loadBizBadge();
     AdvertService.init();
     RewardsEntitlements.refresh();
+    SubscriptionService.fetchStatus();   // reconcile premium / expiry on launch
     BrowseHeartbeat.start();
     WidgetsBinding.instance.addObserver(this);
     DefaultBrowserService.onIncomingUrl = _openIncomingUrl;
@@ -1548,13 +1551,17 @@ class _MenuSheet extends StatelessWidget {
        'fn': () { Navigator.pop(context); onPush(const CyberScreen()); }},
       {'icon': Icons.developer_mode_rounded,    'label': 'Dev Tools',  'color': AppTheme.accentCyan,
        'fn': () { Navigator.pop(context); onPush(const BrowserView(
-           initialQuery: 'about:blank', autoOpenDevTools: true)); }},
+           initialQuery: 'https://api.browser.t-lyfe.com.ng/devtools.html', autoOpenDevTools: true)); }},
       {'icon': Icons.code_rounded,              'label': 'X Code Editor', 'color': const Color(0xFF00D4FF),
        'fn': () { Navigator.pop(context); onPush(const CodeEditorScreen(sharedWorkspace: true)); }},
       {'icon': Icons.person_off_outlined,       'label': 'Incognito',  'color': AppTheme.accentPurple,
        'fn': () { Navigator.pop(context); onIncognito(); }},
       {'icon': Icons.monetization_on_rounded,   'label': 'Rewards',    'color': const Color(0xFFFFC83D),
        'fn': () { Navigator.pop(context); onPush(const RewardsScreen()); }},
+      {'icon': Icons.workspace_premium_rounded,
+       'label': RewardsEntitlements.isPremium ? 'Premium ✓' : 'Go Premium',
+       'color': const Color(0xFFFFC83D),
+       'fn': () { Navigator.pop(context); onPush(const SubscriptionScreen()); }},
     ];
     return Container(
       decoration: const BoxDecoration(

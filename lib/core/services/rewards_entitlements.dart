@@ -11,13 +11,28 @@ import 'rewards_service.dart';
 
 class RewardsEntitlements {
   static const _kCache = 'nx_entitlements_cache_v1';
+  static const _kPremium = 'nx_premium_active_v1';
 
   // feature_key -> expiry (UTC-naive local DateTime from server)
   static final Map<String, DateTime> _expiry = {};
   static bool _loadedFromCache = false;
+  static bool _premium = false;
+
+  // ── Premium (subscription) ───────────────────────────────────────────────
+  /// True when the user has an active premium subscription. Premium is a master
+  /// key: it unlocks every gated feature regardless of points/trials.
+  static bool get isPremium => _premium;
+
+  static Future<void> setPremium(bool value) async {
+    _premium = value;
+    try {
+      (await SharedPreferences.getInstance()).setBool(_kPremium, value);
+    } catch (_) {}
+  }
 
   // ── Reads (used by feature gates) ────────────────────────────────────────
   static bool isUnlocked(String featureKey) {
+    if (_premium) return true;           // premium unlocks everything
     final e = _expiry[featureKey];
     return e != null && e.isAfter(DateTime.now());
   }
@@ -49,7 +64,9 @@ class RewardsEntitlements {
     if (_loadedFromCache) return;
     _loadedFromCache = true;
     try {
-      final raw = (await SharedPreferences.getInstance()).getString(_kCache);
+      final sp = await SharedPreferences.getInstance();
+      _premium = sp.getBool(_kPremium) ?? false;
+      final raw = sp.getString(_kCache);
       if (raw == null) return;
       final m = jsonDecode(raw) as Map<String, dynamic>;
       _expiry.clear();

@@ -81,6 +81,9 @@ class _HomeScreenState extends State<HomeScreen>
   List<NewsArticle>                    _news             = [];
   final Map<String, List<NewsArticle>> _newsCache        = {};
   bool _loadingNews = false;
+  int  _newsPage    = 1;
+  bool _loadingMore = false;
+  bool _hasMoreNews = true;
 
   // Search UI state
   List<String> _suggestions = [];
@@ -179,6 +182,7 @@ class _HomeScreenState extends State<HomeScreen>
     _loadAll();
     _initSpeech();
     _fetchNews();
+    _scrollCtrl.addListener(_onScroll);
     _searchHist = LocalDB.getSearchHistory();
     _searchCtrl.addListener(_onSearchChanged);
     _searchFocus.addListener(_onFocusChanged);
@@ -188,6 +192,7 @@ class _HomeScreenState extends State<HomeScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     BrowseHeartbeat.stop();
+    _scrollCtrl.removeListener(_onScroll);
     _searchCtrl.removeListener(_onSearchChanged);
     _searchFocus.removeListener(_onFocusChanged);
     _searchCtrl.dispose();
@@ -349,8 +354,8 @@ class _HomeScreenState extends State<HomeScreen>
       setState(() => _news = _newsCache[_selectedCategory]!);
       return;
     }
-    setState(() => _loadingNews = true);
-    final articles = await NewsService.fetchNews(_selectedCategory);
+    setState(() { _loadingNews = true; _newsPage = 1; _hasMoreNews = true; });
+    final articles = await NewsService.fetchNews(_selectedCategory, page: 1);
     if (mounted) {
       _newsCache[_selectedCategory] = articles;
       setState(() { _news = articles; _loadingNews = false; });
@@ -359,7 +364,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _switchCategory(String cat) {
     if (_selectedCategory == cat) return;
-    setState(() { _selectedCategory = cat; _news = []; });
+    setState(() { _selectedCategory = cat; _news = []; _hasMoreNews = true; _newsPage = 1; });
     _fetchNews();
   }
 
@@ -689,16 +694,8 @@ class _HomeScreenState extends State<HomeScreen>
               Container(decoration: const BoxDecoration(gradient: AppTheme.bgGradient)));
     }
 
-    return Positioned.fill(child: Stack(children: [
-      Positioned.fill(child: layer),
-      Container(decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter, end: Alignment.bottomCenter,
-          colors: [Color(0xD507101E), Color(0x9507101E), Color(0xEE07101E)],
-          stops: [0.0, 0.45, 1.0],
-        ),
-      )),
-    ]));
+    // Full-opacity background image (no dimming overlay) — Brave-style.
+    return Positioned.fill(child: layer);
   }
 
   // ── Header: [logo + NOVA X] on left, [AI, Profile, Settings] on right ─────
@@ -1129,6 +1126,35 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ── News section ───────────────────────────────────────────────────────────
+  // ── Infinite scroll ────────────────────────────────────────────────────────
+  void _onScroll() {
+    if (!_scrollCtrl.hasClients) return;
+    final pos = _scrollCtrl.position;
+    if (pos.pixels >= pos.maxScrollExtent - 600 &&
+        !_loadingMore && !_loadingNews && _hasMoreNews && _news.isNotEmpty) {
+      _loadMoreNews();
+    }
+  }
+
+  Future<void> _loadMoreNews() async {
+    setState(() => _loadingMore = true);
+    final next = _newsPage + 1;
+    final more = await NewsService.fetchNews(_selectedCategory, page: next);
+    if (!mounted) return;
+    final seen  = _news.map((a) => a.url).toSet();
+    final fresh = more.where((a) => a.url.isNotEmpty && !seen.contains(a.url)).toList();
+    setState(() {
+      _newsPage = next;
+      if (fresh.isEmpty) {
+        _hasMoreNews = false;
+      } else {
+        _news = [..._news, ...fresh];
+        _newsCache[_selectedCategory] = _news;
+      }
+      _loadingMore = false;
+    });
+  }
+
   Widget _buildNewsSection() => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
@@ -1227,25 +1253,30 @@ class _HomeScreenState extends State<HomeScreen>
       ),
     );
 
+    final color = _catColor[_selectedCategory] ?? AppTheme.accentCyan;
     return Column(children: [
-      if (_news.first.imageUrl.isNotEmpty) _heroNewsCard(_news.first),
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: Column(children: List.generate(
-          _news.length > 1 ? _news.length - 1 : 0,
-          (i) {
-            final a = _news[i + 1];
-            return Column(children: [
-              if (i == 0 && _news.first.imageUrl.isNotEmpty) const SizedBox(height: 4),
-              _compactNewsCard(a),
-              if (i < _news.length - 2)
-                Divider(color: AppTheme.divider.withOpacity(0.6), height: 1),
-            ]);
-          },
-        )),
+      // Every article rendered as a full-width hero card.
+      ..._news.map(_heroNewsCard),
+      if (_loadingMore) Padding(
+        padding: const EdgeInsets.symmetric(vertical: 18),
+        child: Center(child: CircularProgressIndicator(color: color, strokeWidth: 2)),
+      ),
+      if (!_hasMoreNews && _news.isNotEmpty) Padding(
+        padding: const EdgeInsets.symmetric(vertical: 18),
+        child: Text("You're all caught up",
+            style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 12)),
       ),
     ]);
   }
+
+  Widget _heroPlaceholder(Color color) => Container(
+    height: 200, width: double.infinity,
+    decoration: BoxDecoration(gradient: LinearGradient(
+      begin: Alignment.topLeft, end: Alignment.bottomRight,
+      colors: [color.withOpacity(0.30), AppTheme.bgElevated])),
+    child: Center(child: Icon(Icons.article_rounded,
+        color: color.withOpacity(0.6), size: 44)),
+  );
 
   Widget _heroNewsCard(NewsArticle a) {
     final color = _catColor[_selectedCategory] ?? AppTheme.accentCyan;
@@ -1265,11 +1296,10 @@ class _HomeScreenState extends State<HomeScreen>
             Stack(children: [
               SizedBox(
                 height: 200, width: double.infinity,
-                child: Image.network(a.imageUrl, fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(height: 200,
-                    color: AppTheme.bgElevated,
-                    child: Center(child: Icon(Icons.image_not_supported_outlined,
-                        color: AppTheme.textHint, size: 36)))),
+                child: a.imageUrl.isNotEmpty
+                  ? Image.network(a.imageUrl, fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _heroPlaceholder(color))
+                  : _heroPlaceholder(color),
               ),
               Positioned.fill(child: Container(decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -1322,40 +1352,6 @@ class _HomeScreenState extends State<HomeScreen>
       ),
     );
   }
-
-  Widget _compactNewsCard(NewsArticle a) => GestureDetector(
-    onTap: () { RewardsService.earn(RewardTaskKey.readNews); _go(a.url); },
-    child: Padding(
-      padding: const EdgeInsets.symmetric(vertical: 13),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Flexible(child: Text(a.source, style: GoogleFonts.inter(
-                color: _catColor[_selectedCategory] ?? AppTheme.accentCyan,
-                fontSize: 10.5, fontWeight: FontWeight.w600),
-                maxLines: 1, overflow: TextOverflow.ellipsis)),
-            if (a.timeAgo.isNotEmpty)
-              Text('  ·  ${a.timeAgo}', style: GoogleFonts.inter(
-                  color: AppTheme.textHint, fontSize: 10.5)),
-          ]),
-          const SizedBox(height: 5),
-          Text(a.title, style: GoogleFonts.inter(
-              color: AppTheme.textPrimary, fontSize: 13.5,
-              fontWeight: FontWeight.w500, height: 1.4),
-              maxLines: 2, overflow: TextOverflow.ellipsis),
-        ])),
-        if (a.imageUrl.isNotEmpty) ...[
-          const SizedBox(width: 14),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Image.network(a.imageUrl, width: 78, height: 62,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const SizedBox.shrink()),
-          ),
-        ],
-      ]),
-    ),
-  );
 
   // ── Bottom nav ─────────────────────────────────────────────────────────────
   Widget _buildBottomNav() => Container(

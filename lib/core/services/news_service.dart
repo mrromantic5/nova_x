@@ -191,11 +191,11 @@ class NewsService {
   }
 
   // ── 4. HackerNews (always works, tech only) ───────────────────────────────
-  static Future<List<NewsArticle>> _fromHackerNews() async {
+  static Future<List<NewsArticle>> _fromHackerNews({int offset = 0, int count = 8}) async {
     try {
       final top = await _dio
           .get('https://hacker-news.firebaseio.com/v0/topstories.json');
-      final ids = ((top.data as List).take(8)).toList();
+      final ids = ((top.data as List).skip(offset).take(count)).toList();
       final articles = <NewsArticle>[];
       for (final id in ids) {
         try {
@@ -224,21 +224,33 @@ class NewsService {
   // ── Public API ─────────────────────────────────────────────────────────────
   /// Returns up to 10 articles for [category].
   /// Tries all APIs in cascade order; falls back gracefully.
-  static Future<List<NewsArticle>> fetchNews(String category) async {
-    // 1. GNews — best: images + global coverage + 100 req/day
-    var articles = await _fromGNews(category);
-    if (articles.isNotEmpty) return articles;
+  static Future<List<NewsArticle>> fetchNews(String category, {int page = 1}) async {
+    if (page <= 1) {
+      // 1. GNews — best: images + global coverage + 100 req/day
+      var articles = await _fromGNews(category);
+      if (articles.isNotEmpty) return articles;
 
-    // 2. SerpAPI Google News — good images, 100 req/month
-    articles = await _fromSerpApi(category);
-    if (articles.isNotEmpty) return articles;
+      // 2. SerpAPI Google News — good images, 100 req/month
+      articles = await _fromSerpApi(category);
+      if (articles.isNotEmpty) return articles;
 
-    // 3. NewsAPI — dev mode only
-    articles = await _fromNewsApi(category);
-    if (articles.isNotEmpty) return articles;
+      // 3. NewsAPI — dev mode only
+      articles = await _fromNewsApi(category);
+      if (articles.isNotEmpty) return articles;
 
-    // 4. HackerNews — always available, no images
-    return _fromHackerNews();
+      // 4. HackerNews — always available, no images
+      return _fromHackerNews();
+    }
+
+    // ── Load-more pages (caller de-duplicates by URL) ───────────────────────
+    // page 2: a second image-rich source for variety
+    if (page == 2) {
+      final serp = await _fromSerpApi(category);
+      if (serp.isNotEmpty) return serp;
+      return _fromHackerNews(offset: 8, count: 12);
+    }
+    // page 3+: page deeper through HackerNews (always-available backfill)
+    return _fromHackerNews(offset: (page - 2) * 12 + 8, count: 12);
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────

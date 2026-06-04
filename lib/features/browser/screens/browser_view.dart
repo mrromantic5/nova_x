@@ -22,6 +22,8 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:nova_x/core/database/local_db.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
+import 'package:nova_x/core/services/tabs_service.dart';
+import 'package:nova_x/features/browser/screens/tabs_screen.dart';
 import '../widgets/devtools_panel.dart';
 
 class BrowserView extends StatefulWidget {
@@ -37,12 +39,16 @@ class BrowserView extends StatefulWidget {
   /// (used by the "Dev Tools" shortcut in the home more-menu).
   final bool autoOpenDevTools;
 
+  /// Identifies which persisted tab this view represents (Tabs switcher).
+  final String? tabId;
+
   const BrowserView({
     super.key,
     required this.initialQuery,
     this.incognito = false,
     this.htmlContent,
     this.autoOpenDevTools = false,
+    this.tabId,
   });
 
   @override
@@ -52,6 +58,7 @@ class BrowserView extends StatefulWidget {
 class _BrowserViewState extends State<BrowserView>
     with SingleTickerProviderStateMixin {
   InAppWebViewController? _wvc;
+  String? _tabId;
   final TextEditingController _urlCtrl = TextEditingController();
 
   bool   _editing     = false;
@@ -275,6 +282,8 @@ class _BrowserViewState extends State<BrowserView>
   @override
   void initState() {
     super.initState();
+    _tabId = widget.tabId;
+    TabsService.instance.ensureLoaded();
     final initial = _buildUrl(widget.initialQuery);
     _currentUrl   = initial;
     _urlCtrl.text = _hostLabel(initial);
@@ -748,6 +757,7 @@ class _BrowserViewState extends State<BrowserView>
         _canBack    = await c.canGoBack();
         _canForward = await c.canGoForward();
         if (mounted) setState(() => _currentUrl = u);
+        _syncTab();
         // Re-inject console hook (catches any page that replaced window context)
         await c.evaluateJavascript(source: _consoleHook);
         await c.evaluateJavascript(source: _netHook);
@@ -885,6 +895,64 @@ class _BrowserViewState extends State<BrowserView>
   }
 
   // ── Bottom nav ─────────────────────────────────────────────────────────────
+  // ── Tabs ─────────────────────────────────────────────────────────────────
+  void _syncTab() {
+    if (widget.incognito) return;          // never persist private tabs
+    if (_currentUrl.isEmpty) return;
+    final svc = TabsService.instance;
+    if (_tabId == null) {
+      _tabId = svc.openTab(_currentUrl, title: _pageTitle).id;
+    } else {
+      svc.updateTab(_tabId!, url: _currentUrl, title: _pageTitle);
+    }
+  }
+
+  Future<void> _openTabs() async {
+    _syncTab();
+    final r = await Navigator.push<TabsResult>(
+        context, MaterialPageRoute(builder: (_) => const TabsScreen()));
+    if (!mounted || r == null) return;
+    if (r.newTab) {
+      Navigator.pushReplacement(context, MaterialPageRoute(
+          builder: (_) => BrowserView(
+              initialQuery: 'https://www.google.com', incognito: r.incognito)));
+    } else if (r.url != null && r.url!.isNotEmpty) {
+      Navigator.pushReplacement(context, MaterialPageRoute(
+          builder: (_) => BrowserView(initialQuery: r.url!, tabId: r.tabId)));
+    }
+  }
+
+  Widget _tabsBtn() {
+    return ListenableBuilder(
+      listenable: TabsService.instance,
+      builder: (_, __) {
+        final n = TabsService.instance.tabs.length;
+        final c = widget.incognito ? const Color(0xFF9988CC) : AppTheme.textSecondary;
+        return GestureDetector(
+          onTap: _openTabs,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Container(
+                width: 20, height: 20,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  border: Border.all(color: c, width: 2),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text('$n',
+                    style: GoogleFonts.inter(
+                        color: c, fontSize: 10, fontWeight: FontWeight.w700)),
+              ),
+              const SizedBox(height: 2),
+              Text('Tabs', style: GoogleFonts.inter(color: c, fontSize: 9)),
+            ]),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildBottomBar() {
     return Container(
       color: widget.incognito ? const Color(0xFF120F2A) : AppTheme.bgDark,
@@ -901,6 +969,7 @@ class _BrowserViewState extends State<BrowserView>
           }, enabled: _canForward),
           _bBtn(Icons.home_rounded, 'Home', () => Navigator.pop(context)),
           _bBtn(Icons.refresh_rounded, 'Reload', () => _wvc?.reload()),
+          _tabsBtn(),
           _bBtn(
             _isBookmarked
                 ? Icons.bookmark_rounded

@@ -22,6 +22,9 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:nova_x/core/database/local_db.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:nova_x/core/services/offline_service.dart';
+import 'package:nova_x/features/offline/screens/offline_pages_screen.dart';
 import 'package:nova_x/core/services/tabs_service.dart';
 import 'package:nova_x/features/browser/screens/tabs_screen.dart';
 import '../widgets/devtools_panel.dart';
@@ -352,6 +355,45 @@ class _BrowserViewState extends State<BrowserView>
   void _copyUrl() {
     Clipboard.setData(ClipboardData(text: _currentUrl));
     _snack('URL copied');
+  }
+
+  // ── Save page for offline reading (Chrome-style MHTML archive) ─────────────
+  Future<void> _savePageOffline() async {
+    if (widget.incognito) {
+      _snack('Offline save is disabled in incognito mode');
+      return;
+    }
+    final c = _wvc;
+    if (c == null || _currentUrl.isEmpty) {
+      _snack('Page is not ready yet');
+      return;
+    }
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      final offDir = Directory('${docs.path}/offline');
+      if (!await offDir.exists()) await offDir.create(recursive: true);
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      final path = '${offDir.path}/page_$stamp.mht';
+      _snack('Saving page for offline…');
+      final saved = await c.saveWebArchive(filePath: path, autoname: false);
+      if (saved == null) {
+        _snack('Could not save this page offline');
+        return;
+      }
+      await OfflineService.instance.ensureLoaded();
+      await OfflineService.instance.add(OfflinePage(
+        id: '$stamp',
+        url: _currentUrl,
+        title: _pageTitle.isNotEmpty && _pageTitle != 'Loading…'
+            ? _pageTitle
+            : _hostLabel(_currentUrl),
+        path: saved,
+        savedAt: stamp,
+      ));
+      if (mounted) _snack('✓ Saved for offline');
+    } catch (_) {
+      if (mounted) _snack('Offline save failed');
+    }
   }
 
   void _snack(String msg) {
@@ -1067,6 +1109,17 @@ class _BrowserViewState extends State<BrowserView>
 
           // Menu items
           _menuTile(Icons.copy_rounded, 'Copy URL', _copyUrl),
+
+          _menuTile(Icons.save_alt_rounded, 'Save page offline', () {
+            Navigator.pop(context);
+            _savePageOffline();
+          }),
+
+          _menuTile(Icons.offline_pin_rounded, 'Offline pages', () {
+            Navigator.pop(context);
+            Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const OfflinePagesScreen()));
+          }),
 
           _menuTile(Icons.refresh_rounded, 'Reload page', () {
             Navigator.pop(context); _wvc?.reload();

@@ -29,6 +29,8 @@ import 'package:nova_x/features/cyber/screens/cyber_screen.dart';
 import 'package:nova_x/features/shield/screens/nova_shield_screen.dart';
 import 'package:nova_x/core/services/nova_shield_service.dart';
 import 'package:nova_x/features/map/screens/nova_map_screen.dart';
+import 'package:nova_x/features/map/map_premium_gate.dart';
+import 'package:nova_x/features/offline/screens/offline_pages_screen.dart';
 import 'package:nova_x/core/services/api_service.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
 import 'package:nova_x/core/services/news_service.dart';
@@ -694,8 +696,18 @@ class _HomeScreenState extends State<HomeScreen>
               Container(decoration: const BoxDecoration(gradient: AppTheme.bgGradient)));
     }
 
-    // Full-opacity background image (no dimming overlay) — Brave-style.
-    return Positioned.fill(child: layer);
+    // Background image with a light scrim (top + bottom) so the header,
+    // greeting, section labels and news stay readable without hiding the image.
+    return Positioned.fill(child: Stack(children: [
+      Positioned.fill(child: layer),
+      Positioned.fill(child: Container(decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter, end: Alignment.bottomCenter,
+          colors: [Color(0x8C07101E), Color(0x1A07101E), Color(0x9907101E)],
+          stops: [0.0, 0.42, 1.0],
+        ),
+      ))),
+    ]));
   }
 
   // ── Header: [logo + NOVA X] on left, [AI, Profile, Settings] on right ─────
@@ -1081,7 +1093,7 @@ class _HomeScreenState extends State<HomeScreen>
        'fn': () => _push(const AiAssistantScreen())},
       {'icon': Icons.map_rounded,              'label': 'Map',
        'color': const Color(0xFF00C853),
-       'fn': () => _push(const NovaMapScreen())},
+       'fn': () => MapGate.open(context)},
       {'icon': Icons.monetization_on_rounded,  'label': 'Rewards',
        'color': const Color(0xFFFFC83D),
        'fn': () => _push(const RewardsScreen())},
@@ -1539,6 +1551,8 @@ class _MenuSheet extends StatelessWidget {
        'fn': () { Navigator.pop(context); onPush(const ProfileScreen()); }},
       {'icon': Icons.settings_outlined,        'label': 'Settings',    'color': AppTheme.primaryBlue,
        'fn': () { Navigator.pop(context); onPush(const SettingsScreen()); }},
+      {'icon': Icons.offline_pin_rounded,       'label': 'Offline Pages','color': const Color(0xFF00C853),
+       'fn': () { Navigator.pop(context); onPush(const OfflinePagesScreen()); }},
       {'icon': Icons.map_rounded,               'label': 'NOVA Map',   'color': const Color(0xFF00C853),
        'fn': () { Navigator.pop(context); onPush(const NovaMapScreen()); }},
       {'icon': Icons.shield_rounded,            'label': 'NOVA Shield','color': AppTheme.accentCyan,

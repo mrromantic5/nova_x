@@ -11,6 +11,9 @@ import 'package:speech_to_text/speech_to_text.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:nova_x/core/services/map_service.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
+import 'package:nova_x/core/services/rewards_entitlements.dart';
+import 'package:nova_x/features/premium/screens/subscription_screen.dart';
+import 'package:nova_x/features/map/map_premium_gate.dart';
 
 // ── Map styles ────────────────────────────────────────────────────────────────
 const String _kDarkStyle = '''[
@@ -106,6 +109,7 @@ class _NovaMapScreenState extends State<NovaMapScreen>
     super.initState();
     _fabAnim = AnimationController(vsync: this,
         duration: const Duration(milliseconds: 400));
+    if (!RewardsEntitlements.isPremium) return; // gated — skip map/location/API init
     _initSpeech();
     _ipLocateFirst();
   }
@@ -355,6 +359,29 @@ class _NovaMapScreenState extends State<NovaMapScreen>
   // ══════════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
+    if (!RewardsEntitlements.isPremium) {
+      return Scaffold(
+        backgroundColor: AppTheme.bgDark,
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          iconTheme: const IconThemeData(color: AppTheme.textPrimary),
+          title: Text('NOVA Map',
+              style: GoogleFonts.spaceGrotesk(
+                  color: AppTheme.textPrimary, fontWeight: FontWeight.w700)),
+        ),
+        body: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: MapPaywallContent(
+              onUpgrade: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => const SubscriptionScreen())),
+              onMaybeLater: () => Navigator.of(context).maybePop(),
+            ),
+          ),
+        ),
+      );
+    }
     return Scaffold(
       backgroundColor: _darkMode ? AppTheme.bgDark : const Color(0xFFF1F5F9),
       body: Stack(children: [

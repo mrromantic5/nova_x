@@ -145,6 +145,25 @@ class _BusinessScreenState extends State<BusinessScreen>
     });
   }
 
+  // Server-backed search (on submit): bumps global search_count and surfaces
+  // the matched business even if the local list was stale/empty.
+  Future<void> _serverSearch() async {
+    final q = _searchCtrl.text.trim();
+    if (q.isEmpty) return;
+    final hit = await ApiService.searchBusiness(q);
+    if (!mounted || hit == null) return;
+    setState(() {
+      final id = hit['id'];
+      final i = _all.indexWhere((b) => b['id'] == id);
+      if (i >= 0) {
+        _all[i] = hit;
+      } else {
+        _all = [hit, ..._all];
+      }
+      _filtered = _applyFilter(_all, _selectedCat, _query);
+    });
+  }
+
   void _openBusiness(Map<String, dynamic> biz) {
     final url = ((biz['website'] as String?) ?? '').trim();
     if (url.isEmpty) {
@@ -284,6 +303,8 @@ class _BusinessScreenState extends State<BusinessScreen>
               Expanded(
                 child: TextField(
                   controller: _searchCtrl,
+                  textInputAction: TextInputAction.search,
+                  onSubmitted: (_) => _serverSearch(),
                   style: GoogleFonts.inter(color: Colors.white, fontSize: 14),
                   decoration: InputDecoration(
                     border: InputBorder.none,
@@ -398,8 +419,8 @@ class _BusinessScreenState extends State<BusinessScreen>
       return const Center(child: CircularProgressIndicator(
           color: AppTheme.accentCyan, strokeWidth: 2));
     }
-    if (_all.isEmpty) return _buildEmptyAll();
-    if (_filtered.isEmpty) return _buildEmptyFilter();
+    if (_all.isEmpty) return _refreshable(_buildEmptyAll());
+    if (_filtered.isEmpty) return _refreshable(_buildEmptyFilter());
 
     return RefreshIndicator(
       onRefresh: _load,
@@ -655,6 +676,25 @@ class _BusinessScreenState extends State<BusinessScreen>
             ]),
           ])),
         ]),
+      ),
+    );
+  }
+
+  // Wraps content so it can be pulled-to-refresh even when the list is empty
+  // (otherwise an empty directory is a dead end with no way to reload).
+  Widget _refreshable(Widget child) {
+    return RefreshIndicator(
+      onRefresh: _load,
+      color: AppTheme.accentCyan,
+      backgroundColor: AppTheme.bgCard,
+      child: LayoutBuilder(
+        builder: (_, c) => SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: c.maxHeight),
+            child: child,
+          ),
+        ),
       ),
     );
   }

@@ -146,6 +146,108 @@ class _ProfileScreenState extends State<ProfileScreen>
     }
   }
 
+  // ── Delete account (permanent) ─────────────────────────────────
+  Future<void> _deleteAccount() async {
+    // Step 1 — explain exactly what will be removed.
+    final first = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppTheme.bgCard,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(children: [
+          const Icon(Icons.warning_amber_rounded, color: AppTheme.danger, size: 22),
+          const SizedBox(width: 8),
+          Expanded(child: Text('Delete account?', style: GoogleFonts.spaceGrotesk(
+              color: AppTheme.textPrimary, fontWeight: FontWeight.bold))),
+        ]),
+        content: Text(
+          'This permanently deletes your NOVA X account and everything tied to it:\n\n'
+          '•  Profile and login\n'
+          '•  Your business listings\n'
+          '•  Bookmarks synced to your account\n'
+          '•  Reward points, streaks and unlocks\n'
+          '•  Premium subscription record\n\n'
+          'This cannot be undone.',
+          style: GoogleFonts.inter(color: AppTheme.textSecondary, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('Cancel', style: GoogleFonts.inter(color: AppTheme.textHint)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('Continue', style: GoogleFonts.inter(
+                color: AppTheme.danger, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+    if (first != true) return;
+
+    // Step 2 — final, deliberate confirmation.
+    final second = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppTheme.bgCard,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text('Are you absolutely sure?', style: GoogleFonts.spaceGrotesk(
+            color: AppTheme.textPrimary, fontWeight: FontWeight.bold)),
+        content: Text(
+          'There is no way to recover your account or data after this.',
+          style: GoogleFonts.inter(color: AppTheme.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('Keep my account',
+                style: GoogleFonts.inter(color: AppTheme.textHint)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('Delete forever', style: GoogleFonts.inter(
+                color: AppTheme.danger, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+    if (second != true) return;
+
+    // Show a blocking progress dialog while the request runs.
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const Center(
+          child: CircularProgressIndicator(color: AppTheme.danger),
+        ),
+      );
+    }
+
+    final deleted = await ApiService.deleteAccount();
+
+    // Dismiss the progress dialog.
+    if (mounted) Navigator.of(context, rootNavigator: true).pop();
+
+    if (deleted) {
+      // Clear any local app data tied to the account, then leave.
+      try {
+        await LocalDb.clearAll();
+        await LocalDb.clearAllBusinesses();
+      } catch (_) {}
+      await ApiService.clearSession();
+      if (mounted) {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => const AuthScreen(showGuestOption: false)),
+          (route) => false,
+        );
+      }
+    } else {
+      _snack('Could not delete your account. Please try again.');
+    }
+  }
+
   // ── Business management ────────────────────────────────────────
   void _showAddBusiness() {
     if (_myBiz.length >= 2) {
@@ -387,9 +489,60 @@ class _ProfileScreenState extends State<ProfileScreen>
       _section('YOUR STATS', _buildStats()),
       const SizedBox(height: 28),
       _section('NOVA X BUSINESS', _buildBizSection()),
+      const SizedBox(height: 28),
+      _section('DANGER ZONE', _buildDangerZone()),
       const SizedBox(height: 40),
     ]);
   }
+
+  // ── Danger zone: permanent account deletion ────────────────────
+  Widget _buildDangerZone() => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 20),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppTheme.danger.withOpacity(0.06),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppTheme.danger.withOpacity(0.35)),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Icon(Icons.delete_forever_rounded,
+                color: AppTheme.danger, size: 20),
+            const SizedBox(width: 8),
+            Text('Delete account', style: GoogleFonts.spaceGrotesk(
+                color: AppTheme.textPrimary,
+                fontSize: 15, fontWeight: FontWeight.w700)),
+          ]),
+          const SizedBox(height: 8),
+          Text(
+            'Permanently delete your account and all associated data. '
+            'This action cannot be undone.',
+            style: GoogleFonts.inter(
+                color: AppTheme.textSecondary, fontSize: 12.5, height: 1.45),
+          ),
+          const SizedBox(height: 14),
+          GestureDetector(
+            onTap: _deleteAccount,
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 13),
+              decoration: BoxDecoration(
+                color: AppTheme.danger,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Center(
+                child: Text('Delete My Account', style: GoogleFonts.spaceGrotesk(
+                    color: Colors.white,
+                    fontSize: 14, fontWeight: FontWeight.w700)),
+              ),
+            ),
+          ),
+        ]),
+      ),
+    ]),
+  );
 
   // ── Premium / Go Premium card ──────────────────────────────────
   Widget _buildPremiumCard() {

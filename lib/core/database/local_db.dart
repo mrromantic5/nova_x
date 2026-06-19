@@ -23,6 +23,7 @@ class LocalDB {
   static const _kSearchEngine   = 'nx_search_engine';
   static const _kBackground     = 'nx_background_image';   // NEW
   static const _kSpeedDial      = 'nx_speed_dial';         // NEW
+  static const _kSpeedDialRemoved = 'nx_speed_dial_removed'; // NEW — removed shortcuts kept for re-adding
   static const _kAdBlock        = 'nx_ad_block_enabled';
   static const _kSavePasswords  = 'nx_save_passwords_enabled';
 
@@ -109,7 +110,28 @@ class LocalDB {
   static Future<void> saveSpeedDial(List<Map<String, dynamic>> sites) async =>
       _p.setStringList(_kSpeedDial, sites.map(jsonEncode).toList());
 
-  static Future<void> resetSpeedDial() async => _p.remove(_kSpeedDial);
+  static Future<void> resetSpeedDial() async {
+    await _p.remove(_kSpeedDial);
+    await _p.remove(_kSpeedDialRemoved);
+  }
+
+  // ── Removed Quick Access shortcuts ─────────────────────────────────────────
+  // When a user taps × on a shortcut it is parked here so it can be offered
+  // back under "Recommended" and re-added later, instead of being lost.
+  static List<Map<String, dynamic>> getRemovedSpeedDial() {
+    final raw = _p.getStringList(_kSpeedDialRemoved);
+    if (raw == null) return [];
+    final out = <Map<String, dynamic>>[];
+    for (final s in raw) {
+      try {
+        out.add(jsonDecode(s) as Map<String, dynamic>);
+      } catch (_) {}
+    }
+    return out;
+  }
+
+  static Future<void> saveRemovedSpeedDial(List<Map<String, dynamic>> sites) async =>
+      _p.setStringList(_kSpeedDialRemoved, sites.map(jsonEncode).toList());
 
   /// Extracts a clean domain from any URL — used when adding a custom site.
   static String extractDomain(String url) {

@@ -47,7 +47,7 @@ jobs:
       - name: Regenerate Android Platform Files
         run: |
           rm -rf android
-          flutter create --platforms android --org com.example --project-name nova_x .
+          flutter create --platforms android --org com.tlyfe --project-name nova_x .
           echo "✓ android/ regenerated"
 
       - name: Copy google-services.json
@@ -245,8 +245,8 @@ jobs:
       # ── App Shortcuts — long-press home screen icon ───────────────────────────
       - name: Write MainActivity.kt with shortcut support
         run: |
-          mkdir -p android/app/src/main/kotlin/com/example/nova_x
-          echo "cGFja2FnZSBjb20uZXhhbXBsZS5ub3ZhX3gKaW1wb3J0IGlvLmZsdXR0ZXIuZW1iZWRkaW5nLmFuZHJvaWQuRmx1dHRlckFjdGl2aXR5CmltcG9ydCBpby5mbHV0dGVyLmVtYmVkZGluZy5lbmdpbmUuRmx1dHRlckVuZ2luZQppbXBvcnQgaW8uZmx1dHRlci5wbHVnaW4uY29tbW9uLk1ldGhvZENoYW5uZWwKY2xhc3MgTWFpbkFjdGl2aXR5IDogRmx1dHRlckFjdGl2aXR5KCkgewogICAgY29tcGFuaW9uIG9iamVjdCB7IHByaXZhdGUgY29uc3QgdmFsIENIID0gImNvbS5leGFtcGxlLm5vdmFfeC9zaG9ydGN1dHMiIH0KICAgIHByaXZhdGUgdmFyIHBlbmRpbmcgPSAiIgogICAgb3ZlcnJpZGUgZnVuIGNvbmZpZ3VyZUZsdXR0ZXJFbmdpbmUoZmx1dHRlckVuZ2luZTogRmx1dHRlckVuZ2luZSkgewogICAgICAgIHN1cGVyLmNvbmZpZ3VyZUZsdXR0ZXJFbmdpbmUoZmx1dHRlckVuZ2luZSkKICAgICAgICBwZW5kaW5nID0gaW50ZW50Py5hY3Rpb24/LnRha2VJZiB7IGl0LmNvbnRhaW5zKCJub3ZhX3guIikgfSA/OiAiIgogICAgICAgIE1ldGhvZENoYW5uZWwoZmx1dHRlckVuZ2luZS5kYXJ0RXhlY3V0b3IuYmluYXJ5TWVzc2VuZ2VyLCBDSCkKICAgICAgICAgICAgLnNldE1ldGhvZENhbGxIYW5kbGVyIHsgY2FsbCwgcmVzdWx0IC0+CiAgICAgICAgICAgICAgICBpZiAoY2FsbC5tZXRob2QgPT0gImdldFNob3J0Y3V0IikgewogICAgICAgICAgICAgICAgICAgIHJlc3VsdC5zdWNjZXNzKHBlbmRpbmcpOyBwZW5kaW5nID0gIiIKICAgICAgICAgICAgICAgIH0gZWxzZSByZXN1bHQubm90SW1wbGVtZW50ZWQoKQogICAgICAgICAgICB9CiAgICB9CiAgICBvdmVycmlkZSBmdW4gb25OZXdJbnRlbnQoaW50ZW50OiBhbmRyb2lkLmNvbnRlbnQuSW50ZW50KSB7CiAgICAgICAgc3VwZXIub25OZXdJbnRlbnQoaW50ZW50KTsgc2V0SW50ZW50KGludGVudCkKICAgICAgICBwZW5kaW5nID0gaW50ZW50LmFjdGlvbj8udGFrZUlmIHsgaXQuY29udGFpbnMoIm5vdmFfeC4iKSB9ID86ICIiCiAgICB9Cn0=" | base64 -d > android/app/src/main/kotlin/com/example/nova_x/MainActivity.kt
+          mkdir -p android/app/src/main/kotlin/com/tlyfe/nova_x
+          echo "cGFja2FnZSBjb20udGx5ZmUubm92YV94CmltcG9ydCBpby5mbHV0dGVyLmVtYmVkZGluZy5hbmRyb2lkLkZsdXR0ZXJBY3Rpdml0eQppbXBvcnQgaW8uZmx1dHRlci5lbWJlZGRpbmcuZW5naW5lLkZsdXR0ZXJFbmdpbmUKaW1wb3J0IGlvLmZsdXR0ZXIucGx1Z2luLmNvbW1vbi5NZXRob2RDaGFubmVsCmNsYXNzIE1haW5BY3Rpdml0eSA6IEZsdXR0ZXJBY3Rpdml0eSgpIHsKICAgIGNvbXBhbmlvbiBvYmplY3QgeyBwcml2YXRlIGNvbnN0IHZhbCBDSCA9ICJjb20udGx5ZmUubm92YV94L3Nob3J0Y3V0cyIgfQogICAgcHJpdmF0ZSB2YXIgcGVuZGluZyA9ICIiCiAgICBvdmVycmlkZSBmdW4gY29uZmlndXJlRmx1dHRlckVuZ2luZShmbHV0dGVyRW5naW5lOiBGbHV0dGVyRW5naW5lKSB7CiAgICAgICAgc3VwZXIuY29uZmlndXJlRmx1dHRlckVuZ2luZShmbHV0dGVyRW5naW5lKQogICAgICAgIHBlbmRpbmcgPSBpbnRlbnQ/LmFjdGlvbj8udGFrZUlmIHsgaXQuY29udGFpbnMoIm5vdmFfeC4iKSB9ID86ICIiCiAgICAgICAgTWV0aG9kQ2hhbm5lbChmbHV0dGVyRW5naW5lLmRhcnRFeGVjdXRvci5iaW5hcnlNZXNzZW5nZXIsIENIKQogICAgICAgICAgICAuc2V0TWV0aG9kQ2FsbEhhbmRsZXIgeyBjYWxsLCByZXN1bHQgLT4KICAgICAgICAgICAgICAgIGlmIChjYWxsLm1ldGhvZCA9PSAiZ2V0U2hvcnRjdXQiKSB7CiAgICAgICAgICAgICAgICAgICAgcmVzdWx0LnN1Y2Nlc3MocGVuZGluZyk7IHBlbmRpbmcgPSAiIgogICAgICAgICAgICAgICAgfSBlbHNlIHJlc3VsdC5ub3RJbXBsZW1lbnRlZCgpCiAgICAgICAgICAgIH0KICAgIH0KICAgIG92ZXJyaWRlIGZ1biBvbk5ld0ludGVudChpbnRlbnQ6IGFuZHJvaWQuY29udGVudC5JbnRlbnQpIHsKICAgICAgICBzdXBlci5vbk5ld0ludGVudChpbnRlbnQpOyBzZXRJbnRlbnQoaW50ZW50KQogICAgICAgIHBlbmRpbmcgPSBpbnRlbnQuYWN0aW9uPy50YWtlSWYgeyBpdC5jb250YWlucygibm92YV94LiIpIH0gPzogIiIKICAgIH0KfQo=" | base64 -d > android/app/src/main/kotlin/com/tlyfe/nova_x/MainActivity.kt
           echo "✓ MainActivity.kt written"
 
       - name: Create shortcut resources
@@ -263,25 +263,25 @@ jobs:
                   android:icon="@drawable/ic_sc_new_tab"
                   android:shortcutShortLabel="@string/sc_new_tab_s"
                   android:shortcutLongLabel="@string/sc_new_tab_l">
-                <intent android:action="com.example.nova_x.NEW_TAB"
-                    android:targetPackage="com.example.nova_x"
-                    android:targetClass="com.example.nova_x.MainActivity"/>
+                <intent android:action="com.tlyfe.nova_x.NEW_TAB"
+                    android:targetPackage="com.tlyfe.nova_x"
+                    android:targetClass="com.tlyfe.nova_x.MainActivity"/>
               </shortcut>
               <shortcut android:shortcutId="private_tab" android:enabled="true"
                   android:icon="@drawable/ic_sc_private"
                   android:shortcutShortLabel="@string/sc_private_s"
                   android:shortcutLongLabel="@string/sc_private_l">
-                <intent android:action="com.example.nova_x.PRIVATE_TAB"
-                    android:targetPackage="com.example.nova_x"
-                    android:targetClass="com.example.nova_x.MainActivity"/>
+                <intent android:action="com.tlyfe.nova_x.PRIVATE_TAB"
+                    android:targetPackage="com.tlyfe.nova_x"
+                    android:targetClass="com.tlyfe.nova_x.MainActivity"/>
               </shortcut>
               <shortcut android:shortcutId="business" android:enabled="true"
                   android:icon="@drawable/ic_sc_business"
                   android:shortcutShortLabel="@string/sc_business_s"
                   android:shortcutLongLabel="@string/sc_business_l">
-                <intent android:action="com.example.nova_x.BUSINESS"
-                    android:targetPackage="com.example.nova_x"
-                    android:targetClass="com.example.nova_x.MainActivity"/>
+                <intent android:action="com.tlyfe.nova_x.BUSINESS"
+                    android:targetPackage="com.tlyfe.nova_x"
+                    android:targetClass="com.tlyfe.nova_x.MainActivity"/>
               </shortcut>
             </shortcuts>
           ''').strip())
@@ -322,15 +322,15 @@ jobs:
                 '        <meta-data android:name="android.app.shortcuts" '
                 'android:resource="@xml/shortcuts"/>\n'
                 '        <intent-filter>\n'
-                '            <action android:name="com.example.nova_x.NEW_TAB"/>\n'
+                '            <action android:name="com.tlyfe.nova_x.NEW_TAB"/>\n'
                 '            <category android:name="android.intent.category.DEFAULT"/>\n'
                 '        </intent-filter>\n'
                 '        <intent-filter>\n'
-                '            <action android:name="com.example.nova_x.PRIVATE_TAB"/>\n'
+                '            <action android:name="com.tlyfe.nova_x.PRIVATE_TAB"/>\n'
                 '            <category android:name="android.intent.category.DEFAULT"/>\n'
                 '        </intent-filter>\n'
                 '        <intent-filter>\n'
-                '            <action android:name="com.example.nova_x.BUSINESS"/>\n'
+                '            <action android:name="com.tlyfe.nova_x.BUSINESS"/>\n'
                 '            <category android:name="android.intent.category.DEFAULT"/>\n'
                 '        </intent-filter>\n'
                 '    </activity>'
@@ -381,6 +381,98 @@ jobs:
             grep -n "compileSdk\|minSdk\|targetSdk" "$f" || true
           done
           echo "geolocator_android patch done"
+
+      # ── Release signing ───────────────────────────────────────────────────
+      # Google Play rejects debug-signed bundles. This step:
+      #   1. Decodes the upload keystore from the KEYSTORE_BASE64 secret.
+      #   2. Writes android/key.properties from the signing secrets.
+      #   3. Rewrites the release buildType in app/build.gradle to use the
+      #      release signingConfig (replacing the debug fallback).
+      # Required GitHub repo secrets (Settings → Secrets and variables → Actions):
+      #   KEYSTORE_BASE64   — base64 of your upload-keystore.jks
+      #   KEYSTORE_PASSWORD — the keystore (store) password
+      #   KEY_PASSWORD      — the key password
+      #   KEY_ALIAS         — the key alias (e.g. upload)
+      - name: Configure release signing
+        env:
+          KEYSTORE_BASE64:   ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD:      ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS:         ${{ secrets.KEY_ALIAS }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::KEYSTORE_BASE64 secret is missing. Add your signing secrets in repo Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
+          # 1. Decode keystore into the app module.
+          echo "$KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks
+          echo "✓ keystore decoded ($(wc -c < android/app/upload-keystore.jks) bytes)"
+
+          # 2. key.properties (storeFile is relative to the app module).
+          cat > android/key.properties << EOF
+          storePassword=$KEYSTORE_PASSWORD
+          keyPassword=$KEY_PASSWORD
+          keyAlias=$KEY_ALIAS
+          storeFile=upload-keystore.jks
+          EOF
+          echo "✓ key.properties written"
+
+          # 3. Inject signingConfigs + point release at it, using Python for a
+          #    safe, idempotent rewrite of app/build.gradle.
+          python3 << 'PYEOF'
+          import re
+          p = 'android/app/build.gradle'
+          s = open(p).read()
+
+          # Load key.properties at the top of the android {} via a loader block,
+          # inserted right before "android {".
+          if 'keystoreProperties' not in s:
+              loader = (
+                  "def keystoreProperties = new Properties()\n"
+                  "def keystorePropertiesFile = rootProject.file('key.properties')\n"
+                  "if (keystorePropertiesFile.exists()) {\n"
+                  "    keystorePropertiesFile.withReader('UTF-8') { r -> keystoreProperties.load(r) }\n"
+                  "}\n\n"
+              )
+              s = s.replace("android {", loader + "android {", 1)
+
+          # Add a signingConfigs { release {...} } block just before buildTypes {.
+          if 'signingConfigs {' not in s:
+              sign_block = (
+                  "    signingConfigs {\n"
+                  "        release {\n"
+                  "            keyAlias keystoreProperties['keyAlias']\n"
+                  "            keyPassword keystoreProperties['keyPassword']\n"
+                  "            storeFile keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null\n"
+                  "            storePassword keystoreProperties['storePassword']\n"
+                  "        }\n"
+                  "    }\n\n"
+                  "    buildTypes {"
+              )
+              s = s.replace("buildTypes {", sign_block, 1)
+
+          # Point the release buildType at the release signingConfig.
+          # Handle both Groovy ("signingConfig signingConfigs.debug") and the
+          # occasional "=" form, and only fall back to release if a debug ref
+          # is present.
+          if 'signingConfigs.debug' in s:
+              s = s.replace("signingConfig = signingConfigs.debug",
+                            "signingConfig = signingConfigs.release")
+              s = s.replace("signingConfig signingConfigs.debug",
+                            "signingConfig signingConfigs.release")
+          elif 'signingConfig' not in s.split('buildTypes {',1)[1].split('}',1)[0]:
+              # No signingConfig line inside release at all — add one.
+              s = re.sub(r"(release\s*\{)",
+                         r"\1\n            signingConfig signingConfigs.release",
+                         s, count=1)
+
+          open(p, 'w').write(s)
+          print("✓ build.gradle updated for release signing")
+          PYEOF
+
+          echo "--- release buildType ---"
+          grep -A6 "buildTypes {" android/app/build.gradle
 
       - name: Build Release APK
         run: flutter build apk --release

@@ -232,8 +232,8 @@ class _ProfileScreenState extends State<ProfileScreen>
     if (deleted) {
       // Clear any local app data tied to the account, then leave.
       try {
-        await LocalDb.clearAll();
-        await LocalDb.clearAllBusinesses();
+        await LocalDB.clearAll();
+        await LocalDB.clearAllBusinesses();
       } catch (_) {}
       await ApiService.clearSession();
       if (mounted) {

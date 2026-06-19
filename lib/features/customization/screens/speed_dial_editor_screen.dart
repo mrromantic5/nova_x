@@ -26,6 +26,7 @@ class _SpeedDialEditorScreenState extends State<SpeedDialEditorScreen>
   late Animation<double>   _fadeAnim;
 
   List<Map<String, dynamic>> _current = [];
+  List<Map<String, dynamic>> _removed = [];
 
   static const List<Map<String, dynamic>> _recommended = [
     {'name': 'Reddit',         'url': 'https://reddit.com',         'domain': 'reddit.com'},
@@ -58,6 +59,7 @@ class _SpeedDialEditorScreenState extends State<SpeedDialEditorScreen>
     _fadeAnim = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
     _animCtrl.forward();
     _current = LocalDB.getSpeedDial();
+    _removed = LocalDB.getRemovedSpeedDial();
   }
 
   @override
@@ -75,17 +77,29 @@ class _SpeedDialEditorScreenState extends State<SpeedDialEditorScreen>
       return;
     }
     HapticFeedback.lightImpact();
-    setState(() => _current.add(Map<String, dynamic>.from(site)));
+    setState(() {
+      _current.add(Map<String, dynamic>.from(site));
+      // If it was a previously-removed shortcut, take it out of the parked list.
+      _removed.removeWhere((s) => s['url'] == site['url']);
+    });
     await LocalDB.saveSpeedDial(_current);
+    await LocalDB.saveRemovedSpeedDial(_removed);
     _snack('Added "${site['name']}" ✓');
   }
 
   Future<void> _removeSite(int index) async {
     HapticFeedback.lightImpact();
     final removed = _current[index];
-    setState(() => _current.removeAt(index));
+    setState(() {
+      _current.removeAt(index);
+      // Park it under Recommended so it can be re-added later.
+      final url = removed['url'];
+      _removed.removeWhere((s) => s['url'] == url); // avoid duplicates
+      _removed.insert(0, Map<String, dynamic>.from(removed));
+    });
     await LocalDB.saveSpeedDial(_current);
-    _snack('Removed "${removed['name']}"');
+    await LocalDB.saveRemovedSpeedDial(_removed);
+    _snack('Moved "${removed['name']}" to Recommended');
   }
 
   Future<void> _resetAll() async {
@@ -109,7 +123,10 @@ class _SpeedDialEditorScreenState extends State<SpeedDialEditorScreen>
     );
     if (ok == true) {
       await LocalDB.resetSpeedDial();
-      setState(() => _current = LocalDB.getSpeedDial());
+      setState(() {
+        _current = LocalDB.getSpeedDial();
+        _removed = LocalDB.getRemovedSpeedDial();
+      });
       _snack('Quick Access reset to defaults');
     }
   }
@@ -241,9 +258,19 @@ class _SpeedDialEditorScreenState extends State<SpeedDialEditorScreen>
         onUnlocked: () => setState(() {}),
       );
     }
-    final unaddedRecommended = _recommended
-        .where((s) => !_isAlreadyAdded(s['url'] as String))
-        .toList();
+    // Recommended = previously-removed shortcuts (shown first so they're easy
+    // to find again) + the static suggestions, de-duplicated by URL, excluding
+    // anything already in Quick Access.
+    final seen = <String>{};
+    final unaddedRecommended = <Map<String, dynamic>>[];
+    for (final s in [..._removed, ..._recommended]) {
+      final url = s['url'] as String? ?? '';
+      if (url.isEmpty) continue;
+      if (_isAlreadyAdded(url)) continue;
+      if (seen.contains(url)) continue;
+      seen.add(url);
+      unaddedRecommended.add(Map<String, dynamic>.from(s));
+    }
 
     return Scaffold(
       backgroundColor: AppTheme.bgDark,

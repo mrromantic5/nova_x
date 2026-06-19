@@ -9,7 +9,7 @@ import 'package:flutter/services.dart';
 import 'rewards_service.dart';
 
 class DefaultBrowserService {
-  static const _ch = MethodChannel('com.example.nova_x/default_browser');
+  static const _ch = MethodChannel('com.tlyfe.nova_x/default_browser');
 
   /// Callback the app sets to open a URL that arrived while running.
   static void Function(String url)? onIncomingUrl;

@@ -144,6 +144,23 @@ class ApiService {
     await clearSession();
   }
 
+  // ── Delete account (permanent) ───────────────────────────────
+  // Wipes the account + all associated data server-side, then clears
+  // the local session. Returns true only when the server confirms.
+  static Future<bool> deleteAccount() async {
+    bool ok = false;
+    try {
+      final res = await _dio.delete('/api/v1/sync/account', options: await _authOpts());
+      final data = res.data;
+      ok = (data is Map && data['status'] == 'success');
+    } catch (_) {
+      ok = false;
+    }
+    // Always clear the local session if the server confirmed deletion.
+    if (ok) await clearSession();
+    return ok;
+  }
+
   // ── Register FCM token with server ──────────────────────────
   static Future<void> registerFcmToken(String fcmToken) async {
     final loggedIn = await isLoggedIn();

@@ -17,7 +17,7 @@ import 'features/browser/screens/browser_view.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-const _shortcutChannel = MethodChannel('com.example.nova_x/shortcuts');
+const _shortcutChannel = MethodChannel('com.tlyfe.nova_x/shortcuts');
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -118,17 +118,17 @@ class _NovaXAppState extends State<NovaXApp> {
       final nav = navigatorKey.currentState;
       if (nav == null) return;
       switch (action) {
-        case 'com.example.nova_x.NEW_TAB':
+        case 'com.tlyfe.nova_x.NEW_TAB':
           nav.push(MaterialPageRoute(
               builder: (_) =>
                   const BrowserView(initialQuery: 'https://www.google.com')));
           break;
-        case 'com.example.nova_x.PRIVATE_TAB':
+        case 'com.tlyfe.nova_x.PRIVATE_TAB':
           nav.push(MaterialPageRoute(
               builder: (_) => const BrowserView(
                   initialQuery: 'https://www.google.com', incognito: true)));
           break;
-        case 'com.example.nova_x.BUSINESS':
+        case 'com.tlyfe.nova_x.BUSINESS':
           nav.push(
               MaterialPageRoute(builder: (_) => const BusinessScreen()));
           break;

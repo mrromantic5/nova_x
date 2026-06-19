@@ -1,4 +1,4 @@
-package com.example.nova_x
+package com.tlyfe.nova_x
 
 import android.app.role.RoleManager
 import android.content.Context
@@ -17,7 +17,7 @@ import io.flutter.plugin.common.MethodChannel
  */
 class MainActivity : FlutterFragmentActivity() {
 
-    private val channelName = "com.example.nova_x/default_browser"
+    private val channelName = "com.tlyfe.nova_x/default_browser"
     private var channel: MethodChannel? = null
     private var pendingUrl: String? = null
 

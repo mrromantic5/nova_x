@@ -406,8 +406,19 @@ jobs:
           fi
 
           # 1. Decode keystore into the app module.
-          echo "$KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks
-          echo "✓ keystore decoded ($(wc -c < android/app/upload-keystore.jks) bytes)"
+          #    Strip ALL whitespace/newlines first — pasting the base64 secret
+          #    on mobile often introduces line breaks, which break `base64 -d`.
+          printf '%s' "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > android/app/upload-keystore.jks 2>/dev/null || {
+            echo "::error::Failed to decode KEYSTORE_BASE64. The secret value is not valid base64 — re-copy it as ONE continuous line with no spaces or line breaks, then update the secret and re-run."
+            exit 1
+          }
+
+          KS_SIZE=$(wc -c < android/app/upload-keystore.jks)
+          if [ "$KS_SIZE" -lt 1000 ]; then
+            echo "::error::Decoded keystore is only ${KS_SIZE} bytes — that's too small to be valid. The KEYSTORE_BASE64 secret is likely truncated or corrupted. Re-copy the FULL base64 string (everything between BEGIN and END) and update the secret."
+            exit 1
+          fi
+          echo "✓ keystore decoded (${KS_SIZE} bytes)"
 
           # 2. key.properties (storeFile is relative to the app module).
           cat > android/key.properties << EOF

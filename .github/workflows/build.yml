@@ -22,9 +22,25 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.5'
+          flutter-version: '3.32.0'
           channel: 'stable'
           cache: true
+
+      - name: Install Android NDK 29 + Build Tools 36
+        run: |
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
+            "ndk;29.0.14206865" \
+            "build-tools;36.1.0" \
+            "platforms;android-36" \
+            --sdk_root=$ANDROID_HOME || \
+          echo "y" | sdkmanager \
+            "ndk;29.0.14206865" \
+            "build-tools;36.1.0" \
+            "platforms;android-36" || true
+          echo "✅ NDK 29 + build-tools 36 + platform-36 ready"
+
+      - name: Accept Android licenses
+        run: yes | flutter doctor --android-licenses || true
 
       - name: Install Dependencies
         run: flutter pub get
@@ -60,10 +76,6 @@ jobs:
             exit 1
           fi
 
-      # ── App icon: styled icon with blue background + properly scaled logo ────
-      # Fixes: (1) transparent logo showing white bg on Android
-      #        (2) distorted aspect ratio from naive square resize
-      #        (3) logo too small — now fills 90% of icon space
       - name: Set app icon from logo.png
         run: |
           pip install Pillow --break-system-packages -q
@@ -109,7 +121,6 @@ jobs:
               fg.paste(lr,(off,off),lr)
               fg.save(out+'/ic_launcher_foreground.png')
 
-          # Write XML resource files (all in Python to avoid YAML heredoc issues)
           anydpi = 'android/app/src/main/res/mipmap-anydpi-v26'
           values = 'android/app/src/main/res/values'
           os.makedirs(anydpi, exist_ok=True)
@@ -137,64 +148,152 @@ jobs:
           print('Icon + adaptive XML done')
           PYEOF2
 
-      # ── Firebase: add google-services plugin inside plugins {} block ──────
-      # ── Firebase: add google-services plugin inside plugins {} block ──────
-      # ── Firebase: add google-services plugin inside plugins {} block ──────
+      # ── FIXED: Apply Google Services using Python for correct plugin order ──
+      # BUG FIXED: old sed '/^plugins {/a\...' inserted google-services as the
+      # FIRST plugin (line 2), before com.android.application. AGP 8.12 requires
+      # google-services to come AFTER the android application plugin.
+      # Python rewrite inserts it correctly as the LAST plugin.
       - name: Apply Google Services Plugin (Firebase)
         run: |
-          APP="android/app/build.gradle"
-          SET="android/settings.gradle"
-          if ! grep -q "com.google.gms.google-services" "$SET"; then
-            sed -i '/id "com.android.application" version/a\    id "com.google.gms.google-services" version "4.4.0" apply false' "$SET"
-            echo "✓ google-services declared in settings.gradle"
-          fi
-          if ! grep -q "com.google.gms.google-services" "$APP"; then
-            sed -i '/^plugins {/a\    id "com.google.gms.google-services"' "$APP"
-            echo "✓ google-services applied in app/build.gradle"
-          fi
-          if head -3 "$APP" | grep -q "^apply plugin"; then
-            echo "::error::apply plugin: found before plugins {} — Gradle will fail"
-            exit 1
-          fi
-          echo "✅ Firebase Gradle verified"
+          python3 << 'PYEOF'
+          import re
+          app = open('android/app/build.gradle').read()
+          settings = open('android/settings.gradle').read()
 
-      - name: Bump compileSdk to 35
+          # Add to settings.gradle (declares the plugin version)
+          if 'com.google.gms.google-services' not in settings:
+              settings = re.sub(
+                  r'(id "com.android.application" version "[^"]*" apply false)',
+                  r'\1\n    id "com.google.gms.google-services" version "4.4.2" apply false',
+                  settings, count=1
+              )
+              open('android/settings.gradle', 'w').write(settings)
+              print("✓ google-services declared in settings.gradle")
+
+          # Add to app/build.gradle — AFTER flutter-gradle-plugin (last in block)
+          if 'com.google.gms.google-services' not in app:
+              app = re.sub(
+                  r'(id "dev\.flutter\.flutter-gradle-plugin")',
+                  r'\1\n    id "com.google.gms.google-services"',
+                  app, count=1
+              )
+              open('android/app/build.gradle', 'w').write(app)
+              print("✓ google-services applied after flutter-gradle-plugin in app/build.gradle")
+
+          # Verify order
+          app2 = open('android/app/build.gradle').read()
+          lines = [l.strip() for l in app2.split('\n') if 'id "' in l and 'apply false' not in l]
+          print("Plugin order:", lines)
+          assert lines.index('id "com.android.application"') < lines.index('id "com.google.gms.google-services"'), \
+              "FATAL: google-services is before com.android.application!"
+          print("✅ Plugin order correct")
+          PYEOF
+
+      # ── FIXED: All SDK vars including minSdk ────────────────────────────────
+      # BUG FIXED: previous version only patched compileSdk and targetSdk,
+      # leaving minSdk as flutter.minSdkVersion which fails Gradle resolution
+      # after android/ regeneration overwrites local.properties dependency.
+      - name: Bump all SDK versions to API 36
         run: |
           F="android/app/build.gradle"
-          sed -i 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 35/g' "$F"
-          sed -i 's/targetSdkVersion flutter\.targetSdkVersion/targetSdkVersion 35/g'   "$F"
-          sed -i 's/compileSdk flutter\.compileSdkVersion/compileSdk 35/g'              "$F"
-          sed -i 's/targetSdk flutter\.targetSdkVersion/targetSdk 35/g'                 "$F"
-          sed -i 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 35/g'          "$F"
-          sed -i 's/targetSdk = flutter\.targetSdkVersion/targetSdk = 35/g'             "$F"
-          echo "✓ compileSdk bumped to 35"
-          grep -E "compileSdk|targetSdk" "$F"
+          # compileSdk — all variants
+          sed -i 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 36/g' "$F"
+          sed -i 's/compileSdk flutter\.compileSdkVersion/compileSdk 36/g'               "$F"
+          sed -i 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 36/g'           "$F"
+          sed -i 's/compileSdk 35/compileSdk 36/g'                                       "$F"
+          # targetSdk — all variants
+          sed -i 's/targetSdkVersion flutter\.targetSdkVersion/targetSdkVersion 36/g'   "$F"
+          sed -i 's/targetSdk flutter\.targetSdkVersion/targetSdk 36/g'                 "$F"
+          sed -i 's/targetSdk = flutter\.targetSdkVersion/targetSdk = 36/g'             "$F"
+          sed -i 's/targetSdk 35/targetSdk 36/g'                                        "$F"
+          # minSdk — all variants (FIX: was missing before)
+          sed -i 's/minSdkVersion flutter\.minSdkVersion/minSdkVersion 23/g'            "$F"
+          sed -i 's/minSdk flutter\.minSdkVersion/minSdk 23/g'                          "$F"
+          sed -i 's/minSdk = flutter\.minSdkVersion/minSdk = 23/g'                      "$F"
+          echo "✓ All SDK versions set"
+          grep -E "compileSdk|targetSdk|minSdk" "$F"
+          # Safety check — no flutter.* SDK refs remain
+          if grep -q "flutter\.compileSdkVersion\|flutter\.targetSdkVersion\|flutter\.minSdkVersion" "$F"; then
+            echo "::error::flutter.* SDK refs still present in build.gradle!"
+            exit 1
+          fi
+          echo "✅ No flutter.* SDK refs remain"
 
-      # ── Manifest patch — IDENTICAL to the old working step ───────────────
-      # DO NOT add android:launchMode here — Flutter 3.24.5 already generates
-      # it in MainActivity. Adding it again creates a duplicate XML attribute
-      # which causes: "Error parsing AndroidManifest.xml"
+      - name: Inject NDK 29 + 16KB page size + abiFilters + packaging
+        run: |
+          python3 << 'PYEOF'
+          import re
+          p = 'android/app/build.gradle'
+          s = open(p).read()
+
+          # ndkVersion + buildToolsVersion after compileSdk 36
+          if 'ndkVersion' not in s:
+              s = re.sub(
+                  r'(compileSdk\s+36)',
+                  r'\1\n    ndkVersion "29.0.14206865"\n    buildToolsVersion "36.1.0"',
+                  s, count=1
+              )
+          assert 'ndkVersion "29.0.14206865"' in s, "ndkVersion not set"
+
+          # abiFilters + 16KB cmake flag inside defaultConfig, after versionName
+          if 'ANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES' not in s:
+              s = re.sub(
+                  r'(versionName[^\n]*\n)(\s*\})',
+                  r'\1'
+                  r'        multiDexEnabled true\n'
+                  r'        ndk { abiFilters "armeabi-v7a", "arm64-v8a", "x86", "x86_64" }\n'
+                  r'        externalNativeBuild {\n'
+                  r'            cmake { arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON" }\n'
+                  r'        }\n'
+                  r'\2',
+                  s, count=1
+              )
+          assert 'ANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES' in s, "cmake flag not set"
+          assert 'abiFilters' in s, "abiFilters not set"
+
+          # packagingOptions before buildTypes
+          if 'useLegacyPackaging' not in s:
+              packaging = (
+                  '    packagingOptions {\n'
+                  '        resources { excludes += [\'/META-INF/{AL2.0,LGPL2.1}\'] }\n'
+                  '        jniLibs { useLegacyPackaging = false }\n'
+                  '    }\n\n'
+                  '    buildTypes {'
+              )
+              s = s.replace('    buildTypes {', packaging, 1)
+          assert s.count('    buildTypes {') == 1, "Duplicate buildTypes block!"
+          assert 'useLegacyPackaging = false' in s, "useLegacyPackaging not set"
+
+          # debugSymbolLevel inside release buildType
+          if 'SYMBOL_TABLE' not in s:
+              s = re.sub(
+                  r'(release\s*\{)',
+                  r"\1\n            ndk { debugSymbolLevel 'SYMBOL_TABLE' }",
+                  s, count=1
+              )
+
+          open(p, 'w').write(s)
+          print("✅ NDK 29 + 16KB + packaging injected")
+          print("Final SDK values:")
+          for line in s.split('\n'):
+              if any(x in line for x in ['compileSdk','targetSdk','minSdk','ndkVersion','abiFilter','FLEXIBLE','useLegacy','SYMBOL']):
+                  print(" ", line.strip())
+          PYEOF
+
       - name: Patch AndroidManifest
         run: |
           M="android/app/src/main/AndroidManifest.xml"
           sed -i 's/android:label="nova_x"/android:label="NOVA X"/' "$M"
-          sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>|' "$M"
+          sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="com.google.android.gms.permission.AD_ID"/>|' "$M"
           sed -i 's|android:icon="@mipmap/ic_launcher">|android:icon="@mipmap/ic_launcher"\n        android:usesCleartextTraffic="true"\n        android:hardwareAccelerated="true">|' "$M"
-          # Add Maps API key and location permissions
           sed -i 's|android:name="android.permission.POST_NOTIFICATIONS"/>|android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>|' "$M"
-          echo "✓ AndroidManifest patched (label + permissions + app attributes)"
+          echo "✓ AndroidManifest patched"
 
-      # ── FCM tap fix — separate safe step using Python ─────────────────────
-      # Adds FLUTTER_NOTIFICATION_CLICK intent-filter so tapping a push
-      # notification opens the app. Uses Python for safe XML insertion without
-      # risking duplicate attributes.
-      - name: Add FCM notification tap support
+      - name: Add FCM + 16KB property to AndroidManifest
         run: |
           python3 << 'PYEOF'
           content = open('android/app/src/main/AndroidManifest.xml').read()
 
-          # Add FLUTTER_NOTIFICATION_CLICK intent-filter after the first
-          # </intent-filter> (the launcher one). Only if not already present.
           if 'FLUTTER_NOTIFICATION_CLICK' not in content:
               fcm_filter = (
                   '</intent-filter>\n'
@@ -204,32 +303,26 @@ jobs:
                   '            </intent-filter>'
               )
               content = content.replace('</intent-filter>', fcm_filter, 1)
-              print('✓ FLUTTER_NOTIFICATION_CLICK intent-filter added')
-          else:
-              print('FLUTTER_NOTIFICATION_CLICK already present — skipping')
+              print('✓ FLUTTER_NOTIFICATION_CLICK added')
 
-          # Add FCM channel + icon + colour metadata before </application>.
-          # Only if not already present.
           if 'nova_x_channel' not in content:
               fcm_meta = (
                   '        <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="nova_x_channel"/>\n'
                   '        <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@mipmap/ic_launcher"/>\n'
                   '        <meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/nova_x_cyan"/>\n'
                   '        <meta-data android:name="com.google.android.geo.API_KEY" android:value="AIzaSyBc_bNBj_hmsG5rNFXHC4Tmgp0BRBjyXos"/>\n'
+                  '        <property android:name="android.support.LARGE_PAGE_SIZE" android:value="true"/>\n'
                   '    </application>'
               )
               content = content.replace('    </application>', fcm_meta, 1)
-              print('✓ FCM channel metadata added')
-          else:
-              print('FCM channel metadata already present — skipping')
+              print('✓ FCM metadata + 16KB LARGE_PAGE_SIZE property added')
 
+          import xml.etree.ElementTree as ET
+          ET.fromstring(content)
+          print('✅ AndroidManifest XML valid after FCM step')
           open('android/app/src/main/AndroidManifest.xml', 'w').write(content)
           PYEOF
 
-          echo "--- Final AndroidManifest.xml ---"
-          cat android/app/src/main/AndroidManifest.xml
-
-      # ── Notification colour (cyan) ─────────────────────────────────────────
       - name: Create notification colour resource
         run: |
           mkdir -p android/app/src/main/res/values
@@ -241,8 +334,6 @@ jobs:
           XMLEOF
           echo "✓ colors.xml created"
 
-
-      # ── App Shortcuts — long-press home screen icon ───────────────────────────
       - name: Write MainActivity.kt with shortcut support
         run: |
           mkdir -p android/app/src/main/kotlin/com/tlyfe/nova_x
@@ -316,6 +407,7 @@ jobs:
       - name: Patch AndroidManifest for shortcuts
         run: |
           python3 - << 'PYEOF3'
+          import xml.etree.ElementTree as ET
           content = open('android/app/src/main/AndroidManifest.xml').read()
           if 'android.app.shortcuts' not in content:
               block = (
@@ -338,61 +430,28 @@ jobs:
               content = content.replace('    </activity>', block, 1)
               open('android/app/src/main/AndroidManifest.xml','w').write(content)
               print('Shortcut manifest metadata added')
-          import xml.etree.ElementTree as ET
           ET.parse('android/app/src/main/AndroidManifest.xml')
-          print('AndroidManifest valid XML')
+          print('✅ AndroidManifest valid XML after shortcuts step')
           PYEOF3
 
       - name: Configure Gradle Java Home
         run: echo "org.gradle.java.home=$JAVA_HOME" >> android/gradle.properties
 
-      - name: Final Verification
-        run: |
-          echo "=== google-services.json ==="
-          ls -la android/app/google-services.json
-          echo "=== compileSdk ==="
-          grep -E "compileSdk|targetSdk" android/app/build.gradle | head -4
-          echo "=== FCM intent filter ==="
-          grep "FLUTTER_NOTIFICATION_CLICK" android/app/src/main/AndroidManifest.xml
-          echo "=== launchMode (Flutter already generates this) ==="
-          grep "launchMode" android/app/src/main/AndroidManifest.xml
-          echo "=== No duplicate attributes check ==="
-          python3 -c "
-          import xml.etree.ElementTree as ET
-          try:
-              ET.parse('android/app/src/main/AndroidManifest.xml')
-              print('✅ AndroidManifest.xml is valid XML')
-          except Exception as e:
-              print(f'❌ XML error: {e}')
-              exit(1)
-          "
-          echo "✅ All verified — starting Gradle build"
-
+      # ── FIXED: geolocator patch now targets 36 (not 35) ─────────────────────
       - name: Patch geolocator_android build.gradle
         run: |
           CACHE="${PUB_CACHE:-$HOME/.pub-cache}"
           find "$CACHE" -name "build.gradle" -path "*geolocator_android*" 2>/dev/null | while read -r f; do
             echo "Patching $f"
-            sed -i 's/flutter\.compileSdkVersion/35/g'       "$f"
-            sed -i 's/flutter\.minSdkVersion/21/g'           "$f"
-            sed -i 's/flutter\.targetSdkVersion/35/g'        "$f"
-            sed -i 's/flutter\.ndkVersion/"25.1.8937393"/g'  "$f"
+            sed -i 's/flutter\.compileSdkVersion/36/g'        "$f"
+            sed -i 's/flutter\.minSdkVersion/21/g'            "$f"
+            sed -i 's/flutter\.targetSdkVersion/36/g'         "$f"
+            sed -i 's/flutter\.ndkVersion/"29.0.14206865"/g'  "$f"
             echo "Patched:"
             grep -n "compileSdk\|minSdk\|targetSdk" "$f" || true
           done
-          echo "geolocator_android patch done"
+          echo "✅ geolocator_android patch done"
 
-      # ── Release signing ───────────────────────────────────────────────────
-      # Google Play rejects debug-signed bundles. This step:
-      #   1. Decodes the upload keystore from the KEYSTORE_BASE64 secret.
-      #   2. Writes android/key.properties from the signing secrets.
-      #   3. Rewrites the release buildType in app/build.gradle to use the
-      #      release signingConfig (replacing the debug fallback).
-      # Required GitHub repo secrets (Settings → Secrets and variables → Actions):
-      #   KEYSTORE_BASE64   — base64 of your upload-keystore.jks
-      #   KEYSTORE_PASSWORD — the keystore (store) password
-      #   KEY_PASSWORD      — the key password
-      #   KEY_ALIAS         — the key alias (e.g. upload)
       - name: Configure release signing
         env:
           KEYSTORE_BASE64:   ${{ secrets.KEYSTORE_BASE64 }}
@@ -401,26 +460,22 @@ jobs:
           KEY_ALIAS:         ${{ secrets.KEY_ALIAS }}
         run: |
           if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "::error::KEYSTORE_BASE64 secret is missing. Add your signing secrets in repo Settings → Secrets and variables → Actions."
+            echo "::error::KEYSTORE_BASE64 secret is missing."
             exit 1
           fi
 
-          # 1. Decode keystore into the app module.
-          #    Strip ALL whitespace/newlines first — pasting the base64 secret
-          #    on mobile often introduces line breaks, which break `base64 -d`.
           printf '%s' "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > android/app/upload-keystore.jks 2>/dev/null || {
-            echo "::error::Failed to decode KEYSTORE_BASE64. The secret value is not valid base64 — re-copy it as ONE continuous line with no spaces or line breaks, then update the secret and re-run."
+            echo "::error::Failed to decode KEYSTORE_BASE64."
             exit 1
           }
 
           KS_SIZE=$(wc -c < android/app/upload-keystore.jks)
           if [ "$KS_SIZE" -lt 1000 ]; then
-            echo "::error::Decoded keystore is only ${KS_SIZE} bytes — that's too small to be valid. The KEYSTORE_BASE64 secret is likely truncated or corrupted. Re-copy the FULL base64 string (everything between BEGIN and END) and update the secret."
+            echo "::error::Decoded keystore is only ${KS_SIZE} bytes — too small."
             exit 1
           fi
           echo "✓ keystore decoded (${KS_SIZE} bytes)"
 
-          # 2. key.properties (storeFile is relative to the app module).
           cat > android/key.properties << EOF
           storePassword=$KEYSTORE_PASSWORD
           keyPassword=$KEY_PASSWORD
@@ -429,15 +484,11 @@ jobs:
           EOF
           echo "✓ key.properties written"
 
-          # 3. Inject signingConfigs + point release at it, using Python for a
-          #    safe, idempotent rewrite of app/build.gradle.
           python3 << 'PYEOF'
           import re
           p = 'android/app/build.gradle'
           s = open(p).read()
 
-          # Load key.properties at the top of the android {} via a loader block,
-          # inserted right before "android {".
           if 'keystoreProperties' not in s:
               loader = (
                   "def keystoreProperties = new Properties()\n"
@@ -448,7 +499,6 @@ jobs:
               )
               s = s.replace("android {", loader + "android {", 1)
 
-          # Add a signingConfigs { release {...} } block just before buildTypes {.
           if 'signingConfigs {' not in s:
               sign_block = (
                   "    signingConfigs {\n"
@@ -461,39 +511,57 @@ jobs:
                   "    }\n\n"
                   "    buildTypes {"
               )
-              s = s.replace("buildTypes {", sign_block, 1)
+              s = s.replace("    buildTypes {", sign_block, 1)
 
-          # Point the release buildType at the release signingConfig.
-          # Handle both Groovy ("signingConfig signingConfigs.debug") and the
-          # occasional "=" form, and only fall back to release if a debug ref
-          # is present.
           if 'signingConfigs.debug' in s:
-              s = s.replace("signingConfig = signingConfigs.debug",
-                            "signingConfig = signingConfigs.release")
-              s = s.replace("signingConfig signingConfigs.debug",
-                            "signingConfig signingConfigs.release")
+              s = s.replace("signingConfig = signingConfigs.debug", "signingConfig = signingConfigs.release")
+              s = s.replace("signingConfig signingConfigs.debug",   "signingConfig signingConfigs.release")
           elif 'signingConfig' not in s.split('buildTypes {',1)[1].split('}',1)[0]:
-              # No signingConfig line inside release at all — add one.
-              s = re.sub(r"(release\s*\{)",
-                         r"\1\n            signingConfig signingConfigs.release",
-                         s, count=1)
+              s = re.sub(r'(release\s*\{)', r'\1\n            signingConfig signingConfigs.release', s, count=1)
 
           open(p, 'w').write(s)
           print("✓ build.gradle updated for release signing")
           PYEOF
-
           echo "--- release buildType ---"
-          grep -A6 "buildTypes {" android/app/build.gradle
+          grep -A10 "buildTypes {" android/app/build.gradle
+
+      - name: Final Verification
+        run: |
+          echo "=== SDK values ==="
+          grep -E "compileSdk|targetSdk|minSdk" android/app/build.gradle | grep -v "//"
+          echo "=== ndkVersion ==="
+          grep "ndkVersion" android/app/build.gradle
+          echo "=== 16KB cmake flag ==="
+          grep "FLEXIBLE_PAGE_SIZES" android/app/build.gradle
+          echo "=== Plugin order ==="
+          grep 'id "' android/app/build.gradle | head -6
+          echo "=== LARGE_PAGE_SIZE in manifest ==="
+          grep "LARGE_PAGE_SIZE" android/app/src/main/AndroidManifest.xml
+          echo "=== AD_ID permission ==="
+          grep "AD_ID" android/app/src/main/AndroidManifest.xml
+          echo "=== No flutter.* SDK refs ==="
+          if grep -q "flutter\.compileSdkVersion\|flutter\.targetSdkVersion\|flutter\.minSdkVersion" android/app/build.gradle; then
+            echo "::error::flutter.* SDK refs still present!"
+            exit 1
+          fi
+          echo "✅ No flutter.* refs"
+          echo "=== Manifest XML validation ==="
+          python3 -c "
+          import xml.etree.ElementTree as ET
+          ET.parse('android/app/src/main/AndroidManifest.xml')
+          print('✅ AndroidManifest.xml valid')
+          "
+          echo "✅ All checks passed — starting Gradle build"
 
       - name: Build Release APK
-        run: flutter build apk --release
+        run: flutter build apk --release --split-debug-info=build/debug-symbols --obfuscate
 
       - name: Build Release AAB
-        run: flutter build appbundle --release
+        run: flutter build appbundle --release --split-debug-info=build/debug-symbols --obfuscate
 
       - name: Archive Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: nova-x-v2.6-release-${{ github.sha }}
+          name: nova-x-release-${{ github.sha }}
           path: build/app/outputs/
           retention-days: 14

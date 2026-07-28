@@ -1,4 +1,4 @@
-name: Build Production Android Assets
+name: Build NOVA X Android Release
 
 on:
   push:
@@ -8,6 +8,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -29,133 +33,91 @@ jobs:
         run: |
           echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
             "ndk;29.0.14206865" "build-tools;36.1.0" "platforms;android-36" \
-            --sdk_root=$ANDROID_HOME || \
-          echo "y" | sdkmanager \
-            "ndk;29.0.14206865" "build-tools;36.1.0" "platforms;android-36" || true
-          echo "NDK 29 + build-tools 36 ready"
+            --sdk_root=$ANDROID_HOME || true
+          echo "NDK 29 ready"
 
       - name: Accept Android licenses
         run: yes | flutter doctor --android-licenses || true
 
-      - name: Install Dependencies
+      - name: Flutter pub get
         run: flutter pub get
-
-      - name: Patch flutter_inappwebview ProGuard
-        run: |
-          CACHE="${PUB_CACHE:-$HOME/.pub-cache}"
-          find "$CACHE" -name "build.gradle" -path "*/flutter_inappwebview_android*" 2>/dev/null | while read -r f; do
-            chmod +w "$f" 2>/dev/null || true
-            sed -i "s/getDefaultProguardFile(\'proguard-android\.txt\')/getDefaultProguardFile(\'proguard-android-optimize.txt\')/g" "$f"
-            echo "ProGuard patched: $f"
-          done
-
-      - name: Patch jcenter to mavenCentral
-        run: |
-          CACHE="${PUB_CACHE:-$HOME/.pub-cache}"
-          find "$CACHE" -name "build.gradle" -exec sed -i 's/jcenter()/mavenCentral()/g' {} +
-          echo "jcenter replaced"
-
-      - name: Regenerate Android Platform Files
-        run: |
-          rm -rf android
-          flutter create --platforms android --org com.tlyfe --project-name nova_x .
-          echo "android/ regenerated"
-
-      - name: Copy google-services.json
-        run: |
-          if [ -f "google-services.json" ]; then
-            cp google-services.json android/app/google-services.json
-          else
-            echo "::error::google-services.json NOT FOUND in repo root!"
-            exit 1
-          fi
-
-      - name: Set app icon from logo.png
-        run: |
-          pip install Pillow --break-system-packages -q
-          echo "ZnJvbSBQSUwgaW1wb3J0IEltYWdlLCBJbWFnZURyYXcKaW1wb3J0IG9zCkJHID0gKDcsIDE2LCAzMCwgMjU1KQpsb2dvID0gSW1hZ2Uub3BlbignYXNzZXRzL2ltYWdlcy9sb2dvLnBuZycpLmNvbnZlcnQoJ1JHQkEnKQpiYm94ID0gbG9nby5nZXRiYm94KCkKaWYgYmJveDoKICAgIGxvZ28gPSBsb2dvLmNyb3AoYmJveCkKbHcsIGxoID0gbG9nby5zaXplCmhhbGYgPSBtaW4obHcsIGxoKSAvLyAyCmN4LCBjeSA9IGx3IC8vIDIsIGxoIC8vIDIKbG9nbyA9IGxvZ28uY3JvcCgoY3gtaGFsZiwgY3ktaGFsZiwgY3graGFsZiwgY3kraGFsZikpCnN0ZCA9IHsnbWlwbWFwLW1kcGknOjQ4LCdtaXBtYXAtaGRwaSc6NzIsJ21pcG1hcC14aGRwaSc6OTYsJ21pcG1hcC14eGhkcGknOjE0NCwnbWlwbWFwLXh4eGhkcGknOjE5Mn0KZm9yIGQsIHN6IGluIHN0ZC5pdGVtcygpOgogICAgb3V0ID0gJ2FuZHJvaWQvYXBwL3NyYy9tYWluL3Jlcy8nICsgZAogICAgb3MubWFrZWRpcnMob3V0LCBleGlzdF9vaz1UcnVlKQogICAgYmcgPSBJbWFnZS5uZXcoJ1JHQkEnLChzeixzeiksQkcpCiAgICBscyA9IGludChzeiowLjc4KQogICAgbHIgPSBsb2dvLnJlc2l6ZSgobHMsbHMpLEltYWdlLkxBTkNaT1MpCiAgICBvZmYgPSAoc3otbHMpLy8yCiAgICBiZy5wYXN0ZShsciwob2ZmLG9mZiksbHIpCiAgICBiZy5jb252ZXJ0KCdSR0InKS5zYXZlKG91dCsnL2ljX2xhdW5jaGVyLnBuZycpCiAgICBjaXJjID0gSW1hZ2UubmV3KCdSR0JBJywoc3osc3opLCgwLDAsMCwwKSkKICAgIG1zayA9IEltYWdlLm5ldygnTCcsKHN6LHN6KSwwKQogICAgSW1hZ2VEcmF3LkRyYXcobXNrKS5lbGxpcHNlKCgwLDAsc3osc3opLGZpbGw9MjU1KQogICAgY2lyYy5wYXN0ZShiZy5jb252ZXJ0KCdSR0JBJyksKDAsMCksbXNrKQogICAgY2lyYy5zYXZlKG91dCsnL2ljX2xhdW5jaGVyX3JvdW5kLnBuZycpCmFkYXB0ID0geydtaXBtYXAtbWRwaSc6NzIsJ21pcG1hcC1oZHBpJzoxMDgsJ21pcG1hcC14aGRwaSc6MTQ0LCdtaXBtYXAteHhoZHBpJzoyMTYsJ21pcG1hcC14eHhoZHBpJzoyODh9CmZvciBkLCBzeiBpbiBhZGFwdC5pdGVtcygpOgogICAgb3V0ID0gJ2FuZHJvaWQvYXBwL3NyYy9tYWluL3Jlcy8nICsgZAogICAgb3MubWFrZWRpcnMob3V0LCBleGlzdF9vaz1UcnVlKQogICAgZmcgPSBJbWFnZS5uZXcoJ1JHQkEnLChzeixzeiksKDAsMCwwLDApKQogICAgbHMgPSBpbnQoc3oqMC42NCkKICAgIGxyID0gbG9nby5yZXNpemUoKGxzLGxzKSxJbWFnZS5MQU5DWk9TKQogICAgb2ZmID0gKHN6LWxzKS8vMgogICAgZmcucGFzdGUobHIsKG9mZixvZmYpLGxyKQogICAgZmcuc2F2ZShvdXQrJy9pY19sYXVuY2hlcl9mb3JlZ3JvdW5kLnBuZycpCmFueWRwaSA9ICdhbmRyb2lkL2FwcC9zcmMvbWFpbi9yZXMvbWlwbWFwLWFueWRwaS12MjYnCnZhbHVlcyA9ICdhbmRyb2lkL2FwcC9zcmMvbWFpbi9yZXMvdmFsdWVzJwpvcy5tYWtlZGlycyhhbnlkcGksIGV4aXN0X29rPVRydWUpCm9zLm1ha2VkaXJzKHZhbHVlcywgZXhpc3Rfb2s9VHJ1ZSkKd2l0aCBvcGVuKHZhbHVlcysnL2ljX2xhdW5jaGVyX2JhY2tncm91bmQueG1sJywndycpIGFzIGY6CiAgICBmLndyaXRlKCc8P3htbCB2ZXJzaW9uPSIxLjAiIGVuY29kaW5nPSJ1dGYtOCI/PlxuPHJlc291cmNlcz5cbiAgICA8Y29sb3IgbmFtZT0iaWNfbGF1bmNoZXJfYmFja2dyb3VuZCI+IzA3MTAxRTwvY29sb3I+XG48L3Jlc291cmNlcz5cbicpCmFkYXB0aXZlX3htbCA9ICgnPD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz5cbjxhZGFwdGl2ZS1pY29uIHhtbG5zOmFuZHJvaWQ9Imh0dHA6Ly9zY2hlbWFzLmFuZHJvaWQuY29tL2Fway9yZXMvYW5kcm9pZCI+XG4gICAgPGJhY2tncm91bmQgYW5kcm9pZDpkcmF3YWJsZT0iQGNvbG9yL2ljX2xhdW5jaGVyX2JhY2tncm91bmQiLz5cbiAgICA8Zm9yZWdyb3VuZCBhbmRyb2lkOmRyYXdhYmxlPSJAbWlwbWFwL2ljX2xhdW5jaGVyX2ZvcmVncm91bmQiLz5cbjwvYWRhcHRpdmUtaWNvbj5cbicpCndpdGggb3BlbihhbnlkcGkrJy9pY19sYXVuY2hlci54bWwnLCd3JykgYXMgZjogZi53cml0ZShhZGFwdGl2ZV94bWwpCndpdGggb3BlbihhbnlkcGkrJy9pY19sYXVuY2hlcl9yb3VuZC54bWwnLCd3JykgYXMgZjogZi53cml0ZShhZGFwdGl2ZV94bWwpCnByaW50KCdJY29uICsgYWRhcHRpdmUgWE1MIGRvbmUnKQo=" | base64 -d > /tmp/gen_icons.py
-          python3 /tmp/gen_icons.py
-
-      - name: Apply Google Services Plugin (Firebase)
-        run: |
-          echo "aW1wb3J0IHJlLCBzeXMsIG9zCmFwcF9wYXRoID0gJ2FuZHJvaWQvYXBwL2J1aWxkLmdyYWRsZScKc2V0X3BhdGggPSAnYW5kcm9pZC9zZXR0aW5ncy5ncmFkbGUnCmlmIG5vdCBvcy5wYXRoLmV4aXN0cyhhcHBfcGF0aCk6CiAgICBwcmludChmIkVSUk9SOiB7YXBwX3BhdGh9IG5vdCBmb3VuZC4gQ1dEPXtvcy5nZXRjd2QoKX0iLCBmaWxlPXN5cy5zdGRlcnIpCiAgICBzeXMuZXhpdCgxKQphcHAgPSBvcGVuKGFwcF9wYXRoKS5yZWFkKCkKc2V0dGluZ3MgPSBvcGVuKHNldF9wYXRoKS5yZWFkKCkKaWYgJ2NvbS5nb29nbGUuZ21zLmdvb2dsZS1zZXJ2aWNlcycgbm90IGluIHNldHRpbmdzOgogICAgc2V0dGluZ3MgPSByZS5zdWIocicoaWQgImNvbVwuYW5kcm9pZFwuYXBwbGljYXRpb24iIHZlcnNpb24gIlteIl0qIiBhcHBseSBmYWxzZSknLHInXDFcbiAgICBpZCAiY29tLmdvb2dsZS5nbXMuZ29vZ2xlLXNlcnZpY2VzIiB2ZXJzaW9uICI0LjQuMiIgYXBwbHkgZmFsc2UnLHNldHRpbmdzLCBjb3VudD0xKQogICAgb3BlbihzZXRfcGF0aCwgJ3cnKS53cml0ZShzZXR0aW5ncykKICAgIHByaW50KCJnb29nbGUtc2VydmljZXMgZGVjbGFyZWQgaW4gc2V0dGluZ3MuZ3JhZGxlIikKaWYgJ2NvbS5nb29nbGUuZ21zLmdvb2dsZS1zZXJ2aWNlcycgbm90IGluIGFwcDoKICAgIGFwcCA9IHJlLnN1YihyJyhpZCAiZGV2XC5mbHV0dGVyXC5mbHV0dGVyLWdyYWRsZS1wbHVnaW4iKScscidcMVxuICAgIGlkICJjb20uZ29vZ2xlLmdtcy5nb29nbGUtc2VydmljZXMiJyxhcHAsIGNvdW50PTEpCiAgICBvcGVuKGFwcF9wYXRoLCAndycpLndyaXRlKGFwcCkKICAgIHByaW50KCJnb29nbGUtc2VydmljZXMgYXBwbGllZCBhZnRlciBmbHV0dGVyLWdyYWRsZS1wbHVnaW4iKQphcHAyID0gb3BlbihhcHBfcGF0aCkucmVhZCgpCnBsdWdpbl9saW5lcyA9IFtsLnN0cmlwKCkgZm9yIGwgaW4gYXBwMi5zcGxpdCgnXG4nKSBpZiAnaWQgIicgaW4gbCBhbmQgJ2FwcGx5IGZhbHNlJyBub3QgaW4gbF0KcHJpbnQoIlBsdWdpbiBvcmRlcjoiLCBwbHVnaW5fbGluZXMpCmlkeF9hcHAgPSBuZXh0KGkgZm9yIGksbCBpbiBlbnVtZXJhdGUocGx1Z2luX2xpbmVzKSBpZiAnY29tLmFuZHJvaWQuYXBwbGljYXRpb24nIGluIGwpCmlkeF9nbXMgPSBuZXh0KGkgZm9yIGksbCBpbiBlbnVtZXJhdGUocGx1Z2luX2xpbmVzKSBpZiAnZ29vZ2xlLXNlcnZpY2VzJyBpbiBsKQphc3NlcnQgaWR4X2dtcyA+IGlkeF9hcHAsICJGQVRBTDogZ29vZ2xlLXNlcnZpY2VzIGJlZm9yZSBjb20uYW5kcm9pZC5hcHBsaWNhdGlvbiEiCnByaW50KCJQbHVnaW4gb3JkZXIgY29ycmVjdCIpCg==" | base64 -d > /tmp/apply_gms.py
-          python3 /tmp/apply_gms.py
-
-      - name: Bump all SDK versions to API 36
-        run: |
-          F="android/app/build.gradle"
-          sed -i 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 36/g' "$F"
-          sed -i 's/compileSdk flutter\.compileSdkVersion/compileSdk 36/g'               "$F"
-          sed -i 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 36/g'           "$F"
-          sed -i 's/compileSdk 35/compileSdk 36/g'                                        "$F"
-          sed -i 's/targetSdkVersion flutter\.targetSdkVersion/targetSdkVersion 36/g'   "$F"
-          sed -i 's/targetSdk flutter\.targetSdkVersion/targetSdk 36/g'                 "$F"
-          sed -i 's/targetSdk = flutter\.targetSdkVersion/targetSdk = 36/g'             "$F"
-          sed -i 's/targetSdk 35/targetSdk 36/g'                                         "$F"
-          sed -i 's/minSdkVersion flutter\.minSdkVersion/minSdkVersion 23/g'            "$F"
-          sed -i 's/minSdk flutter\.minSdkVersion/minSdk 23/g'                          "$F"
-          sed -i 's/minSdk = flutter\.minSdkVersion/minSdk = 23/g'                      "$F"
-          grep -E "compileSdk|targetSdk|minSdk" "$F"
-          if grep -q "flutter\.compileSdkVersion\|flutter\.targetSdkVersion\|flutter\.minSdkVersion" "$F"; then
-            echo "::error::flutter.* SDK refs still present!"
-            exit 1
-          fi
-          echo "All SDK versions set"
-
-      - name: Inject NDK 29 + 16KB page size + abiFilters + packaging
-        run: |
-          echo "aW1wb3J0IHJlLCBzeXMsIG9zCnAgPSAnYW5kcm9pZC9hcHAvYnVpbGQuZ3JhZGxlJwppZiBub3Qgb3MucGF0aC5leGlzdHMocCk6CiAgICBwcmludChmIkVSUk9SOiB7cH0gbm90IGZvdW5kIiwgZmlsZT1zeXMuc3RkZXJyKQogICAgc3lzLmV4aXQoMSkKcyA9IG9wZW4ocCkucmVhZCgpCmlmICduZGtWZXJzaW9uJyBub3QgaW4gczoKICAgIHMgPSByZS5zdWIocicoY29tcGlsZVNka1xzKzM2KScscidcMVxuICAgIG5ka1ZlcnNpb24gIjI5LjAuMTQyMDY4NjUiXG4gICAgYnVpbGRUb29sc1ZlcnNpb24gIjM2LjEuMCInLHMsIGNvdW50PTEpCmFzc2VydCAnbmRrVmVyc2lvbiAiMjkuMC4xNDIwNjg2NSInIGluIHMsICJuZGtWZXJzaW9uIG5vdCBzZXQiCmlmICdBTkRST0lEX1NVUFBPUlRfRkxFWElCTEVfUEFHRV9TSVpFUycgbm90IGluIHM6CiAgICBzID0gcmUuc3ViKHInKHZlcnNpb25OYW1lW15cbl0qXG4pKFxzKlx9KScscidcMSAgICAgICAgbXVsdGlEZXhFbmFibGVkIHRydWVcbiAgICAgICAgbmRrIHsgYWJpRmlsdGVycyAiYXJtZWFiaS12N2EiLCAiYXJtNjQtdjhhIiwgIng4NiIsICJ4ODZfNjQiIH1cbiAgICAgICAgZXh0ZXJuYWxOYXRpdmVCdWlsZCB7XG4gICAgICAgICAgICBjbWFrZSB7IGFyZ3VtZW50cyArPSAiLURBTkRST0lEX1NVUFBPUlRfRkxFWElCTEVfUEFHRV9TSVpFUz1PTiIgfVxuICAgICAgICB9XG5cMicscywgY291bnQ9MSkKYXNzZXJ0ICdBTkRST0lEX1NVUFBPUlRfRkxFWElCTEVfUEFHRV9TSVpFUycgaW4gcywgImNtYWtlIDE2S0IgZmxhZyBub3QgaW5qZWN0ZWQiCmFzc2VydCAnYWJpRmlsdGVycycgaW4gcywgImFiaUZpbHRlcnMgbm90IGluamVjdGVkIgppZiAndXNlTGVnYWN5UGFja2FnaW5nJyBub3QgaW4gczoKICAgIHBhY2thZ2luZyA9ICcgICAgcGFja2FnaW5nT3B0aW9ucyB7XG4gICAgICAgIHJlc291cmNlcyB7IGV4Y2x1ZGVzICs9IFtcJy9NRVRBLUlORi97QUwyLjAsTEdQTDIuMX1cJ10gfVxuICAgICAgICBqbmlMaWJzIHsgdXNlTGVnYWN5UGFja2FnaW5nID0gZmFsc2UgfVxuICAgIH1cblxuICAgIGJ1aWxkVHlwZXMgeycKICAgIHMgPSBzLnJlcGxhY2UoJyAgICBidWlsZFR5cGVzIHsnLCBwYWNrYWdpbmcsIDEpCmFzc2VydCBzLmNvdW50KCcgICAgYnVpbGRUeXBlcyB7JykgPT0gMSwgIkR1cGxpY2F0ZSBidWlsZFR5cGVzIGJsb2NrISIKYXNzZXJ0ICd1c2VMZWdhY3lQYWNrYWdpbmcgPSBmYWxzZScgaW4gcywgInVzZUxlZ2FjeVBhY2thZ2luZyBub3Qgc2V0IgppZiAnU1lNQk9MX1RBQkxFJyBub3QgaW4gczoKICAgIHMgPSByZS5zdWIocicocmVsZWFzZVxzKlx7KScsciJcMVxuICAgICAgICAgICAgbmRrIHsgZGVidWdTeW1ib2xMZXZlbCAnU1lNQk9MX1RBQkxFJyB9IixzLCBjb3VudD0xKQpvcGVuKHAsICd3Jykud3JpdGUocykKcHJpbnQoIk5ESyAyOSArIDE2S0IgKyBwYWNrYWdpbmcgaW5qZWN0ZWQiKQpmb3IgbGluZSBpbiBzLnNwbGl0KCdcbicpOgogICAgaWYgYW55KHggaW4gbGluZSBmb3IgeCBpbiBbJ2NvbXBpbGVTZGsnLCd0YXJnZXRTZGsnLCdtaW5TZGsnLCduZGtWZXJzaW9uJywnYWJpRmlsdGVyJywnRkxFWElCTEUnLCd1c2VMZWdhY3knLCdTWU1CT0wnXSk6CiAgICAgICAgcHJpbnQoIiAiLCBsaW5lLnN0cmlwKCkpCg==" | base64 -d > /tmp/inject_ndk.py
-          python3 /tmp/inject_ndk.py
-
-      - name: Patch AndroidManifest
-        run: |
-          M="android/app/src/main/AndroidManifest.xml"
-          sed -i 's/android:label="nova_x"/android:label="NOVA X"/' "$M"
-          sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="com.google.android.gms.permission.AD_ID"/>|' "$M"
-          sed -i 's|android:icon="@mipmap/ic_launcher">|android:icon="@mipmap/ic_launcher"\n        android:usesCleartextTraffic="true"\n        android:hardwareAccelerated="true">|' "$M"
-          sed -i 's|android:name="android.permission.POST_NOTIFICATIONS"/>|android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>|' "$M"
-          echo "AndroidManifest patched"
-
-      - name: Add FCM + 16KB property to AndroidManifest
-        run: |
-          echo "aW1wb3J0IHhtbC5ldHJlZS5FbGVtZW50VHJlZSBhcyBFVCwgc3lzCnBhdGggPSAnYW5kcm9pZC9hcHAvc3JjL21haW4vQW5kcm9pZE1hbmlmZXN0LnhtbCcKY29udGVudCA9IG9wZW4ocGF0aCkucmVhZCgpCmlmICdGTFVUVEVSX05PVElGSUNBVElPTl9DTElDSycgbm90IGluIGNvbnRlbnQ6CiAgICBjb250ZW50ID0gY29udGVudC5yZXBsYWNlKCc8L2ludGVudC1maWx0ZXI+JywnPC9pbnRlbnQtZmlsdGVyPlxuICAgICAgICAgICAgPGludGVudC1maWx0ZXI+XG4gICAgICAgICAgICAgICAgPGFjdGlvbiBhbmRyb2lkOm5hbWU9IkZMVVRURVJfTk9USUZJQ0FUSU9OX0NMSUNLIi8+XG4gICAgICAgICAgICAgICAgPGNhdGVnb3J5IGFuZHJvaWQ6bmFtZT0iYW5kcm9pZC5pbnRlbnQuY2F0ZWdvcnkuREVGQVVMVCIvPlxuICAgICAgICAgICAgPC9pbnRlbnQtZmlsdGVyPicsMSkKICAgIHByaW50KCdGTFVUVEVSX05PVElGSUNBVElPTl9DTElDSyBhZGRlZCcpCmlmICdub3ZhX3hfY2hhbm5lbCcgbm90IGluIGNvbnRlbnQ6CiAgICBjb250ZW50ID0gY29udGVudC5yZXBsYWNlKCcgICAgPC9hcHBsaWNhdGlvbj4nLCcgICAgICAgIDxtZXRhLWRhdGEgYW5kcm9pZDpuYW1lPSJjb20uZ29vZ2xlLmZpcmViYXNlLm1lc3NhZ2luZy5kZWZhdWx0X25vdGlmaWNhdGlvbl9jaGFubmVsX2lkIiBhbmRyb2lkOnZhbHVlPSJub3ZhX3hfY2hhbm5lbCIvPlxuICAgICAgICA8bWV0YS1kYXRhIGFuZHJvaWQ6bmFtZT0iY29tLmdvb2dsZS5maXJlYmFzZS5tZXNzYWdpbmcuZGVmYXVsdF9ub3RpZmljYXRpb25faWNvbiIgYW5kcm9pZDpyZXNvdXJjZT0iQG1pcG1hcC9pY19sYXVuY2hlciIvPlxuICAgICAgICA8bWV0YS1kYXRhIGFuZHJvaWQ6bmFtZT0iY29tLmdvb2dsZS5maXJlYmFzZS5tZXNzYWdpbmcuZGVmYXVsdF9ub3RpZmljYXRpb25fY29sb3IiIGFuZHJvaWQ6cmVzb3VyY2U9IkBjb2xvci9ub3ZhX3hfY3lhbiIvPlxuICAgICAgICA8bWV0YS1kYXRhIGFuZHJvaWQ6bmFtZT0iY29tLmdvb2dsZS5hbmRyb2lkLmdlby5BUElfS0VZIiBhbmRyb2lkOnZhbHVlPSJBSXphU3lCY19iTkJqX2htc0c1ck5GWEhDNFRtZ3AwQlJCanlYb3MiLz5cbiAgICAgICAgPHByb3BlcnR5IGFuZHJvaWQ6bmFtZT0iYW5kcm9pZC5zdXBwb3J0LkxBUkdFX1BBR0VfU0laRSIgYW5kcm9pZDp2YWx1ZT0idHJ1ZSIvPlxuICAgIDwvYXBwbGljYXRpb24+JywxKQogICAgcHJpbnQoJ0ZDTSBtZXRhZGF0YSArIDE2S0IgcHJvcGVydHkgYWRkZWQnKQpFVC5mcm9tc3RyaW5nKGNvbnRlbnQpCnByaW50KCdBbmRyb2lkTWFuaWZlc3QgWE1MIHZhbGlkJykKb3BlbihwYXRoLCAndycpLndyaXRlKGNvbnRlbnQpCg==" | base64 -d > /tmp/patch_manifest.py
-          python3 /tmp/patch_manifest.py
-
-      - name: Create notification colour resource
-        run: |
-          mkdir -p android/app/src/main/res/values
-          printf '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="nova_x_cyan">#00D4FF</color>\n</resources>\n' > android/app/src/main/res/values/colors.xml
-          echo "colors.xml created"
-
-      - name: Write MainActivity.kt with shortcut support
-        run: |
-          mkdir -p android/app/src/main/kotlin/com/tlyfe/nova_x
-          echo "cGFja2FnZSBjb20udGx5ZmUubm92YV94CmltcG9ydCBpby5mbHV0dGVyLmVtYmVkZGluZy5hbmRyb2lkLkZsdXR0ZXJBY3Rpdml0eQppbXBvcnQgaW8uZmx1dHRlci5lbWJlZGRpbmcuZW5naW5lLkZsdXR0ZXJFbmdpbmUKaW1wb3J0IGlvLmZsdXR0ZXIucGx1Z2luLmNvbW1vbi5NZXRob2RDaGFubmVsCmNsYXNzIE1haW5BY3Rpdml0eSA6IEZsdXR0ZXJBY3Rpdml0eSgpIHsKICAgIGNvbXBhbmlvbiBvYmplY3QgeyBwcml2YXRlIGNvbnN0IHZhbCBDSCA9ICJjb20udGx5ZmUubm92YV94L3Nob3J0Y3V0cyIgfQogICAgcHJpdmF0ZSB2YXIgcGVuZGluZyA9ICIiCiAgICBvdmVycmlkZSBmdW4gY29uZmlndXJlRmx1dHRlckVuZ2luZShmbHV0dGVyRW5naW5lOiBGbHV0dGVyRW5naW5lKSB7CiAgICAgICAgc3VwZXIuY29uZmlndXJlRmx1dHRlckVuZ2luZShmbHV0dGVyRW5naW5lKQogICAgICAgIHBlbmRpbmcgPSBpbnRlbnQ/LmFjdGlvbj8udGFrZUlmIHsgaXQuY29udGFpbnMoIm5vdmFfeC4iKSB9ID86ICIiCiAgICAgICAgTWV0aG9kQ2hhbm5lbChmbHV0dGVyRW5naW5lLmRhcnRFeGVjdXRvci5iaW5hcnlNZXNzZW5nZXIsIENIKQogICAgICAgICAgICAuc2V0TWV0aG9kQ2FsbEhhbmRsZXIgeyBjYWxsLCByZXN1bHQgLT4KICAgICAgICAgICAgICAgIGlmIChjYWxsLm1ldGhvZCA9PSAiZ2V0U2hvcnRjdXQiKSB7CiAgICAgICAgICAgICAgICAgICAgcmVzdWx0LnN1Y2Nlc3MocGVuZGluZyk7IHBlbmRpbmcgPSAiIgogICAgICAgICAgICAgICAgfSBlbHNlIHJlc3VsdC5ub3RJbXBsZW1lbnRlZCgpCiAgICAgICAgICAgIH0KICAgIH0KICAgIG92ZXJyaWRlIGZ1biBvbk5ld0ludGVudChpbnRlbnQ6IGFuZHJvaWQuY29udGVudC5JbnRlbnQpIHsKICAgICAgICBzdXBlci5vbk5ld0ludGVudChpbnRlbnQpOyBzZXRJbnRlbnQoaW50ZW50KQogICAgICAgIHBlbmRpbmcgPSBpbnRlbnQuYWN0aW9uPy50YWtlSWYgeyBpdC5jb250YWlucygibm92YV94LiIpIH0gPzogIiIKICAgIH0KfQo=" | base64 -d > android/app/src/main/kotlin/com/tlyfe/nova_x/MainActivity.kt
-          echo "MainActivity.kt written"
-
-      - name: Create shortcut resources
-        run: |
-          echo "aW1wb3J0IG9zCm9zLm1ha2VkaXJzKCdhbmRyb2lkL2FwcC9zcmMvbWFpbi9yZXMveG1sJywgZXhpc3Rfb2s9VHJ1ZSkKb3MubWFrZWRpcnMoJ2FuZHJvaWQvYXBwL3NyYy9tYWluL3Jlcy9kcmF3YWJsZScsIGV4aXN0X29rPVRydWUpCm9zLm1ha2VkaXJzKCdhbmRyb2lkL2FwcC9zcmMvbWFpbi9yZXMvdmFsdWVzJywgZXhpc3Rfb2s9VHJ1ZSkKb3BlbignYW5kcm9pZC9hcHAvc3JjL21haW4vcmVzL3htbC9zaG9ydGN1dHMueG1sJywndycpLndyaXRlKCc8P3htbCB2ZXJzaW9uPSIxLjAiIGVuY29kaW5nPSJ1dGYtOCI/PlxuPHNob3J0Y3V0cyB4bWxuczphbmRyb2lkPSJodHRwOi8vc2NoZW1hcy5hbmRyb2lkLmNvbS9hcGsvcmVzL2FuZHJvaWQiPlxuICA8c2hvcnRjdXQgYW5kcm9pZDpzaG9ydGN1dElkPSJuZXdfdGFiIiBhbmRyb2lkOmVuYWJsZWQ9InRydWUiIGFuZHJvaWQ6aWNvbj0iQGRyYXdhYmxlL2ljX3NjX25ld190YWIiIGFuZHJvaWQ6c2hvcnRjdXRTaG9ydExhYmVsPSJAc3RyaW5nL3NjX25ld190YWJfcyIgYW5kcm9pZDpzaG9ydGN1dExvbmdMYWJlbD0iQHN0cmluZy9zY19uZXdfdGFiX2wiPjxpbnRlbnQgYW5kcm9pZDphY3Rpb249ImNvbS50bHlmZS5ub3ZhX3guTkVXX1RBQiIgYW5kcm9pZDp0YXJnZXRQYWNrYWdlPSJjb20udGx5ZmUubm92YV94IiBhbmRyb2lkOnRhcmdldENsYXNzPSJjb20udGx5ZmUubm92YV94Lk1haW5BY3Rpdml0eSIvPjwvc2hvcnRjdXQ+XG4gIDxzaG9ydGN1dCBhbmRyb2lkOnNob3J0Y3V0SWQ9InByaXZhdGVfdGFiIiBhbmRyb2lkOmVuYWJsZWQ9InRydWUiIGFuZHJvaWQ6aWNvbj0iQGRyYXdhYmxlL2ljX3NjX3ByaXZhdGUiIGFuZHJvaWQ6c2hvcnRjdXRTaG9ydExhYmVsPSJAc3RyaW5nL3NjX3ByaXZhdGVfcyIgYW5kcm9pZDpzaG9ydGN1dExvbmdMYWJlbD0iQHN0cmluZy9zY19wcml2YXRlX2wiPjxpbnRlbnQgYW5kcm9pZDphY3Rpb249ImNvbS50bHlmZS5ub3ZhX3guUFJJVkFURV9UQUIiIGFuZHJvaWQ6dGFyZ2V0UGFja2FnZT0iY29tLnRseWZlLm5vdmFfeCIgYW5kcm9pZDp0YXJnZXRDbGFzcz0iY29tLnRseWZlLm5vdmFfeC5NYWluQWN0aXZpdHkiLz48L3Nob3J0Y3V0PlxuICA8c2hvcnRjdXQgYW5kcm9pZDpzaG9ydGN1dElkPSJidXNpbmVzcyIgYW5kcm9pZDplbmFibGVkPSJ0cnVlIiBhbmRyb2lkOmljb249IkBkcmF3YWJsZS9pY19zY19idXNpbmVzcyIgYW5kcm9pZDpzaG9ydGN1dFNob3J0TGFiZWw9IkBzdHJpbmcvc2NfYnVzaW5lc3NfcyIgYW5kcm9pZDpzaG9ydGN1dExvbmdMYWJlbD0iQHN0cmluZy9zY19idXNpbmVzc19sIj48aW50ZW50IGFuZHJvaWQ6YWN0aW9uPSJjb20udGx5ZmUubm92YV94LkJVU0lORVNTIiBhbmRyb2lkOnRhcmdldFBhY2thZ2U9ImNvbS50bHlmZS5ub3ZhX3giIGFuZHJvaWQ6dGFyZ2V0Q2xhc3M9ImNvbS50bHlmZS5ub3ZhX3guTWFpbkFjdGl2aXR5Ii8+PC9zaG9ydGN1dD5cbjwvc2hvcnRjdXRzPlxuJykKb3BlbignYW5kcm9pZC9hcHAvc3JjL21haW4vcmVzL2RyYXdhYmxlL2ljX3NjX25ld190YWIueG1sJywndycpLndyaXRlKCc8dmVjdG9yIHhtbG5zOmFuZHJvaWQ9Imh0dHA6Ly9zY2hlbWFzLmFuZHJvaWQuY29tL2Fway9yZXMvYW5kcm9pZCIgYW5kcm9pZDp3aWR0aD0iMjRkcCIgYW5kcm9pZDpoZWlnaHQ9IjI0ZHAiIGFuZHJvaWQ6dmlld3BvcnRXaWR0aD0iMjQiIGFuZHJvaWQ6dmlld3BvcnRIZWlnaHQ9IjI0Ij48cGF0aCBhbmRyb2lkOmZpbGxDb2xvcj0iIzAwRDRGRiIgYW5kcm9pZDpwYXRoRGF0YT0iTTE5LDEzSDEzdjZIMTF2LTZINXYtMkgxMVY1SDEzdjZIMTl2MloiLz48L3ZlY3Rvcj4nKQpvcGVuKCdhbmRyb2lkL2FwcC9zcmMvbWFpbi9yZXMvZHJhd2FibGUvaWNfc2NfcHJpdmF0ZS54bWwnLCd3Jykud3JpdGUoJzx2ZWN0b3IgeG1sbnM6YW5kcm9pZD0iaHR0cDovL3NjaGVtYXMuYW5kcm9pZC5jb20vYXBrL3Jlcy9hbmRyb2lkIiBhbmRyb2lkOndpZHRoPSIyNGRwIiBhbmRyb2lkOmhlaWdodD0iMjRkcCIgYW5kcm9pZDp2aWV3cG9ydFdpZHRoPSIyNCIgYW5kcm9pZDp2aWV3cG9ydEhlaWdodD0iMjQiPjxwYXRoIGFuZHJvaWQ6ZmlsbENvbG9yPSIjN0M0REZGIiBhbmRyb2lkOnBhdGhEYXRhPSJNMTIsMUwzLDV2NmMwLDUuNTUgMy44NCwxMC43NCA5LDEyIDUuMTYsLTEuMjYgOSwtNi40NSA5LC0xMlY1TDEyLDF6TTEyLDExLjk5aDdjLTAuNTMsNC4xMi0zLjI4LDcuNzktNyw4Ljk0VjEySDVWNi4zbDcsLTMuMTF2OC44eiIvPjwvdmVjdG9yPicpCm9wZW4oJ2FuZHJvaWQvYXBwL3NyYy9tYWluL3Jlcy9kcmF3YWJsZS9pY19zY19idXNpbmVzcy54bWwnLCd3Jykud3JpdGUoJzx2ZWN0b3IgeG1sbnM6YW5kcm9pZD0iaHR0cDovL3NjaGVtYXMuYW5kcm9pZC5jb20vYXBrL3Jlcy9hbmRyb2lkIiBhbmRyb2lkOndpZHRoPSIyNGRwIiBhbmRyb2lkOmhlaWdodD0iMjRkcCIgYW5kcm9pZDp2aWV3cG9ydFdpZHRoPSIyNCIgYW5kcm9pZDp2aWV3cG9ydEhlaWdodD0iMjQiPjxwYXRoIGFuZHJvaWQ6ZmlsbENvbG9yPSIjMDBENEZGIiBhbmRyb2lkOnBhdGhEYXRhPSJNMTIsN1YzSDJ2MThIMjJWN0gxMnpNNiwxOUg0di0ySDZ2MnpNNiwxNUg0di0ySDZ2MnpNNiwxMUg0VjlINnYyek02LDdINFY1SDZ2MnpNMTAsMTlIOHYtMkgxMHYyek0xMCwxNUg4di0ySDEwdjJ6TTEwLDExSDhWOUgxMHYyek0xMCw3SDhWNUgxMHYyek0yMCwxOUgxMnYtMkgxNHYtMkgxMnYtMkgxNHYtMkgxMlY5SDIwdjEwek0xOCwxMUgxNnYySDE4di0yek0xOCwxNUgxNnYySDE4di0yeiIvPjwvdmVjdG9yPicpCm9wZW4oJ2FuZHJvaWQvYXBwL3NyYy9tYWluL3Jlcy92YWx1ZXMvc3RyaW5ncy54bWwnLCd3Jykud3JpdGUoJzw/eG1sIHZlcnNpb249IjEuMCIgZW5jb2Rpbmc9InV0Zi04Ij8+XG48cmVzb3VyY2VzPlxuICA8c3RyaW5nIG5hbWU9InNjX25ld190YWJfcyI+TmV3IFRhYjwvc3RyaW5nPlxuICA8c3RyaW5nIG5hbWU9InNjX25ld190YWJfbCI+T3BlbiBOZXcgVGFiIGluIE5PVkEgWDwvc3RyaW5nPlxuICA8c3RyaW5nIG5hbWU9InNjX3ByaXZhdGVfcyI+UHJpdmF0ZSBUYWI8L3N0cmluZz5cbiAgPHN0cmluZyBuYW1lPSJzY19wcml2YXRlX2wiPk9wZW4gUHJpdmF0ZSBCcm93c2luZzwvc3RyaW5nPlxuICA8c3RyaW5nIG5hbWU9InNjX2J1c2luZXNzX3MiPkJ1c2luZXNzPC9zdHJpbmc+XG4gIDxzdHJpbmcgbmFtZT0ic2NfYnVzaW5lc3NfbCI+Tk9WQSBYIEJ1c2luZXNzIERpcmVjdG9yeTwvc3RyaW5nPlxuPC9yZXNvdXJjZXM+JykKcHJpbnQoJ1Nob3J0Y3V0IHJlc291cmNlcyBjcmVhdGVkJykK" | base64 -d > /tmp/gen_shortcuts.py
-          python3 /tmp/gen_shortcuts.py
-
-      - name: Patch AndroidManifest for shortcuts
-        run: |
-          echo "aW1wb3J0IHhtbC5ldHJlZS5FbGVtZW50VHJlZSBhcyBFVApwYXRoID0gJ2FuZHJvaWQvYXBwL3NyYy9tYWluL0FuZHJvaWRNYW5pZmVzdC54bWwnCmNvbnRlbnQgPSBvcGVuKHBhdGgpLnJlYWQoKQppZiAnYW5kcm9pZC5hcHAuc2hvcnRjdXRzJyBub3QgaW4gY29udGVudDoKICAgIGJsb2NrID0gJyAgICAgICAgPG1ldGEtZGF0YSBhbmRyb2lkOm5hbWU9ImFuZHJvaWQuYXBwLnNob3J0Y3V0cyIgYW5kcm9pZDpyZXNvdXJjZT0iQHhtbC9zaG9ydGN1dHMiLz5cbiAgICAgICAgPGludGVudC1maWx0ZXI+XG4gICAgICAgICAgICA8YWN0aW9uIGFuZHJvaWQ6bmFtZT0iY29tLnRseWZlLm5vdmFfeC5ORVdfVEFCIi8+XG4gICAgICAgICAgICA8Y2F0ZWdvcnkgYW5kcm9pZDpuYW1lPSJhbmRyb2lkLmludGVudC5jYXRlZ29yeS5ERUZBVUxUIi8+XG4gICAgICAgIDwvaW50ZW50LWZpbHRlcj5cbiAgICAgICAgPGludGVudC1maWx0ZXI+XG4gICAgICAgICAgICA8YWN0aW9uIGFuZHJvaWQ6bmFtZT0iY29tLnRseWZlLm5vdmFfeC5QUklWQVRFX1RBQiIvPlxuICAgICAgICAgICAgPGNhdGVnb3J5IGFuZHJvaWQ6bmFtZT0iYW5kcm9pZC5pbnRlbnQuY2F0ZWdvcnkuREVGQVVMVCIvPlxuICAgICAgICA8L2ludGVudC1maWx0ZXI+XG4gICAgICAgIDxpbnRlbnQtZmlsdGVyPlxuICAgICAgICAgICAgPGFjdGlvbiBhbmRyb2lkOm5hbWU9ImNvbS50bHlmZS5ub3ZhX3guQlVTSU5FU1MiLz5cbiAgICAgICAgICAgIDxjYXRlZ29yeSBhbmRyb2lkOm5hbWU9ImFuZHJvaWQuaW50ZW50LmNhdGVnb3J5LkRFRkFVTFQiLz5cbiAgICAgICAgPC9pbnRlbnQtZmlsdGVyPlxuICAgIDwvYWN0aXZpdHk+JwogICAgY29udGVudCA9IGNvbnRlbnQucmVwbGFjZSgnICAgIDwvYWN0aXZpdHk+JywgYmxvY2ssIDEpCiAgICBvcGVuKHBhdGgsICd3Jykud3JpdGUoY29udGVudCkKICAgIHByaW50KCdTaG9ydGN1dCBtYW5pZmVzdCBtZXRhZGF0YSBhZGRlZCcpCkVULnBhcnNlKHBhdGgpCnByaW50KCdBbmRyb2lkTWFuaWZlc3QgdmFsaWQgWE1MIGFmdGVyIHNob3J0Y3V0cycpCg==" | base64 -d > /tmp/patch_shortcuts.py
-          python3 /tmp/patch_shortcuts.py
-
-      - name: Configure Gradle Java Home
-        run: echo "org.gradle.java.home=$JAVA_HOME" >> android/gradle.properties
 
       - name: Patch geolocator_android build.gradle
         run: |
           CACHE="${PUB_CACHE:-$HOME/.pub-cache}"
           find "$CACHE" -name "build.gradle" -path "*geolocator_android*" 2>/dev/null | while read -r f; do
-            sed -i 's/flutter\.compileSdkVersion/36/g'        "$f"
-            sed -i 's/flutter\.minSdkVersion/21/g'            "$f"
-            sed -i 's/flutter\.targetSdkVersion/36/g'         "$f"
-            sed -i 's/flutter\.ndkVersion/"29.0.14206865"/g'  "$f"
+            sed -i 's/flutter\.compileSdkVersion/36/g' "$f"
+            sed -i 's/flutter\.minSdkVersion/21/g' "$f"
+            sed -i 's/flutter\.targetSdkVersion/36/g' "$f"
+            sed -i 's/flutter\.ndkVersion/"29.0.14206865"/g' "$f"
             echo "geolocator patched: $f"
           done
+
+      - name: Patch jcenter to mavenCentral
+        run: |
+          CACHE="${PUB_CACHE:-$HOME/.pub-cache}"
+          find "$CACHE" -name "build.gradle" -exec sed -i 's/jcenter()/mavenCentral()/g' {} + 2>/dev/null || true
+
+      - name: Copy google-services.json
+        run: |
+          if [ ! -f "google-services.json" ]; then
+            echo "::error::google-services.json NOT FOUND in repo root!"
+            exit 1
+          fi
+          cp google-services.json android/app/google-services.json
+          echo "google-services.json copied"
+
+      - name: Set app icon from logo.png
+        run: |
+          pip install Pillow --break-system-packages -q
+          printf '%s' "ZnJvbSBQSUwgaW1wb3J0IEltYWdlLCBJbWFnZURyYXcKaW1wb3J0IG9zCkJHID0gKDcsIDE2LCAzMCwgMjU1KQpsb2dvID0gSW1hZ2Uub3BlbignYXNzZXRzL2ltYWdlcy9sb2dvLnBuZycpLmNvbnZlcnQoJ1JHQkEnKQpiYm94ID0gbG9nby5nZXRiYm94KCkKaWYgYmJveDoKICAgIGxvZ28gPSBsb2dvLmNyb3AoYmJveCkKbHcsIGxoID0gbG9nby5zaXplCmhhbGYgPSBtaW4obHcsIGxoKSAvLyAyCmN4LCBjeSA9IGx3IC8vIDIsIGxoIC8vIDIKbG9nbyA9IGxvZ28uY3JvcCgoY3gtaGFsZiwgY3ktaGFsZiwgY3graGFsZiwgY3kraGFsZikpCnN0ZCA9IHsnbWlwbWFwLW1kcGknOjQ4LCdtaXBtYXAtaGRwaSc6NzIsJ21pcG1hcC14aGRwaSc6OTYsJ21pcG1hcC14eGhkcGknOjE0NCwnbWlwbWFwLXh4eGhkcGknOjE5Mn0KZm9yIGQsIHN6IGluIHN0ZC5pdGVtcygpOgogICAgb3V0ID0gJ2FuZHJvaWQvYXBwL3NyYy9tYWluL3Jlcy8nICsgZAogICAgb3MubWFrZWRpcnMob3V0LCBleGlzdF9vaz1UcnVlKQogICAgYmcgPSBJbWFnZS5uZXcoJ1JHQkEnLChzeixzeiksQkcpCiAgICBscyA9IGludChzeiowLjc4KQogICAgbHIgPSBsb2dvLnJlc2l6ZSgobHMsbHMpLEltYWdlLkxBTkNaT1MpCiAgICBvZmYgPSAoc3otbHMpLy8yCiAgICBiZy5wYXN0ZShsciwob2ZmLG9mZiksbHIpCiAgICBiZy5jb252ZXJ0KCdSR0InKS5zYXZlKG91dCsnL2ljX2xhdW5jaGVyLnBuZycpCiAgICBjaXJjID0gSW1hZ2UubmV3KCdSR0JBJywoc3osc3opLCgwLDAsMCwwKSkKICAgIG1zayA9IEltYWdlLm5ldygnTCcsKHN6LHN6KSwwKQogICAgSW1hZ2VEcmF3LkRyYXcobXNrKS5lbGxpcHNlKCgwLDAsc3osc3opLGZpbGw9MjU1KQogICAgY2lyYy5wYXN0ZShiZy5jb252ZXJ0KCdSR0JBJyksKDAsMCksbXNrKQogICAgY2lyYy5zYXZlKG91dCsnL2ljX2xhdW5jaGVyX3JvdW5kLnBuZycpCmFkYXB0ID0geydtaXBtYXAtbWRwaSc6NzIsJ21pcG1hcC1oZHBpJzoxMDgsJ21pcG1hcC14aGRwaSc6MTQ0LCdtaXBtYXAteHhoZHBpJzoyMTYsJ21pcG1hcC14eHhoZHBpJzoyODh9CmZvciBkLCBzeiBpbiBhZGFwdC5pdGVtcygpOgogICAgb3V0ID0gJ2FuZHJvaWQvYXBwL3NyYy9tYWluL3Jlcy8nICsgZAogICAgb3MubWFrZWRpcnMob3V0LCBleGlzdF9vaz1UcnVlKQogICAgZmcgPSBJbWFnZS5uZXcoJ1JHQkEnLChzeixzeiksKDAsMCwwLDApKQogICAgbHMgPSBpbnQoc3oqMC42NCkKICAgIGxyID0gbG9nby5yZXNpemUoKGxzLGxzKSxJbWFnZS5MQU5DWk9TKQogICAgb2ZmID0gKHN6LWxzKS8vMgogICAgZmcucGFzdGUobHIsKG9mZixvZmYpLGxyKQogICAgZmcuc2F2ZShvdXQrJy9pY19sYXVuY2hlcl9mb3JlZ3JvdW5kLnBuZycpCmFueWRwaSA9ICdhbmRyb2lkL2FwcC9zcmMvbWFpbi9yZXMvbWlwbWFwLWFueWRwaS12MjYnCnZhbHVlcyA9ICdhbmRyb2lkL2FwcC9zcmMvbWFpbi9yZXMvdmFsdWVzJwpvcy5tYWtlZGlycyhhbnlkcGksIGV4aXN0X29rPVRydWUpCm9zLm1ha2VkaXJzKHZhbHVlcywgZXhpc3Rfb2s9VHJ1ZSkKd2l0aCBvcGVuKHZhbHVlcysnL2ljX2xhdW5jaGVyX2JhY2tncm91bmQueG1sJywndycpIGFzIGY6CiAgICBmLndyaXRlKCc8P3htbCB2ZXJzaW9uPSIxLjAiIGVuY29kaW5nPSJ1dGYtOCI/PlxuPHJlc291cmNlcz5cbiAgICA8Y29sb3IgbmFtZT0iaWNfbGF1bmNoZXJfYmFja2dyb3VuZCI+IzA3MTAxRTwvY29sb3I+XG48L3Jlc291cmNlcz5cbicpCmF4ID0gJzw/eG1sIHZlcnNpb249IjEuMCIgZW5jb2Rpbmc9InV0Zi04Ij8+XG48YWRhcHRpdmUtaWNvbiB4bWxuczphbmRyb2lkPSJodHRwOi8vc2NoZW1hcy5hbmRyb2lkLmNvbS9hcGsvcmVzL2FuZHJvaWQiPlxuICAgIDxiYWNrZ3JvdW5kIGFuZHJvaWQ6ZHJhd2FibGU9IkBjb2xvci9pY19sYXVuY2hlcl9iYWNrZ3JvdW5kIi8+XG4gICAgPGZvcmVncm91bmQgYW5kcm9pZDpkcmF3YWJsZT0iQG1pcG1hcC9pY19sYXVuY2hlcl9mb3JlZ3JvdW5kIi8+XG48L2FkYXB0aXZlLWljb24+XG4nCndpdGggb3BlbihhbnlkcGkrJy9pY19sYXVuY2hlci54bWwnLCd3JykgYXMgZjogZi53cml0ZShheCkKd2l0aCBvcGVuKGFueWRwaSsnL2ljX2xhdW5jaGVyX3JvdW5kLnhtbCcsJ3cnKSBhcyBmOiBmLndyaXRlKGF4KQpwcmludCgnSWNvbiArIGFkYXB0aXZlIFhNTCBkb25lJyk=" | base64 -d > /tmp/gen_icons.py && python3 /tmp/gen_icons.py
+
+      - name: Apply Google Services Plugin (Firebase)
+        run: |
+          printf '%s' "aW1wb3J0IHJlLCBzeXMsIG9zCmFwcF9wYXRoID0gJ2FuZHJvaWQvYXBwL2J1aWxkLmdyYWRsZScKc2V0X3BhdGggPSAnYW5kcm9pZC9zZXR0aW5ncy5ncmFkbGUnCmZvciBwIGluIFthcHBfcGF0aCwgc2V0X3BhdGhdOgogICAgaWYgbm90IG9zLnBhdGguZXhpc3RzKHApOgogICAgICAgIHByaW50KGYiRVJST1I6IHtwfSBub3QgZm91bmQuIENXRD17b3MuZ2V0Y3dkKCl9IiwgZmlsZT1zeXMuc3RkZXJyKQogICAgICAgIHN5cy5leGl0KDEpCmFwcCA9IG9wZW4oYXBwX3BhdGgpLnJlYWQoKQpzZXR0aW5ncyA9IG9wZW4oc2V0X3BhdGgpLnJlYWQoKQppZiAnY29tLmdvb2dsZS5nbXMuZ29vZ2xlLXNlcnZpY2VzJyBub3QgaW4gc2V0dGluZ3M6CiAgICBzZXR0aW5ncyA9IHJlLnN1YigKICAgICAgICByJyhpZCAiY29tXC5hbmRyb2lkXC5hcHBsaWNhdGlvbiIgdmVyc2lvbiAiW14iXSoiIGFwcGx5IGZhbHNlKScsCiAgICAgICAgcidcMVxuICAgIGlkICJjb20uZ29vZ2xlLmdtcy5nb29nbGUtc2VydmljZXMiIHZlcnNpb24gIjQuNC4yIiBhcHBseSBmYWxzZScsCiAgICAgICAgc2V0dGluZ3MsIGNvdW50PTEpCiAgICBvcGVuKHNldF9wYXRoLCAndycpLndyaXRlKHNldHRpbmdzKQogICAgcHJpbnQoImdvb2dsZS1zZXJ2aWNlcyBkZWNsYXJlZCBpbiBzZXR0aW5ncy5ncmFkbGUiKQppZiAnY29tLmdvb2dsZS5nbXMuZ29vZ2xlLXNlcnZpY2VzJyBub3QgaW4gYXBwOgogICAgYXBwID0gcmUuc3ViKAogICAgICAgIHInKGlkICJkZXZcLmZsdXR0ZXJcLmZsdXR0ZXItZ3JhZGxlLXBsdWdpbiIpJywKICAgICAgICByJ1wxXG4gICAgaWQgImNvbS5nb29nbGUuZ21zLmdvb2dsZS1zZXJ2aWNlcyInLAogICAgICAgIGFwcCwgY291bnQ9MSkKICAgIG9wZW4oYXBwX3BhdGgsICd3Jykud3JpdGUoYXBwKQogICAgcHJpbnQoImdvb2dsZS1zZXJ2aWNlcyBhcHBsaWVkIGFmdGVyIGZsdXR0ZXItZ3JhZGxlLXBsdWdpbiIpCmFwcDIgPSBvcGVuKGFwcF9wYXRoKS5yZWFkKCkKbGluZXMgPSBbbC5zdHJpcCgpIGZvciBsIGluIGFwcDIuc3BsaXQoJ1xuJykgaWYgJ2lkICInIGluIGwgYW5kICdhcHBseSBmYWxzZScgbm90IGluIGxdCnByaW50KCJQbHVnaW4gb3JkZXI6IiwgbGluZXMpCmlkeF9hID0gbmV4dChpIGZvciBpLGwgaW4gZW51bWVyYXRlKGxpbmVzKSBpZiAnY29tLmFuZHJvaWQuYXBwbGljYXRpb24nIGluIGwpCmlkeF9nID0gbmV4dChpIGZvciBpLGwgaW4gZW51bWVyYXRlKGxpbmVzKSBpZiAnZ29vZ2xlLXNlcnZpY2VzJyBpbiBsKQphc3NlcnQgaWR4X2cgPiBpZHhfYSwgIkZBVEFMOiBnb29nbGUtc2VydmljZXMgYmVmb3JlIGNvbS5hbmRyb2lkLmFwcGxpY2F0aW9uISIKcHJpbnQoIlBsdWdpbiBvcmRlciBjb3JyZWN0Iik=" | base64 -d > /tmp/apply_gms.py && python3 /tmp/apply_gms.py
+
+      - name: Bump all SDK versions to API 36
+        run: |
+          F="android/app/build.gradle"
+          sed -i 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 36/g' "$F"
+          sed -i 's/compileSdk flutter\.compileSdkVersion/compileSdk 36/g' "$F"
+          sed -i 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 36/g' "$F"
+          sed -i 's/compileSdk 35/compileSdk 36/g' "$F"
+          sed -i 's/targetSdkVersion flutter\.targetSdkVersion/targetSdkVersion 36/g' "$F"
+          sed -i 's/targetSdk flutter\.targetSdkVersion/targetSdk 36/g' "$F"
+          sed -i 's/targetSdk = flutter\.targetSdkVersion/targetSdk = 36/g' "$F"
+          sed -i 's/targetSdk 35/targetSdk 36/g' "$F"
+          sed -i 's/minSdkVersion flutter\.minSdkVersion/minSdkVersion 23/g' "$F"
+          sed -i 's/minSdk flutter\.minSdkVersion/minSdk 23/g' "$F"
+          sed -i 's/minSdk = flutter\.minSdkVersion/minSdk = 23/g' "$F"
+          grep -E "compileSdk|targetSdk|minSdk" "$F"
+          if grep -q "flutter\.compileSdkVersion\|flutter\.targetSdkVersion\|flutter\.minSdkVersion" "$F"; then
+            echo "::error::flutter.* SDK refs still present!"
+            exit 1
+          fi
+          echo "SDK versions set to 36"
+
+      - name: Inject NDK 29 + 16KB + abiFilters + packaging
+        run: |
+          printf '%s' "aW1wb3J0IHJlLCBzeXMsIG9zCnAgPSAnYW5kcm9pZC9hcHAvYnVpbGQuZ3JhZGxlJwppZiBub3Qgb3MucGF0aC5leGlzdHMocCk6CiAgICBwcmludChmIkVSUk9SOiB7cH0gbm90IGZvdW5kIENXRD17b3MuZ2V0Y3dkKCl9IiwgZmlsZT1zeXMuc3RkZXJyKQogICAgc3lzLmV4aXQoMSkKcyA9IG9wZW4ocCkucmVhZCgpCmlmICduZGtWZXJzaW9uJyBub3QgaW4gczoKICAgIHMgPSByZS5zdWIocicoY29tcGlsZVNka1xzKzM2KScscidcMVxuICAgIG5ka1ZlcnNpb24gIjI5LjAuMTQyMDY4NjUiXG4gICAgYnVpbGRUb29sc1ZlcnNpb24gIjM2LjEuMCInLHMsY291bnQ9MSkKYXNzZXJ0ICduZGtWZXJzaW9uICIyOS4wLjE0MjA2ODY1IicgaW4gcwppZiAnQU5EUk9JRF9TVVBQT1JUX0ZMRVhJQkxFX1BBR0VfU0laRVMnIG5vdCBpbiBzOgogICAgcyA9IHJlLnN1YigKICAgICAgICByJyh2ZXJzaW9uTmFtZVteXG5dKlxuKShccypcfSknLAogICAgICAgIHInXDEgICAgICAgIG11bHRpRGV4RW5hYmxlZCB0cnVlXG4gICAgICAgIG5kayB7IGFiaUZpbHRlcnMgImFybWVhYmktdjdhIiwgImFybTY0LXY4YSIsICJ4ODYiLCAieDg2XzY0IiB9XG4gICAgICAgIGV4dGVybmFsTmF0aXZlQnVpbGQge1xuICAgICAgICAgICAgY21ha2UgeyBhcmd1bWVudHMgKz0gIi1EQU5EUk9JRF9TVVBQT1JUX0ZMRVhJQkxFX1BBR0VfU0laRVM9T04iIH1cbiAgICAgICAgfVxuXDInLAogICAgICAgIHMsIGNvdW50PTEpCmFzc2VydCAnQU5EUk9JRF9TVVBQT1JUX0ZMRVhJQkxFX1BBR0VfU0laRVMnIGluIHMKYXNzZXJ0ICdhYmlGaWx0ZXJzJyBpbiBzCmlmICd1c2VMZWdhY3lQYWNrYWdpbmcnIG5vdCBpbiBzOgogICAgcGtnID0gJyAgICBwYWNrYWdpbmdPcHRpb25zIHtcbiAgICAgICAgcmVzb3VyY2VzIHsgZXhjbHVkZXMgKz0gW1wnL01FVEEtSU5GL3tBTDIuMCxMR1BMMi4xfVwnXSB9XG4gICAgICAgIGpuaUxpYnMgeyB1c2VMZWdhY3lQYWNrYWdpbmcgPSBmYWxzZSB9XG4gICAgfVxuXG4gICAgYnVpbGRUeXBlcyB7JwogICAgcyA9IHMucmVwbGFjZSgnICAgIGJ1aWxkVHlwZXMgeycsIHBrZywgMSkKYXNzZXJ0IHMuY291bnQoJyAgICBidWlsZFR5cGVzIHsnKSA9PSAxCmlmICdTWU1CT0xfVEFCTEUnIG5vdCBpbiBzOgogICAgcyA9IHJlLnN1YihyJyhyZWxlYXNlXHMqXHspJyxyIlwxXG4gICAgICAgICAgICBuZGsgeyBkZWJ1Z1N5bWJvbExldmVsICdTWU1CT0xfVEFCTEUnIH0iLHMsY291bnQ9MSkKb3BlbihwLCd3Jykud3JpdGUocykKcHJpbnQoIk5ESyAyOSArIDE2S0IgKyBwYWNrYWdpbmcgaW5qZWN0ZWQiKQpmb3IgbGluZSBpbiBzLnNwbGl0KCdcbicpOgogICAgaWYgYW55KHggaW4gbGluZSBmb3IgeCBpbiBbJ2NvbXBpbGVTZGsnLCd0YXJnZXRTZGsnLCdtaW5TZGsnLCduZGtWZXJzaW9uJywnYWJpRmlsdGVyJywnRkxFWElCTEUnLCd1c2VMZWdhY3knLCdTWU1CT0wnXSk6CiAgICAgICAgcHJpbnQoIiAiLCBsaW5lLnN0cmlwKCkp" | base64 -d > /tmp/inject_ndk.py && python3 /tmp/inject_ndk.py
+
+      - name: Patch AndroidManifest (permissions + FCM + 16KB)
+        run: |
+          printf '%s' "aW1wb3J0IHhtbC5ldHJlZS5FbGVtZW50VHJlZSBhcyBFVCwgc3lzCnBhdGggPSAnYW5kcm9pZC9hcHAvc3JjL21haW4vQW5kcm9pZE1hbmlmZXN0LnhtbCcKY29udGVudCA9IG9wZW4ocGF0aCkucmVhZCgpCmlmICdGTFVUVEVSX05PVElGSUNBVElPTl9DTElDSycgbm90IGluIGNvbnRlbnQ6CiAgICBjb250ZW50ID0gY29udGVudC5yZXBsYWNlKCc8L2ludGVudC1maWx0ZXI+JywKICAgICAgICAnPC9pbnRlbnQtZmlsdGVyPlxuICAgICAgICAgICAgPGludGVudC1maWx0ZXI+XG4gICAgICAgICAgICAgICAgPGFjdGlvbiBhbmRyb2lkOm5hbWU9IkZMVVRURVJfTk9USUZJQ0FUSU9OX0NMSUNLIi8+XG4gICAgICAgICAgICAgICAgPGNhdGVnb3J5IGFuZHJvaWQ6bmFtZT0iYW5kcm9pZC5pbnRlbnQuY2F0ZWdvcnkuREVGQVVMVCIvPlxuICAgICAgICAgICAgPC9pbnRlbnQtZmlsdGVyPicsMSkKICAgIHByaW50KCdGTFVUVEVSX05PVElGSUNBVElPTl9DTElDSyBhZGRlZCcpCmlmICdub3ZhX3hfY2hhbm5lbCcgbm90IGluIGNvbnRlbnQ6CiAgICBjb250ZW50ID0gY29udGVudC5yZXBsYWNlKCcgICAgPC9hcHBsaWNhdGlvbj4nLAogICAgICAgICcgICAgICAgIDxtZXRhLWRhdGEgYW5kcm9pZDpuYW1lPSJjb20uZ29vZ2xlLmZpcmViYXNlLm1lc3NhZ2luZy5kZWZhdWx0X25vdGlmaWNhdGlvbl9jaGFubmVsX2lkIiBhbmRyb2lkOnZhbHVlPSJub3ZhX3hfY2hhbm5lbCIvPlxuJwogICAgICAgICcgICAgICAgIDxtZXRhLWRhdGEgYW5kcm9pZDpuYW1lPSJjb20uZ29vZ2xlLmZpcmViYXNlLm1lc3NhZ2luZy5kZWZhdWx0X25vdGlmaWNhdGlvbl9pY29uIiBhbmRyb2lkOnJlc291cmNlPSJAbWlwbWFwL2ljX2xhdW5jaGVyIi8+XG4nCiAgICAgICAgJyAgICAgICAgPG1ldGEtZGF0YSBhbmRyb2lkOm5hbWU9ImNvbS5nb29nbGUuZmlyZWJhc2UubWVzc2FnaW5nLmRlZmF1bHRfbm90aWZpY2F0aW9uX2NvbG9yIiBhbmRyb2lkOnJlc291cmNlPSJAY29sb3Ivbm92YV94X2N5YW4iLz5cbicKICAgICAgICAnICAgICAgICA8bWV0YS1kYXRhIGFuZHJvaWQ6bmFtZT0iY29tLmdvb2dsZS5hbmRyb2lkLmdlby5BUElfS0VZIiBhbmRyb2lkOnZhbHVlPSJBSXphU3lCY19iTkJqX2htc0c1ck5GWEhDNFRtZ3AwQlJCanlYb3MiLz5cbicKICAgICAgICAnICAgICAgICA8cHJvcGVydHkgYW5kcm9pZDpuYW1lPSJhbmRyb2lkLnN1cHBvcnQuTEFSR0VfUEFHRV9TSVpFIiBhbmRyb2lkOnZhbHVlPSJ0cnVlIi8+XG4nCiAgICAgICAgJyAgICA8L2FwcGxpY2F0aW9uPicsMSkKICAgIHByaW50KCdGQ00gbWV0YWRhdGEgKyAxNktCIHByb3BlcnR5IGFkZGVkJykKaWYgJ0FEX0lEJyBub3QgaW4gY29udGVudDoKICAgIGNvbnRlbnQgPSBjb250ZW50LnJlcGxhY2UoCiAgICAgICAgJzx1c2VzLXBlcm1pc3Npb24gYW5kcm9pZDpuYW1lPSJhbmRyb2lkLnBlcm1pc3Npb24uSU5URVJORVQiIC8+JywKICAgICAgICAnPHVzZXMtcGVybWlzc2lvbiBhbmRyb2lkOm5hbWU9ImFuZHJvaWQucGVybWlzc2lvbi5JTlRFUk5FVCIgLz5cbiAgICA8dXNlcy1wZXJtaXNzaW9uIGFuZHJvaWQ6bmFtZT0iY29tLmdvb2dsZS5hbmRyb2lkLmdtcy5wZXJtaXNzaW9uLkFEX0lEIi8+XG4gICAgPHVzZXMtcGVybWlzc2lvbiBhbmRyb2lkOm5hbWU9ImFuZHJvaWQucGVybWlzc2lvbi5QT1NUX05PVElGSUNBVElPTlMiLz5cbiAgICA8dXNlcy1wZXJtaXNzaW9uIGFuZHJvaWQ6bmFtZT0iYW5kcm9pZC5wZXJtaXNzaW9uLkFDQ0VTU19GSU5FX0xPQ0FUSU9OIi8+XG4gICAgPHVzZXMtcGVybWlzc2lvbiBhbmRyb2lkOm5hbWU9ImFuZHJvaWQucGVybWlzc2lvbi5BQ0NFU1NfQ09BUlNFX0xPQ0FUSU9OIi8+XG4gICAgPHVzZXMtcGVybWlzc2lvbiBhbmRyb2lkOm5hbWU9ImFuZHJvaWQucGVybWlzc2lvbi5SRUFEX01FRElBX0lNQUdFUyIvPlxuICAgIDx1c2VzLXBlcm1pc3Npb24gYW5kcm9pZDpuYW1lPSJhbmRyb2lkLnBlcm1pc3Npb24uUkVBRF9FWFRFUk5BTF9TVE9SQUdFIiBhbmRyb2lkOm1heFNka1ZlcnNpb249IjMyIi8+JywxKQogICAgcHJpbnQoJ0V4dHJhIHBlcm1pc3Npb25zIGFkZGVkJykKRVQuZnJvbXN0cmluZyhjb250ZW50KQpwcmludCgnQW5kcm9pZE1hbmlmZXN0IFhNTCB2YWxpZCcpCm9wZW4ocGF0aCwndycpLndyaXRlKGNvbnRlbnQp" | base64 -d > /tmp/patch_manifest.py && python3 /tmp/patch_manifest.py
+
+      - name: Create notification colour + shortcut resources
+        run: |
+          mkdir -p android/app/src/main/res/values
+          mkdir -p android/app/src/main/res/xml
+          mkdir -p android/app/src/main/res/drawable
+          printf '%s' '<?xml version="1.0" encoding="utf-8"?><resources><color name="nova_x_cyan">#00D4FF</color></resources>' > android/app/src/main/res/values/colors.xml
+          printf '%s' '<?xml version="1.0" encoding="utf-8"?><shortcuts xmlns:android="http://schemas.android.com/apk/res/android"><shortcut android:shortcutId="new_tab" android:enabled="true" android:icon="@drawable/ic_sc_new_tab" android:shortcutShortLabel="@string/sc_new_tab_s" android:shortcutLongLabel="@string/sc_new_tab_l"><intent android:action="com.tlyfe.nova_x.NEW_TAB" android:targetPackage="com.tlyfe.nova_x" android:targetClass="com.tlyfe.nova_x.MainActivity"/></shortcut></shortcuts>' > android/app/src/main/res/xml/shortcuts.xml
+          printf '%s' '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24"><path android:fillColor="#00D4FF" android:pathData="M19,13H13v6H11v-6H5v-2H11V5H13v6H19v2Z"/></vector>' > android/app/src/main/res/drawable/ic_sc_new_tab.xml
+          printf '%s' '<?xml version="1.0" encoding="utf-8"?><resources><string name="sc_new_tab_s">New Tab</string><string name="sc_new_tab_l">Open New Tab in NOVA X</string></resources>' > android/app/src/main/res/values/strings.xml
+          echo "Resources created"
+
+      - name: Configure Gradle Java Home
+        run: echo "org.gradle.java.home=$JAVA_HOME" >> android/gradle.properties
 
       - name: Configure release signing
         env:
@@ -165,20 +127,17 @@ jobs:
           KEY_ALIAS:         ${{ secrets.KEY_ALIAS }}
         run: |
           if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "::error::KEYSTORE_BASE64 secret is missing."
+            echo "::error::KEYSTORE_BASE64 secret missing"
             exit 1
           fi
           printf '%s' "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > android/app/upload-keystore.jks
-          KS_SIZE=$(wc -c < android/app/upload-keystore.jks)
-          if [ "$KS_SIZE" -lt 1000 ]; then
-            echo "::error::Keystore only ${KS_SIZE} bytes."
-            exit 1
-          fi
+          KS=$(wc -c < android/app/upload-keystore.jks)
+          [ "$KS" -lt 1000 ] && { echo "::error::Keystore too small (${KS} bytes)"; exit 1; }
           printf 'storePassword=%s\nkeyPassword=%s\nkeyAlias=%s\nstoreFile=upload-keystore.jks\n' \
             "$KEYSTORE_PASSWORD" "$KEY_PASSWORD" "$KEY_ALIAS" > android/key.properties
-          echo "aW1wb3J0IHJlLCBzeXMsIG9zCnAgPSAnYW5kcm9pZC9hcHAvYnVpbGQuZ3JhZGxlJwpzID0gb3BlbihwKS5yZWFkKCkKaWYgJ2tleXN0b3JlUHJvcGVydGllcycgbm90IGluIHM6CiAgICBsb2FkZXIgPSAiZGVmIGtleXN0b3JlUHJvcGVydGllcyA9IG5ldyBQcm9wZXJ0aWVzKClcbmRlZiBrZXlzdG9yZVByb3BlcnRpZXNGaWxlID0gcm9vdFByb2plY3QuZmlsZSgna2V5LnByb3BlcnRpZXMnKVxuaWYgKGtleXN0b3JlUHJvcGVydGllc0ZpbGUuZXhpc3RzKCkpIHtcbiAgICBrZXlzdG9yZVByb3BlcnRpZXNGaWxlLndpdGhSZWFkZXIoJ1VURi04JykgeyByIC0+IGtleXN0b3JlUHJvcGVydGllcy5sb2FkKHIpIH1cbn1cblxuIgogICAgcyA9IHMucmVwbGFjZSgiYW5kcm9pZCB7IiwgbG9hZGVyICsgImFuZHJvaWQgeyIsIDEpCmlmICdzaWduaW5nQ29uZmlncyB7JyBub3QgaW4gczoKICAgIHNpZ25fYmxvY2sgPSAiICAgIHNpZ25pbmdDb25maWdzIHtcbiAgICAgICAgcmVsZWFzZSB7XG4gICAgICAgICAgICBrZXlBbGlhcyBrZXlzdG9yZVByb3BlcnRpZXNbJ2tleUFsaWFzJ11cbiAgICAgICAgICAgIGtleVBhc3N3b3JkIGtleXN0b3JlUHJvcGVydGllc1sna2V5UGFzc3dvcmQnXVxuICAgICAgICAgICAgc3RvcmVGaWxlIGtleXN0b3JlUHJvcGVydGllc1snc3RvcmVGaWxlJ10gPyBmaWxlKGtleXN0b3JlUHJvcGVydGllc1snc3RvcmVGaWxlJ10pIDogbnVsbFxuICAgICAgICAgICAgc3RvcmVQYXNzd29yZCBrZXlzdG9yZVByb3BlcnRpZXNbJ3N0b3JlUGFzc3dvcmQnXVxuICAgICAgICB9XG4gICAgfVxuXG4gICAgYnVpbGRUeXBlcyB7IgogICAgcyA9IHMucmVwbGFjZSgiICAgIGJ1aWxkVHlwZXMgeyIsIHNpZ25fYmxvY2ssIDEpCmlmICdzaWduaW5nQ29uZmlncy5kZWJ1ZycgaW4gczoKICAgIHMgPSBzLnJlcGxhY2UoInNpZ25pbmdDb25maWcgPSBzaWduaW5nQ29uZmlncy5kZWJ1ZyIsICJzaWduaW5nQ29uZmlnID0gc2lnbmluZ0NvbmZpZ3MucmVsZWFzZSIpCiAgICBzID0gcy5yZXBsYWNlKCJzaWduaW5nQ29uZmlnIHNpZ25pbmdDb25maWdzLmRlYnVnIiwgInNpZ25pbmdDb25maWcgc2lnbmluZ0NvbmZpZ3MucmVsZWFzZSIpCmVsaWYgJ3NpZ25pbmdDb25maWcnIG5vdCBpbiBzLnNwbGl0KCdidWlsZFR5cGVzIHsnLDEpWzFdLnNwbGl0KCd9JywxKVswXToKICAgIHMgPSByZS5zdWIocicocmVsZWFzZVxzKlx7KScsIHInXDFcbiAgICAgICAgICAgIHNpZ25pbmdDb25maWcgc2lnbmluZ0NvbmZpZ3MucmVsZWFzZScsIHMsIGNvdW50PTEpCmFzc2VydCBzLmNvdW50KCcgICAgYnVpbGRUeXBlcyB7JykgPT0gMSwgZiJEdXBsaWNhdGUgYnVpbGRUeXBlcyEgQ291bnQ9e3MuY291bnQoJ2J1aWxkVHlwZXMgeycpfSIKYXNzZXJ0ICdzaWduaW5nQ29uZmlncy5yZWxlYXNlJyBpbiBzCmFzc2VydCAnc2lnbmluZ0NvbmZpZ3MuZGVidWcnIG5vdCBpbiBzCm9wZW4ocCwgJ3cnKS53cml0ZShzKQpwcmludCgiYnVpbGQuZ3JhZGxlIHNpZ25pbmcgY29uZmlndXJlZCIpCg==" | base64 -d > /tmp/apply_signing.py
-          python3 /tmp/apply_signing.py
-          grep -A12 "buildTypes {" android/app/build.gradle
+          echo "Keystore ready (${KS} bytes)"
+          printf '%s' "aW1wb3J0IHJlLCBzeXMsIG9zCnAgPSAnYW5kcm9pZC9hcHAvYnVpbGQuZ3JhZGxlJwpzID0gb3BlbihwKS5yZWFkKCkKaWYgJ2tleXN0b3JlUHJvcGVydGllcycgbm90IGluIHM6CiAgICBsb2FkZXIgPSAiZGVmIGtleXN0b3JlUHJvcGVydGllcyA9IG5ldyBQcm9wZXJ0aWVzKClcbmRlZiBrZXlzdG9yZVByb3BlcnRpZXNGaWxlID0gcm9vdFByb2plY3QuZmlsZSgna2V5LnByb3BlcnRpZXMnKVxuaWYgKGtleXN0b3JlUHJvcGVydGllc0ZpbGUuZXhpc3RzKCkpIHtcbiAgICBrZXlzdG9yZVByb3BlcnRpZXNGaWxlLndpdGhSZWFkZXIoJ1VURi04JykgeyByIC0+IGtleXN0b3JlUHJvcGVydGllcy5sb2FkKHIpIH1cbn1cblxuIgogICAgcyA9IHMucmVwbGFjZSgiYW5kcm9pZCB7IiwgbG9hZGVyICsgImFuZHJvaWQgeyIsIDEpCmlmICdzaWduaW5nQ29uZmlncyB7JyBub3QgaW4gczoKICAgIHNpZ24gPSAiICAgIHNpZ25pbmdDb25maWdzIHtcbiAgICAgICAgcmVsZWFzZSB7XG4gICAgICAgICAgICBrZXlBbGlhcyBrZXlzdG9yZVByb3BlcnRpZXNbJ2tleUFsaWFzJ11cbiAgICAgICAgICAgIGtleVBhc3N3b3JkIGtleXN0b3JlUHJvcGVydGllc1sna2V5UGFzc3dvcmQnXVxuICAgICAgICAgICAgc3RvcmVGaWxlIGtleXN0b3JlUHJvcGVydGllc1snc3RvcmVGaWxlJ10gPyBmaWxlKGtleXN0b3JlUHJvcGVydGllc1snc3RvcmVGaWxlJ10pIDogbnVsbFxuICAgICAgICAgICAgc3RvcmVQYXNzd29yZCBrZXlzdG9yZVByb3BlcnRpZXNbJ3N0b3JlUGFzc3dvcmQnXVxuICAgICAgICB9XG4gICAgfVxuXG4gICAgYnVpbGRUeXBlcyB7IgogICAgcyA9IHMucmVwbGFjZSgiICAgIGJ1aWxkVHlwZXMgeyIsIHNpZ24sIDEpCmlmICdzaWduaW5nQ29uZmlncy5kZWJ1ZycgaW4gczoKICAgIHMgPSBzLnJlcGxhY2UoInNpZ25pbmdDb25maWcgPSBzaWduaW5nQ29uZmlncy5kZWJ1ZyIsInNpZ25pbmdDb25maWcgPSBzaWduaW5nQ29uZmlncy5yZWxlYXNlIikKICAgIHMgPSBzLnJlcGxhY2UoInNpZ25pbmdDb25maWcgc2lnbmluZ0NvbmZpZ3MuZGVidWciLCJzaWduaW5nQ29uZmlnIHNpZ25pbmdDb25maWdzLnJlbGVhc2UiKQplbGlmICdzaWduaW5nQ29uZmlnJyBub3QgaW4gcy5zcGxpdCgnYnVpbGRUeXBlcyB7JywxKVsxXS5zcGxpdCgnfScsMSlbMF06CiAgICBzID0gcmUuc3ViKHInKHJlbGVhc2VccypceyknLHInXDFcbiAgICAgICAgICAgIHNpZ25pbmdDb25maWcgc2lnbmluZ0NvbmZpZ3MucmVsZWFzZScscyxjb3VudD0xKQphc3NlcnQgcy5jb3VudCgnICAgIGJ1aWxkVHlwZXMgeycpID09IDEsIGYiRHVwbGljYXRlIGJ1aWxkVHlwZXMhIHtzLmNvdW50KCdidWlsZFR5cGVzIHsnKX0iCmFzc2VydCAnc2lnbmluZ0NvbmZpZ3MucmVsZWFzZScgaW4gcwphc3NlcnQgJ3NpZ25pbmdDb25maWdzLmRlYnVnJyBub3QgaW4gcwpvcGVuKHAsJ3cnKS53cml0ZShzKQpwcmludCgiU2lnbmluZyBjb25maWd1cmVkIik=" | base64 -d > /tmp/apply_signing.py && python3 /tmp/apply_signing.py
+          grep -A10 "buildTypes {" android/app/build.gradle
 
       - name: Final Verification
         run: |
@@ -186,18 +145,17 @@ jobs:
           grep -E "compileSdk|targetSdk|minSdk" android/app/build.gradle | grep -v "//"
           echo "=== ndkVersion ==="
           grep "ndkVersion" android/app/build.gradle
-          echo "=== 16KB cmake flag ==="
+          echo "=== 16KB cmake ==="
           grep "FLEXIBLE_PAGE_SIZES" android/app/build.gradle
-          echo "=== LARGE_PAGE_SIZE in manifest ==="
+          echo "=== LARGE_PAGE_SIZE ==="
           grep "LARGE_PAGE_SIZE" android/app/src/main/AndroidManifest.xml
-          echo "=== AD_ID permission ==="
+          echo "=== AD_ID ==="
           grep "AD_ID" android/app/src/main/AndroidManifest.xml
           if grep -q "flutter\.compileSdkVersion\|flutter\.targetSdkVersion\|flutter\.minSdkVersion" android/app/build.gradle; then
-            echo "::error::flutter.* SDK refs still present!"
+            echo "::error::flutter.* refs still present!"
             exit 1
           fi
-          echo "aW1wb3J0IHhtbC5ldHJlZS5FbGVtZW50VHJlZSBhcyBFVApFVC5wYXJzZSgnYW5kcm9pZC9hcHAvc3JjL21haW4vQW5kcm9pZE1hbmlmZXN0LnhtbCcpCnByaW50KCdBbmRyb2lkTWFuaWZlc3QueG1sIHZhbGlkIFhNTCcpCg==" | base64 -d > /tmp/validate_xml.py
-          python3 /tmp/validate_xml.py
+          printf '%s' "aW1wb3J0IHhtbC5ldHJlZS5FbGVtZW50VHJlZSBhcyBFVApFVC5wYXJzZSgnYW5kcm9pZC9hcHAvc3JjL21haW4vQW5kcm9pZE1hbmlmZXN0LnhtbCcpCnByaW50KCdBbmRyb2lkTWFuaWZlc3QueG1sIHZhbGlkIFhNTCcp" | base64 -d > /tmp/validate_xml.py && python3 /tmp/validate_xml.py
           echo "All checks passed"
 
       - name: Build Release APK

@@ -29,15 +29,11 @@ jobs:
       - name: Install Android NDK 29 + Build Tools 36
         run: |
           echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
-            "ndk;29.0.14206865" \
-            "build-tools;36.1.0" \
-            "platforms;android-36" \
+            "ndk;29.0.14206865" "build-tools;36.1.0" "platforms;android-36" \
             --sdk_root=$ANDROID_HOME || \
           echo "y" | sdkmanager \
-            "ndk;29.0.14206865" \
-            "build-tools;36.1.0" \
-            "platforms;android-36" || true
-          echo "✅ NDK 29 + build-tools 36 + platform-36 ready"
+            "ndk;29.0.14206865" "build-tools;36.1.0" "platforms;android-36" || true
+          echo "NDK 29 + build-tools 36 + platform-36 ready"
 
       - name: Accept Android licenses
         run: yes | flutter doctor --android-licenses || true
@@ -51,26 +47,26 @@ jobs:
           find "$CACHE" -name "build.gradle" -path "*/flutter_inappwebview_android*" 2>/dev/null | while read -r f; do
             chmod +w "$f" 2>/dev/null || true
             sed -i "s/getDefaultProguardFile('proguard-android\.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g" "$f"
-            echo "✓ ProGuard patched: $f"
+            echo "ProGuard patched: $f"
           done
 
       - name: Patch jcenter to mavenCentral
         run: |
           CACHE="${PUB_CACHE:-$HOME/.pub-cache}"
           find "$CACHE" -name "build.gradle" -exec sed -i 's/jcenter()/mavenCentral()/g' {} +
-          echo "✓ jcenter replaced"
+          echo "jcenter replaced"
 
       - name: Regenerate Android Platform Files
         run: |
           rm -rf android
           flutter create --platforms android --org com.tlyfe --project-name nova_x .
-          echo "✓ android/ regenerated"
+          echo "android/ regenerated"
 
       - name: Copy google-services.json
         run: |
           if [ -f "google-services.json" ]; then
             cp google-services.json android/app/google-services.json
-            echo "✓ google-services.json copied"
+            echo "google-services.json copied"
           else
             echo "::error::google-services.json NOT FOUND in repo root!"
             exit 1
@@ -79,206 +75,197 @@ jobs:
       - name: Set app icon from logo.png
         run: |
           pip install Pillow --break-system-packages -q
-          python3 << 'PYEOF2'
-          from PIL import Image, ImageDraw
-          import os
+          cat > /tmp/gen_icons.py << 'PYEOF'
+from PIL import Image, ImageDraw
+import os
 
-          BG = (7, 16, 30, 255)
-          logo = Image.open('assets/images/logo.png').convert('RGBA')
-          bbox = logo.getbbox()
-          if bbox: logo = logo.crop(bbox)
-          lw, lh = logo.size
-          half = min(lw, lh) // 2
-          cx, cy = lw // 2, lh // 2
-          logo = logo.crop((cx-half, cy-half, cx+half, cy+half))
+BG = (7, 16, 30, 255)
+logo = Image.open('assets/images/logo.png').convert('RGBA')
+bbox = logo.getbbox()
+if bbox:
+    logo = logo.crop(bbox)
+lw, lh = logo.size
+half = min(lw, lh) // 2
+cx, cy = lw // 2, lh // 2
+logo = logo.crop((cx-half, cy-half, cx+half, cy+half))
 
-          std = {'mipmap-mdpi':48,'mipmap-hdpi':72,'mipmap-xhdpi':96,
-                 'mipmap-xxhdpi':144,'mipmap-xxxhdpi':192}
-          for d, sz in std.items():
-              out = 'android/app/src/main/res/' + d
-              os.makedirs(out, exist_ok=True)
-              bg = Image.new('RGBA',(sz,sz),BG)
-              ls = int(sz*0.78)
-              lr = logo.resize((ls,ls),Image.LANCZOS)
-              off = (sz-ls)//2
-              bg.paste(lr,(off,off),lr)
-              bg.convert('RGB').save(out+'/ic_launcher.png')
-              circ = Image.new('RGBA',(sz,sz),(0,0,0,0))
-              msk  = Image.new('L',(sz,sz),0)
-              ImageDraw.Draw(msk).ellipse((0,0,sz,sz),fill=255)
-              circ.paste(bg.convert('RGBA'),(0,0),msk)
-              circ.save(out+'/ic_launcher_round.png')
+std = {'mipmap-mdpi':48,'mipmap-hdpi':72,'mipmap-xhdpi':96,
+       'mipmap-xxhdpi':144,'mipmap-xxxhdpi':192}
+for d, sz in std.items():
+    out = 'android/app/src/main/res/' + d
+    os.makedirs(out, exist_ok=True)
+    bg = Image.new('RGBA',(sz,sz),BG)
+    ls = int(sz*0.78)
+    lr = logo.resize((ls,ls),Image.LANCZOS)
+    off = (sz-ls)//2
+    bg.paste(lr,(off,off),lr)
+    bg.convert('RGB').save(out+'/ic_launcher.png')
+    circ = Image.new('RGBA',(sz,sz),(0,0,0,0))
+    msk  = Image.new('L',(sz,sz),0)
+    ImageDraw.Draw(msk).ellipse((0,0,sz,sz),fill=255)
+    circ.paste(bg.convert('RGBA'),(0,0),msk)
+    circ.save(out+'/ic_launcher_round.png')
 
-          adapt = {'mipmap-mdpi':72,'mipmap-hdpi':108,'mipmap-xhdpi':144,
-                   'mipmap-xxhdpi':216,'mipmap-xxxhdpi':288}
-          for d, sz in adapt.items():
-              out = 'android/app/src/main/res/' + d
-              os.makedirs(out, exist_ok=True)
-              fg = Image.new('RGBA',(sz,sz),(0,0,0,0))
-              ls = int(sz*0.64)
-              lr = logo.resize((ls,ls),Image.LANCZOS)
-              off = (sz-ls)//2
-              fg.paste(lr,(off,off),lr)
-              fg.save(out+'/ic_launcher_foreground.png')
+adapt = {'mipmap-mdpi':72,'mipmap-hdpi':108,'mipmap-xhdpi':144,
+         'mipmap-xxhdpi':216,'mipmap-xxxhdpi':288}
+for d, sz in adapt.items():
+    out = 'android/app/src/main/res/' + d
+    os.makedirs(out, exist_ok=True)
+    fg = Image.new('RGBA',(sz,sz),(0,0,0,0))
+    ls = int(sz*0.64)
+    lr = logo.resize((ls,ls),Image.LANCZOS)
+    off = (sz-ls)//2
+    fg.paste(lr,(off,off),lr)
+    fg.save(out+'/ic_launcher_foreground.png')
 
-          anydpi = 'android/app/src/main/res/mipmap-anydpi-v26'
-          values = 'android/app/src/main/res/values'
-          os.makedirs(anydpi, exist_ok=True)
-          os.makedirs(values, exist_ok=True)
+anydpi = 'android/app/src/main/res/mipmap-anydpi-v26'
+values = 'android/app/src/main/res/values'
+os.makedirs(anydpi, exist_ok=True)
+os.makedirs(values, exist_ok=True)
 
-          bg_xml = (
-              '<?xml version="1.0" encoding="utf-8"?>\n'
-              '<resources>\n'
-              '    <color name="ic_launcher_background">#07101E</color>\n'
-              '</resources>\n'
-          )
-          with open(values+'/ic_launcher_background.xml','w') as f: f.write(bg_xml)
+with open(values+'/ic_launcher_background.xml','w') as f:
+    f.write('<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#07101E</color>\n</resources>\n')
 
-          adaptive_xml = (
-              '<?xml version="1.0" encoding="utf-8"?>\n'
-              '<adaptive-icon xmlns:android='
-              '"http://schemas.android.com/apk/res/android">\n'
-              '    <background android:drawable="@color/ic_launcher_background"/>\n'
-              '    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>\n'
-              '</adaptive-icon>\n'
-          )
-          with open(anydpi+'/ic_launcher.xml','w') as f: f.write(adaptive_xml)
-          with open(anydpi+'/ic_launcher_round.xml','w') as f: f.write(adaptive_xml)
+adaptive_xml = ('<?xml version="1.0" encoding="utf-8"?>\n'
+    '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n'
+    '    <background android:drawable="@color/ic_launcher_background"/>\n'
+    '    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>\n'
+    '</adaptive-icon>\n')
+with open(anydpi+'/ic_launcher.xml','w') as f: f.write(adaptive_xml)
+with open(anydpi+'/ic_launcher_round.xml','w') as f: f.write(adaptive_xml)
+print('Icon + adaptive XML done')
+PYEOF
+          python3 /tmp/gen_icons.py
 
-          print('Icon + adaptive XML done')
-          PYEOF2
-
-      # ── FIXED: Apply Google Services using Python for correct plugin order ──
-      # BUG FIXED: old sed '/^plugins {/a\...' inserted google-services as the
-      # FIRST plugin (line 2), before com.android.application. AGP 8.12 requires
-      # google-services to come AFTER the android application plugin.
-      # Python rewrite inserts it correctly as the LAST plugin.
       - name: Apply Google Services Plugin (Firebase)
         run: |
-          python3 << 'PYEOF'
-          import re
-          app = open('android/app/build.gradle').read()
-          settings = open('android/settings.gradle').read()
+          cat > /tmp/apply_gms.py << 'PYEOF'
+import re, sys, os
 
-          # Add to settings.gradle (declares the plugin version)
-          if 'com.google.gms.google-services' not in settings:
-              settings = re.sub(
-                  r'(id "com.android.application" version "[^"]*" apply false)',
-                  r'\1\n    id "com.google.gms.google-services" version "4.4.2" apply false',
-                  settings, count=1
-              )
-              open('android/settings.gradle', 'w').write(settings)
-              print("✓ google-services declared in settings.gradle")
+app_path = 'android/app/build.gradle'
+set_path = 'android/settings.gradle'
 
-          # Add to app/build.gradle — AFTER flutter-gradle-plugin (last in block)
-          if 'com.google.gms.google-services' not in app:
-              app = re.sub(
-                  r'(id "dev\.flutter\.flutter-gradle-plugin")',
-                  r'\1\n    id "com.google.gms.google-services"',
-                  app, count=1
-              )
-              open('android/app/build.gradle', 'w').write(app)
-              print("✓ google-services applied after flutter-gradle-plugin in app/build.gradle")
+if not os.path.exists(app_path):
+    print(f"ERROR: {app_path} not found. CWD={os.getcwd()}", file=sys.stderr)
+    sys.exit(1)
 
-          # Verify order
-          app2 = open('android/app/build.gradle').read()
-          lines = [l.strip() for l in app2.split('\n') if 'id "' in l and 'apply false' not in l]
-          print("Plugin order:", lines)
-          assert lines.index('id "com.android.application"') < lines.index('id "com.google.gms.google-services"'), \
-              "FATAL: google-services is before com.android.application!"
-          print("✅ Plugin order correct")
-          PYEOF
+app = open(app_path).read()
+settings = open(set_path).read()
 
-      # ── FIXED: All SDK vars including minSdk ────────────────────────────────
-      # BUG FIXED: previous version only patched compileSdk and targetSdk,
-      # leaving minSdk as flutter.minSdkVersion which fails Gradle resolution
-      # after android/ regeneration overwrites local.properties dependency.
+# Declare in settings.gradle after com.android.application
+if 'com.google.gms.google-services' not in settings:
+    settings = re.sub(
+        r'(id "com\.android\.application" version "[^"]*" apply false)',
+        r'\1\n    id "com.google.gms.google-services" version "4.4.2" apply false',
+        settings, count=1
+    )
+    open(set_path, 'w').write(settings)
+    print("google-services declared in settings.gradle")
+
+# Apply in app/build.gradle AFTER flutter-gradle-plugin
+if 'com.google.gms.google-services' not in app:
+    app = re.sub(
+        r'(id "dev\.flutter\.flutter-gradle-plugin")',
+        r'\1\n    id "com.google.gms.google-services"',
+        app, count=1
+    )
+    open(app_path, 'w').write(app)
+    print("google-services applied after flutter-gradle-plugin")
+
+# Verify order
+app2 = open(app_path).read()
+plugin_lines = [l.strip() for l in app2.split('\n')
+                if 'id "' in l and 'apply false' not in l]
+print("Plugin order:", plugin_lines)
+idx_app = next(i for i,l in enumerate(plugin_lines) if 'com.android.application' in l)
+idx_gms = next(i for i,l in enumerate(plugin_lines) if 'google-services' in l)
+assert idx_gms > idx_app, "FATAL: google-services before com.android.application!"
+print("Plugin order correct")
+PYEOF
+          python3 /tmp/apply_gms.py
+
       - name: Bump all SDK versions to API 36
         run: |
           F="android/app/build.gradle"
-          # compileSdk — all variants
           sed -i 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 36/g' "$F"
           sed -i 's/compileSdk flutter\.compileSdkVersion/compileSdk 36/g'               "$F"
           sed -i 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 36/g'           "$F"
           sed -i 's/compileSdk 35/compileSdk 36/g'                                       "$F"
-          # targetSdk — all variants
           sed -i 's/targetSdkVersion flutter\.targetSdkVersion/targetSdkVersion 36/g'   "$F"
           sed -i 's/targetSdk flutter\.targetSdkVersion/targetSdk 36/g'                 "$F"
           sed -i 's/targetSdk = flutter\.targetSdkVersion/targetSdk = 36/g'             "$F"
           sed -i 's/targetSdk 35/targetSdk 36/g'                                        "$F"
-          # minSdk — all variants (FIX: was missing before)
           sed -i 's/minSdkVersion flutter\.minSdkVersion/minSdkVersion 23/g'            "$F"
           sed -i 's/minSdk flutter\.minSdkVersion/minSdk 23/g'                          "$F"
           sed -i 's/minSdk = flutter\.minSdkVersion/minSdk = 23/g'                      "$F"
-          echo "✓ All SDK versions set"
           grep -E "compileSdk|targetSdk|minSdk" "$F"
-          # Safety check — no flutter.* SDK refs remain
           if grep -q "flutter\.compileSdkVersion\|flutter\.targetSdkVersion\|flutter\.minSdkVersion" "$F"; then
-            echo "::error::flutter.* SDK refs still present in build.gradle!"
+            echo "::error::flutter.* SDK refs still present!"
             exit 1
           fi
-          echo "✅ No flutter.* SDK refs remain"
+          echo "All SDK versions set, no flutter.* refs remain"
 
       - name: Inject NDK 29 + 16KB page size + abiFilters + packaging
         run: |
-          python3 << 'PYEOF'
-          import re
-          p = 'android/app/build.gradle'
-          s = open(p).read()
+          cat > /tmp/inject_ndk.py << 'PYEOF'
+import re, sys, os
 
-          # ndkVersion + buildToolsVersion after compileSdk 36
-          if 'ndkVersion' not in s:
-              s = re.sub(
-                  r'(compileSdk\s+36)',
-                  r'\1\n    ndkVersion "29.0.14206865"\n    buildToolsVersion "36.1.0"',
-                  s, count=1
-              )
-          assert 'ndkVersion "29.0.14206865"' in s, "ndkVersion not set"
+p = 'android/app/build.gradle'
+if not os.path.exists(p):
+    print(f"ERROR: {p} not found", file=sys.stderr)
+    sys.exit(1)
+s = open(p).read()
 
-          # abiFilters + 16KB cmake flag inside defaultConfig, after versionName
-          if 'ANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES' not in s:
-              s = re.sub(
-                  r'(versionName[^\n]*\n)(\s*\})',
-                  r'\1'
-                  r'        multiDexEnabled true\n'
-                  r'        ndk { abiFilters "armeabi-v7a", "arm64-v8a", "x86", "x86_64" }\n'
-                  r'        externalNativeBuild {\n'
-                  r'            cmake { arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON" }\n'
-                  r'        }\n'
-                  r'\2',
-                  s, count=1
-              )
-          assert 'ANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES' in s, "cmake flag not set"
-          assert 'abiFilters' in s, "abiFilters not set"
+if 'ndkVersion' not in s:
+    s = re.sub(
+        r'(compileSdk\s+36)',
+        r'\1\n    ndkVersion "29.0.14206865"\n    buildToolsVersion "36.1.0"',
+        s, count=1
+    )
+assert 'ndkVersion "29.0.14206865"' in s, "ndkVersion not set"
 
-          # packagingOptions before buildTypes
-          if 'useLegacyPackaging' not in s:
-              packaging = (
-                  '    packagingOptions {\n'
-                  '        resources { excludes += [\'/META-INF/{AL2.0,LGPL2.1}\'] }\n'
-                  '        jniLibs { useLegacyPackaging = false }\n'
-                  '    }\n\n'
-                  '    buildTypes {'
-              )
-              s = s.replace('    buildTypes {', packaging, 1)
-          assert s.count('    buildTypes {') == 1, "Duplicate buildTypes block!"
-          assert 'useLegacyPackaging = false' in s, "useLegacyPackaging not set"
+if 'ANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES' not in s:
+    s = re.sub(
+        r'(versionName[^\n]*\n)(\s*\})',
+        r'\1'
+        r'        multiDexEnabled true\n'
+        r'        ndk { abiFilters "armeabi-v7a", "arm64-v8a", "x86", "x86_64" }\n'
+        r'        externalNativeBuild {\n'
+        r'            cmake { arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON" }\n'
+        r'        }\n'
+        r'\2',
+        s, count=1
+    )
+assert 'ANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES' in s, "cmake 16KB flag not injected"
+assert 'abiFilters' in s, "abiFilters not injected"
 
-          # debugSymbolLevel inside release buildType
-          if 'SYMBOL_TABLE' not in s:
-              s = re.sub(
-                  r'(release\s*\{)',
-                  r"\1\n            ndk { debugSymbolLevel 'SYMBOL_TABLE' }",
-                  s, count=1
-              )
+if 'useLegacyPackaging' not in s:
+    packaging = (
+        '    packagingOptions {\n'
+        '        resources { excludes += [\'/META-INF/{AL2.0,LGPL2.1}\'] }\n'
+        '        jniLibs { useLegacyPackaging = false }\n'
+        '    }\n\n'
+        '    buildTypes {'
+    )
+    s = s.replace('    buildTypes {', packaging, 1)
+assert s.count('    buildTypes {') == 1, "Duplicate buildTypes block!"
+assert 'useLegacyPackaging = false' in s, "useLegacyPackaging not set"
 
-          open(p, 'w').write(s)
-          print("✅ NDK 29 + 16KB + packaging injected")
-          print("Final SDK values:")
-          for line in s.split('\n'):
-              if any(x in line for x in ['compileSdk','targetSdk','minSdk','ndkVersion','abiFilter','FLEXIBLE','useLegacy','SYMBOL']):
-                  print(" ", line.strip())
-          PYEOF
+if 'SYMBOL_TABLE' not in s:
+    s = re.sub(
+        r'(release\s*\{)',
+        r"\1\n            ndk { debugSymbolLevel 'SYMBOL_TABLE' }",
+        s, count=1
+    )
+
+open(p, 'w').write(s)
+print("NDK 29 + 16KB + packaging injected")
+for line in s.split('\n'):
+    if any(x in line for x in ['compileSdk','targetSdk','minSdk','ndkVersion',
+                                 'abiFilter','FLEXIBLE','useLegacy','SYMBOL']):
+        print(" ", line.strip())
+PYEOF
+          python3 /tmp/inject_ndk.py
 
       - name: Patch AndroidManifest
         run: |
@@ -287,170 +274,188 @@ jobs:
           sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="com.google.android.gms.permission.AD_ID"/>|' "$M"
           sed -i 's|android:icon="@mipmap/ic_launcher">|android:icon="@mipmap/ic_launcher"\n        android:usesCleartextTraffic="true"\n        android:hardwareAccelerated="true">|' "$M"
           sed -i 's|android:name="android.permission.POST_NOTIFICATIONS"/>|android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>|' "$M"
-          echo "✓ AndroidManifest patched"
+          echo "AndroidManifest patched"
 
       - name: Add FCM + 16KB property to AndroidManifest
         run: |
-          python3 << 'PYEOF'
-          content = open('android/app/src/main/AndroidManifest.xml').read()
+          cat > /tmp/patch_manifest.py << 'PYEOF'
+import xml.etree.ElementTree as ET
+import sys
 
-          if 'FLUTTER_NOTIFICATION_CLICK' not in content:
-              fcm_filter = (
-                  '</intent-filter>\n'
-                  '            <intent-filter>\n'
-                  '                <action android:name="FLUTTER_NOTIFICATION_CLICK"/>\n'
-                  '                <category android:name="android.intent.category.DEFAULT"/>\n'
-                  '            </intent-filter>'
-              )
-              content = content.replace('</intent-filter>', fcm_filter, 1)
-              print('✓ FLUTTER_NOTIFICATION_CLICK added')
+path = 'android/app/src/main/AndroidManifest.xml'
+content = open(path).read()
 
-          if 'nova_x_channel' not in content:
-              fcm_meta = (
-                  '        <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="nova_x_channel"/>\n'
-                  '        <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@mipmap/ic_launcher"/>\n'
-                  '        <meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/nova_x_cyan"/>\n'
-                  '        <meta-data android:name="com.google.android.geo.API_KEY" android:value="AIzaSyBc_bNBj_hmsG5rNFXHC4Tmgp0BRBjyXos"/>\n'
-                  '        <property android:name="android.support.LARGE_PAGE_SIZE" android:value="true"/>\n'
-                  '    </application>'
-              )
-              content = content.replace('    </application>', fcm_meta, 1)
-              print('✓ FCM metadata + 16KB LARGE_PAGE_SIZE property added')
+if 'FLUTTER_NOTIFICATION_CLICK' not in content:
+    content = content.replace('</intent-filter>',
+        '</intent-filter>\n'
+        '            <intent-filter>\n'
+        '                <action android:name="FLUTTER_NOTIFICATION_CLICK"/>\n'
+        '                <category android:name="android.intent.category.DEFAULT"/>\n'
+        '            </intent-filter>', 1)
+    print('FLUTTER_NOTIFICATION_CLICK added')
 
-          import xml.etree.ElementTree as ET
-          ET.fromstring(content)
-          print('✅ AndroidManifest XML valid after FCM step')
-          open('android/app/src/main/AndroidManifest.xml', 'w').write(content)
-          PYEOF
+if 'nova_x_channel' not in content:
+    content = content.replace('    </application>',
+        '        <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="nova_x_channel"/>\n'
+        '        <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@mipmap/ic_launcher"/>\n'
+        '        <meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/nova_x_cyan"/>\n'
+        '        <meta-data android:name="com.google.android.geo.API_KEY" android:value="AIzaSyBc_bNBj_hmsG5rNFXHC4Tmgp0BRBjyXos"/>\n'
+        '        <property android:name="android.support.LARGE_PAGE_SIZE" android:value="true"/>\n'
+        '    </application>', 1)
+    print('FCM metadata + 16KB property added')
+
+ET.fromstring(content)
+print('AndroidManifest XML valid')
+open(path, 'w').write(content)
+PYEOF
+          python3 /tmp/patch_manifest.py
 
       - name: Create notification colour resource
         run: |
           mkdir -p android/app/src/main/res/values
           cat > android/app/src/main/res/values/colors.xml << 'XMLEOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <color name="nova_x_cyan">#00D4FF</color>
-          </resources>
-          XMLEOF
-          echo "✓ colors.xml created"
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="nova_x_cyan">#00D4FF</color>
+</resources>
+XMLEOF
+          echo "colors.xml created"
 
       - name: Write MainActivity.kt with shortcut support
         run: |
           mkdir -p android/app/src/main/kotlin/com/tlyfe/nova_x
           echo "cGFja2FnZSBjb20udGx5ZmUubm92YV94CmltcG9ydCBpby5mbHV0dGVyLmVtYmVkZGluZy5hbmRyb2lkLkZsdXR0ZXJBY3Rpdml0eQppbXBvcnQgaW8uZmx1dHRlci5lbWJlZGRpbmcuZW5naW5lLkZsdXR0ZXJFbmdpbmUKaW1wb3J0IGlvLmZsdXR0ZXIucGx1Z2luLmNvbW1vbi5NZXRob2RDaGFubmVsCmNsYXNzIE1haW5BY3Rpdml0eSA6IEZsdXR0ZXJBY3Rpdml0eSgpIHsKICAgIGNvbXBhbmlvbiBvYmplY3QgeyBwcml2YXRlIGNvbnN0IHZhbCBDSCA9ICJjb20udGx5ZmUubm92YV94L3Nob3J0Y3V0cyIgfQogICAgcHJpdmF0ZSB2YXIgcGVuZGluZyA9ICIiCiAgICBvdmVycmlkZSBmdW4gY29uZmlndXJlRmx1dHRlckVuZ2luZShmbHV0dGVyRW5naW5lOiBGbHV0dGVyRW5naW5lKSB7CiAgICAgICAgc3VwZXIuY29uZmlndXJlRmx1dHRlckVuZ2luZShmbHV0dGVyRW5naW5lKQogICAgICAgIHBlbmRpbmcgPSBpbnRlbnQ/LmFjdGlvbj8udGFrZUlmIHsgaXQuY29udGFpbnMoIm5vdmFfeC4iKSB9ID86ICIiCiAgICAgICAgTWV0aG9kQ2hhbm5lbChmbHV0dGVyRW5naW5lLmRhcnRFeGVjdXRvci5iaW5hcnlNZXNzZW5nZXIsIENIKQogICAgICAgICAgICAuc2V0TWV0aG9kQ2FsbEhhbmRsZXIgeyBjYWxsLCByZXN1bHQgLT4KICAgICAgICAgICAgICAgIGlmIChjYWxsLm1ldGhvZCA9PSAiZ2V0U2hvcnRjdXQiKSB7CiAgICAgICAgICAgICAgICAgICAgcmVzdWx0LnN1Y2Nlc3MocGVuZGluZyk7IHBlbmRpbmcgPSAiIgogICAgICAgICAgICAgICAgfSBlbHNlIHJlc3VsdC5ub3RJbXBsZW1lbnRlZCgpCiAgICAgICAgICAgIH0KICAgIH0KICAgIG92ZXJyaWRlIGZ1biBvbk5ld0ludGVudChpbnRlbnQ6IGFuZHJvaWQuY29udGVudC5JbnRlbnQpIHsKICAgICAgICBzdXBlci5vbk5ld0ludGVudChpbnRlbnQpOyBzZXRJbnRlbnQoaW50ZW50KQogICAgICAgIHBlbmRpbmcgPSBpbnRlbnQuYWN0aW9uPy50YWtlSWYgeyBpdC5jb250YWlucygibm92YV94LiIpIH0gPzogIiIKICAgIH0KfQo=" | base64 -d > android/app/src/main/kotlin/com/tlyfe/nova_x/MainActivity.kt
-          echo "✓ MainActivity.kt written"
+          echo "MainActivity.kt written"
 
       - name: Create shortcut resources
         run: |
-          python3 - << 'PYEOF2'
-          import os, textwrap
-          os.makedirs('android/app/src/main/res/xml',      exist_ok=True)
-          os.makedirs('android/app/src/main/res/drawable', exist_ok=True)
+          cat > /tmp/gen_shortcuts.py << 'PYEOF'
+import os, textwrap
 
-          open('android/app/src/main/res/xml/shortcuts.xml','w').write(textwrap.dedent('''
-            <?xml version="1.0" encoding="utf-8"?>
-            <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
-              <shortcut android:shortcutId="new_tab" android:enabled="true"
-                  android:icon="@drawable/ic_sc_new_tab"
-                  android:shortcutShortLabel="@string/sc_new_tab_s"
-                  android:shortcutLongLabel="@string/sc_new_tab_l">
-                <intent android:action="com.tlyfe.nova_x.NEW_TAB"
-                    android:targetPackage="com.tlyfe.nova_x"
-                    android:targetClass="com.tlyfe.nova_x.MainActivity"/>
-              </shortcut>
-              <shortcut android:shortcutId="private_tab" android:enabled="true"
-                  android:icon="@drawable/ic_sc_private"
-                  android:shortcutShortLabel="@string/sc_private_s"
-                  android:shortcutLongLabel="@string/sc_private_l">
-                <intent android:action="com.tlyfe.nova_x.PRIVATE_TAB"
-                    android:targetPackage="com.tlyfe.nova_x"
-                    android:targetClass="com.tlyfe.nova_x.MainActivity"/>
-              </shortcut>
-              <shortcut android:shortcutId="business" android:enabled="true"
-                  android:icon="@drawable/ic_sc_business"
-                  android:shortcutShortLabel="@string/sc_business_s"
-                  android:shortcutLongLabel="@string/sc_business_l">
-                <intent android:action="com.tlyfe.nova_x.BUSINESS"
-                    android:targetPackage="com.tlyfe.nova_x"
-                    android:targetClass="com.tlyfe.nova_x.MainActivity"/>
-              </shortcut>
-            </shortcuts>
-          ''').strip())
+os.makedirs('android/app/src/main/res/xml',      exist_ok=True)
+os.makedirs('android/app/src/main/res/drawable', exist_ok=True)
+os.makedirs('android/app/src/main/res/values',   exist_ok=True)
 
-          open('android/app/src/main/res/drawable/ic_sc_new_tab.xml','w').write(
-            '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">'
-            '<path android:fillColor="#00D4FF" android:pathData="M19,13H13v6H11v-6H5v-2H11V5H13v6H19v2Z"/></vector>')
+open('android/app/src/main/res/xml/shortcuts.xml','w').write(textwrap.dedent('''
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+  <shortcut android:shortcutId="new_tab" android:enabled="true"
+      android:icon="@drawable/ic_sc_new_tab"
+      android:shortcutShortLabel="@string/sc_new_tab_s"
+      android:shortcutLongLabel="@string/sc_new_tab_l">
+    <intent android:action="com.tlyfe.nova_x.NEW_TAB"
+        android:targetPackage="com.tlyfe.nova_x"
+        android:targetClass="com.tlyfe.nova_x.MainActivity"/>
+  </shortcut>
+  <shortcut android:shortcutId="private_tab" android:enabled="true"
+      android:icon="@drawable/ic_sc_private"
+      android:shortcutShortLabel="@string/sc_private_s"
+      android:shortcutLongLabel="@string/sc_private_l">
+    <intent android:action="com.tlyfe.nova_x.PRIVATE_TAB"
+        android:targetPackage="com.tlyfe.nova_x"
+        android:targetClass="com.tlyfe.nova_x.MainActivity"/>
+  </shortcut>
+  <shortcut android:shortcutId="business" android:enabled="true"
+      android:icon="@drawable/ic_sc_business"
+      android:shortcutShortLabel="@string/sc_business_s"
+      android:shortcutLongLabel="@string/sc_business_l">
+    <intent android:action="com.tlyfe.nova_x.BUSINESS"
+        android:targetPackage="com.tlyfe.nova_x"
+        android:targetClass="com.tlyfe.nova_x.MainActivity"/>
+  </shortcut>
+</shortcuts>
+''').strip())
 
-          open('android/app/src/main/res/drawable/ic_sc_private.xml','w').write(
-            '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">'
-            '<path android:fillColor="#7C4DFF" android:pathData="M12,1L3,5v6c0,5.55 3.84,10.74 9,12 5.16,-1.26 9,-6.45 9,-12V5L12,1zM12,11.99h7c-0.53,4.12-3.28,7.79-7,8.94V12H5V6.3l7,-3.11v8.8z"/></vector>')
+open('android/app/src/main/res/drawable/ic_sc_new_tab.xml','w').write(
+  '<vector xmlns:android="http://schemas.android.com/apk/res/android" '
+  'android:width="24dp" android:height="24dp" '
+  'android:viewportWidth="24" android:viewportHeight="24">'
+  '<path android:fillColor="#00D4FF" android:pathData="M19,13H13v6H11v-6H5v-2H11V5H13v6H19v2Z"/>'
+  '</vector>')
 
-          open('android/app/src/main/res/drawable/ic_sc_business.xml','w').write(
-            '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">'
-            '<path android:fillColor="#00D4FF" android:pathData="M12,7V3H2v18H22V7H12zM6,19H4v-2H6v2zM6,15H4v-2H6v2zM6,11H4V9H6v2zM6,7H4V5H6v2zM10,19H8v-2H10v2zM10,15H8v-2H10v2zM10,11H8V9H10v2zM10,7H8V5H10v2zM20,19H12v-2H14v-2H12v-2H14v-2H12V9H20v10zM18,11H16v2H18v-2zM18,15H16v2H18v-2z"/></vector>')
+open('android/app/src/main/res/drawable/ic_sc_private.xml','w').write(
+  '<vector xmlns:android="http://schemas.android.com/apk/res/android" '
+  'android:width="24dp" android:height="24dp" '
+  'android:viewportWidth="24" android:viewportHeight="24">'
+  '<path android:fillColor="#7C4DFF" android:pathData="M12,1L3,5v6c0,5.55 3.84,10.74 9,12 '
+  '5.16,-1.26 9,-6.45 9,-12V5L12,1zM12,11.99h7c-0.53,4.12-3.28,7.79-7,8.94V12H5V6.3l7,-3.11v8.8z"/>'
+  '</vector>')
 
-          open('android/app/src/main/res/values/strings.xml','w').write(textwrap.dedent('''
-            <?xml version="1.0" encoding="utf-8"?>
-            <resources>
-              <string name="sc_new_tab_s">New Tab</string>
-              <string name="sc_new_tab_l">Open New Tab in NOVA X</string>
-              <string name="sc_private_s">Private Tab</string>
-              <string name="sc_private_l">Open Private Browsing</string>
-              <string name="sc_business_s">Business</string>
-              <string name="sc_business_l">NOVA X Business Directory</string>
-            </resources>
-          ''').strip())
+open('android/app/src/main/res/drawable/ic_sc_business.xml','w').write(
+  '<vector xmlns:android="http://schemas.android.com/apk/res/android" '
+  'android:width="24dp" android:height="24dp" '
+  'android:viewportWidth="24" android:viewportHeight="24">'
+  '<path android:fillColor="#00D4FF" android:pathData="M12,7V3H2v18H22V7H12zM6,19H4v-2H6v2z'
+  'M6,15H4v-2H6v2zM6,11H4V9H6v2zM6,7H4V5H6v2zM10,19H8v-2H10v2zM10,15H8v-2H10v2z'
+  'M10,11H8V9H10v2zM10,7H8V5H10v2zM20,19H12v-2H14v-2H12v-2H14v-2H12V9H20v10z'
+  'M18,11H16v2H18v-2zM18,15H16v2H18v-2z"/>'
+  '</vector>')
 
-          print('shortcut XML, icons, strings created')
-          PYEOF2
+open('android/app/src/main/res/values/strings.xml','w').write(textwrap.dedent('''
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="sc_new_tab_s">New Tab</string>
+  <string name="sc_new_tab_l">Open New Tab in NOVA X</string>
+  <string name="sc_private_s">Private Tab</string>
+  <string name="sc_private_l">Open Private Browsing</string>
+  <string name="sc_business_s">Business</string>
+  <string name="sc_business_l">NOVA X Business Directory</string>
+</resources>
+''').strip())
+
+print('Shortcut XML, icons and strings created')
+PYEOF
+          python3 /tmp/gen_shortcuts.py
 
       - name: Patch AndroidManifest for shortcuts
         run: |
-          python3 - << 'PYEOF3'
-          import xml.etree.ElementTree as ET
-          content = open('android/app/src/main/AndroidManifest.xml').read()
-          if 'android.app.shortcuts' not in content:
-              block = (
-                '        <meta-data android:name="android.app.shortcuts" '
-                'android:resource="@xml/shortcuts"/>\n'
-                '        <intent-filter>\n'
-                '            <action android:name="com.tlyfe.nova_x.NEW_TAB"/>\n'
-                '            <category android:name="android.intent.category.DEFAULT"/>\n'
-                '        </intent-filter>\n'
-                '        <intent-filter>\n'
-                '            <action android:name="com.tlyfe.nova_x.PRIVATE_TAB"/>\n'
-                '            <category android:name="android.intent.category.DEFAULT"/>\n'
-                '        </intent-filter>\n'
-                '        <intent-filter>\n'
-                '            <action android:name="com.tlyfe.nova_x.BUSINESS"/>\n'
-                '            <category android:name="android.intent.category.DEFAULT"/>\n'
-                '        </intent-filter>\n'
-                '    </activity>'
-              )
-              content = content.replace('    </activity>', block, 1)
-              open('android/app/src/main/AndroidManifest.xml','w').write(content)
-              print('Shortcut manifest metadata added')
-          ET.parse('android/app/src/main/AndroidManifest.xml')
-          print('✅ AndroidManifest valid XML after shortcuts step')
-          PYEOF3
+          cat > /tmp/patch_shortcuts.py << 'PYEOF'
+import xml.etree.ElementTree as ET
+
+path = 'android/app/src/main/AndroidManifest.xml'
+content = open(path).read()
+
+if 'android.app.shortcuts' not in content:
+    block = (
+        '        <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts"/>\n'
+        '        <intent-filter>\n'
+        '            <action android:name="com.tlyfe.nova_x.NEW_TAB"/>\n'
+        '            <category android:name="android.intent.category.DEFAULT"/>\n'
+        '        </intent-filter>\n'
+        '        <intent-filter>\n'
+        '            <action android:name="com.tlyfe.nova_x.PRIVATE_TAB"/>\n'
+        '            <category android:name="android.intent.category.DEFAULT"/>\n'
+        '        </intent-filter>\n'
+        '        <intent-filter>\n'
+        '            <action android:name="com.tlyfe.nova_x.BUSINESS"/>\n'
+        '            <category android:name="android.intent.category.DEFAULT"/>\n'
+        '        </intent-filter>\n'
+        '    </activity>'
+    )
+    content = content.replace('    </activity>', block, 1)
+    open(path, 'w').write(content)
+    print('Shortcut manifest metadata added')
+
+ET.parse(path)
+print('AndroidManifest valid XML after shortcuts step')
+PYEOF
+          python3 /tmp/patch_shortcuts.py
 
       - name: Configure Gradle Java Home
         run: echo "org.gradle.java.home=$JAVA_HOME" >> android/gradle.properties
 
-      # ── FIXED: geolocator patch now targets 36 (not 35) ─────────────────────
       - name: Patch geolocator_android build.gradle
         run: |
           CACHE="${PUB_CACHE:-$HOME/.pub-cache}"
           find "$CACHE" -name "build.gradle" -path "*geolocator_android*" 2>/dev/null | while read -r f; do
             echo "Patching $f"
-            sed -i 's/flutter\.compileSdkVersion/36/g'        "$f"
-            sed -i 's/flutter\.minSdkVersion/21/g'            "$f"
-            sed -i 's/flutter\.targetSdkVersion/36/g'         "$f"
-            sed -i 's/flutter\.ndkVersion/"29.0.14206865"/g'  "$f"
-            echo "Patched:"
+            sed -i 's/flutter\.compileSdkVersion/36/g'           "$f"
+            sed -i 's/flutter\.minSdkVersion/21/g'               "$f"
+            sed -i 's/flutter\.targetSdkVersion/36/g'            "$f"
+            sed -i 's/flutter\.ndkVersion/"29.0.14206865"/g'     "$f"
             grep -n "compileSdk\|minSdk\|targetSdk" "$f" || true
           done
-          echo "✅ geolocator_android patch done"
+          echo "geolocator_android patch done"
 
       - name: Configure release signing
         env:
@@ -463,67 +468,69 @@ jobs:
             echo "::error::KEYSTORE_BASE64 secret is missing."
             exit 1
           fi
-
           printf '%s' "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > android/app/upload-keystore.jks 2>/dev/null || {
             echo "::error::Failed to decode KEYSTORE_BASE64."
             exit 1
           }
-
           KS_SIZE=$(wc -c < android/app/upload-keystore.jks)
           if [ "$KS_SIZE" -lt 1000 ]; then
-            echo "::error::Decoded keystore is only ${KS_SIZE} bytes — too small."
+            echo "::error::Decoded keystore only ${KS_SIZE} bytes — too small."
             exit 1
           fi
-          echo "✓ keystore decoded (${KS_SIZE} bytes)"
-
+          echo "keystore decoded (${KS_SIZE} bytes)"
           cat > android/key.properties << EOF
-          storePassword=$KEYSTORE_PASSWORD
-          keyPassword=$KEY_PASSWORD
-          keyAlias=$KEY_ALIAS
-          storeFile=upload-keystore.jks
-          EOF
-          echo "✓ key.properties written"
+storePassword=$KEYSTORE_PASSWORD
+keyPassword=$KEY_PASSWORD
+keyAlias=$KEY_ALIAS
+storeFile=upload-keystore.jks
+EOF
+          echo "key.properties written"
+          cat > /tmp/apply_signing.py << 'PYEOF'
+import re, sys, os
 
-          python3 << 'PYEOF'
-          import re
-          p = 'android/app/build.gradle'
-          s = open(p).read()
+p = 'android/app/build.gradle'
+s = open(p).read()
 
-          if 'keystoreProperties' not in s:
-              loader = (
-                  "def keystoreProperties = new Properties()\n"
-                  "def keystorePropertiesFile = rootProject.file('key.properties')\n"
-                  "if (keystorePropertiesFile.exists()) {\n"
-                  "    keystorePropertiesFile.withReader('UTF-8') { r -> keystoreProperties.load(r) }\n"
-                  "}\n\n"
-              )
-              s = s.replace("android {", loader + "android {", 1)
+if 'keystoreProperties' not in s:
+    loader = (
+        "def keystoreProperties = new Properties()\n"
+        "def keystorePropertiesFile = rootProject.file('key.properties')\n"
+        "if (keystorePropertiesFile.exists()) {\n"
+        "    keystorePropertiesFile.withReader('UTF-8') { r -> keystoreProperties.load(r) }\n"
+        "}\n\n"
+    )
+    s = s.replace("android {", loader + "android {", 1)
 
-          if 'signingConfigs {' not in s:
-              sign_block = (
-                  "    signingConfigs {\n"
-                  "        release {\n"
-                  "            keyAlias keystoreProperties['keyAlias']\n"
-                  "            keyPassword keystoreProperties['keyPassword']\n"
-                  "            storeFile keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null\n"
-                  "            storePassword keystoreProperties['storePassword']\n"
-                  "        }\n"
-                  "    }\n\n"
-                  "    buildTypes {"
-              )
-              s = s.replace("    buildTypes {", sign_block, 1)
+if 'signingConfigs {' not in s:
+    sign_block = (
+        "    signingConfigs {\n"
+        "        release {\n"
+        "            keyAlias keystoreProperties['keyAlias']\n"
+        "            keyPassword keystoreProperties['keyPassword']\n"
+        "            storeFile keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null\n"
+        "            storePassword keystoreProperties['storePassword']\n"
+        "        }\n"
+        "    }\n\n"
+        "    buildTypes {"
+    )
+    s = s.replace("    buildTypes {", sign_block, 1)
 
-          if 'signingConfigs.debug' in s:
-              s = s.replace("signingConfig = signingConfigs.debug", "signingConfig = signingConfigs.release")
-              s = s.replace("signingConfig signingConfigs.debug",   "signingConfig signingConfigs.release")
-          elif 'signingConfig' not in s.split('buildTypes {',1)[1].split('}',1)[0]:
-              s = re.sub(r'(release\s*\{)', r'\1\n            signingConfig signingConfigs.release', s, count=1)
+if 'signingConfigs.debug' in s:
+    s = s.replace("signingConfig = signingConfigs.debug", "signingConfig = signingConfigs.release")
+    s = s.replace("signingConfig signingConfigs.debug",   "signingConfig signingConfigs.release")
+elif 'signingConfig' not in s.split('buildTypes {',1)[1].split('}',1)[0]:
+    s = re.sub(r'(release\s*\{)', r'\1\n            signingConfig signingConfigs.release', s, count=1)
 
-          open(p, 'w').write(s)
-          print("✓ build.gradle updated for release signing")
-          PYEOF
+assert s.count('    buildTypes {') == 1, f"Duplicate buildTypes! Count={s.count('    buildTypes {')}"
+assert 'signingConfigs.release' in s, "signingConfigs.release not set"
+assert 'signingConfigs.debug' not in s, "signingConfigs.debug still present"
+
+open(p, 'w').write(s)
+print("build.gradle signing configured")
+PYEOF
+          python3 /tmp/apply_signing.py
           echo "--- release buildType ---"
-          grep -A10 "buildTypes {" android/app/build.gradle
+          grep -A12 "buildTypes {" android/app/build.gradle
 
       - name: Final Verification
         run: |
@@ -544,14 +551,15 @@ jobs:
             echo "::error::flutter.* SDK refs still present!"
             exit 1
           fi
-          echo "✅ No flutter.* refs"
+          echo "No flutter.* refs remain"
           echo "=== Manifest XML validation ==="
-          python3 -c "
-          import xml.etree.ElementTree as ET
-          ET.parse('android/app/src/main/AndroidManifest.xml')
-          print('✅ AndroidManifest.xml valid')
-          "
-          echo "✅ All checks passed — starting Gradle build"
+          cat > /tmp/validate_xml.py << 'PYEOF'
+import xml.etree.ElementTree as ET
+ET.parse('android/app/src/main/AndroidManifest.xml')
+print('AndroidManifest.xml valid XML')
+PYEOF
+          python3 /tmp/validate_xml.py
+          echo "All checks passed — starting Gradle build"
 
       - name: Build Release APK
         run: flutter build apk --release --split-debug-info=build/debug-symbols --obfuscate

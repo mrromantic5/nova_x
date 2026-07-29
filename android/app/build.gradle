@@ -18,8 +18,6 @@ def flutterVersionName = localProperties.getProperty('flutter.versionName') ?: '
 android {
     namespace "com.tlyfe.nova_x"
     compileSdk 36
-    ndkVersion "29.0.14206865"
-    buildToolsVersion "36.1.0"
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
@@ -40,27 +38,6 @@ android {
         targetSdk 36
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
-        multiDexEnabled true
-
-        // Retain all ABIs — NDK 29 drops armeabi-v7a unless explicitly listed.
-        ndk {
-            abiFilters "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
-        }
-
-        // 16 KB page size alignment — mandatory for Android 16 / API 36.
-        externalNativeBuild {
-            cmake {
-                arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
-            }
-        }
-    }
-
-    packagingOptions {
-        resources { excludes += ['/META-INF/{AL2.0,LGPL2.1}'] }
-        // Required for Android 16 (API 36) — 16 KB memory page size support.
-        jniLibs {
-            useLegacyPackaging = false
-        }
     }
 
     buildTypes {
@@ -68,9 +45,6 @@ android {
             signingConfig signingConfigs.debug
             minifyEnabled false
             shrinkResources false
-            ndk {
-                debugSymbolLevel 'SYMBOL_TABLE'
-            }
         }
     }
 }

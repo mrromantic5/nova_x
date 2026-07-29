@@ -156,6 +156,12 @@ jobs:
           fi
           echo "✅ Firebase Gradle verified"
 
+      - name: Upgrade AGP to 8.3.2 for Flutter 3.32 compatibility
+        run: |
+          sed -i 's/id "com.android.application" version "8.1.0"/id "com.android.application" version "8.3.2"/' android/settings.gradle
+          echo "AGP version:"
+          grep "com.android.application" android/settings.gradle
+
       - name: Bump compileSdk to 36
         run: |
           F="android/app/build.gradle"
@@ -241,10 +247,13 @@ jobs:
 
 
       # ── App Shortcuts — long-press home screen icon ───────────────────────────
-      - name: Remove wrong-path MainActivity
+      - name: Write MainActivity.kt with shortcut support
         run: |
+          # Remove old wrong-path MainActivity to prevent Redeclaration error
           rm -rf android/app/src/main/kotlin/com/example
-          echo "Removed com/example MainActivity — correct one at com/tlyfe is in repo"
+          mkdir -p android/app/src/main/kotlin/com/tlyfe/nova_x
+          echo "cGFja2FnZSBjb20udGx5ZmUubm92YV94CmltcG9ydCBpby5mbHV0dGVyLmVtYmVkZGluZy5hbmRyb2lkLkZsdXR0ZXJBY3Rpdml0eQppbXBvcnQgaW8uZmx1dHRlci5lbWJlZGRpbmcuZW5naW5lLkZsdXR0ZXJFbmdpbmUKaW1wb3J0IGlvLmZsdXR0ZXIucGx1Z2luLmNvbW1vbi5NZXRob2RDaGFubmVsCmNsYXNzIE1haW5BY3Rpdml0eSA6IEZsdXR0ZXJBY3Rpdml0eSgpIHsKICAgIGNvbXBhbmlvbiBvYmplY3QgeyBwcml2YXRlIGNvbnN0IHZhbCBDSCA9ICJjb20udGx5ZmUubm92YV94L3Nob3J0Y3V0cyIgfQogICAgcHJpdmF0ZSB2YXIgcGVuZGluZyA9ICIiCiAgICBvdmVycmlkZSBmdW4gY29uZmlndXJlRmx1dHRlckVuZ2luZShmbHV0dGVyRW5naW5lOiBGbHV0dGVyRW5naW5lKSB7CiAgICAgICAgc3VwZXIuY29uZmlndXJlRmx1dHRlckVuZ2luZShmbHV0dGVyRW5naW5lKQogICAgICAgIHBlbmRpbmcgPSBpbnRlbnQ/LmFjdGlvbj8udGFrZUlmIHsgaXQuY29udGFpbnMoIm5vdmFfeC4iKSB9ID86ICIiCiAgICAgICAgTWV0aG9kQ2hhbm5lbChmbHV0dGVyRW5naW5lLmRhcnRFeGVjdXRvci5iaW5hcnlNZXNzZW5nZXIsIENIKQogICAgICAgICAgICAuc2V0TWV0aG9kQ2FsbEhhbmRsZXIgeyBjYWxsLCByZXN1bHQgLT4KICAgICAgICAgICAgICAgIGlmIChjYWxsLm1ldGhvZCA9PSAiZ2V0U2hvcnRjdXQiKSB7CiAgICAgICAgICAgICAgICAgICAgcmVzdWx0LnN1Y2Nlc3MocGVuZGluZyk7IHBlbmRpbmcgPSAiIgogICAgICAgICAgICAgICAgfSBlbHNlIHJlc3VsdC5ub3RJbXBsZW1lbnRlZCgpCiAgICAgICAgICAgIH0KICAgIH0KICAgIG92ZXJyaWRlIGZ1biBvbk5ld0ludGVudChpbnRlbnQ6IGFuZHJvaWQuY29udGVudC5JbnRlbnQpIHsKICAgICAgICBzdXBlci5vbk5ld0ludGVudChpbnRlbnQpOyBzZXRJbnRlbnQoaW50ZW50KQogICAgICAgIHBlbmRpbmcgPSBpbnRlbnQuYWN0aW9uPy50YWtlSWYgeyBpdC5jb250YWlucygibm92YV94LiIpIH0gPzogIiIKICAgIH0KfQo=" | base64 -d > android/app/src/main/kotlin/com/tlyfe/nova_x/MainActivity.kt
+          echo "✓ MainActivity.kt written"
 
       - name: Create shortcut resources
         run: |

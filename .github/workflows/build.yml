@@ -144,17 +144,21 @@ jobs:
         run: |
           APP="android/app/build.gradle"
           SET="android/settings.gradle"
+          # Flutter 3.32 generates settings.gradle without 'apply false' on same line
+          # Handle both old and new format
           if ! grep -q "com.google.gms.google-services" "$SET"; then
-            sed -i '/id "com.android.application" version/a\    id "com.google.gms.google-services" version "4.4.0" apply false' "$SET"
-            echo "✓ google-services declared in settings.gradle"
+            if grep -q 'id "com.android.application"' "$SET"; then
+              sed -i '/id "com.android.application"/a\    id "com.google.gms.google-services" version "4.4.2" apply false' "$SET"
+              echo "✓ google-services declared in settings.gradle"
+            else
+              echo "::error::Cannot find com.android.application in $SET"
+              cat "$SET"
+              exit 1
+            fi
           fi
           if ! grep -q "com.google.gms.google-services" "$APP"; then
-            sed -i '/^plugins {/a\    id "com.google.gms.google-services"' "$APP"
-            echo "✓ google-services applied in app/build.gradle"
-          fi
-          if head -3 "$APP" | grep -q "^apply plugin"; then
-            echo "::error::apply plugin: found before plugins {} — Gradle will fail"
-            exit 1
+            sed -i '/id "dev.flutter.flutter-gradle-plugin"/a\    id "com.google.gms.google-services"' "$APP"
+            echo "✓ google-services applied after flutter-gradle-plugin in app/build.gradle"
           fi
           echo "✅ Firebase Gradle verified"
 

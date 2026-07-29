@@ -44,12 +44,6 @@ jobs:
           find "$CACHE" -name "build.gradle" -exec sed -i 's/jcenter()/mavenCentral()/g' {} +
           echo "✓ jcenter replaced"
 
-      - name: Regenerate Android Platform Files
-        run: |
-          rm -rf android
-          flutter create --platforms android --org com.tlyfe --project-name nova_x .
-          echo "✓ android/ regenerated"
-
       - name: Copy google-services.json
         run: |
           if [ -f "google-services.json" ]; then

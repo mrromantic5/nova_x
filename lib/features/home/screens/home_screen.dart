@@ -505,7 +505,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (mounted) {
       Navigator.push(context, MaterialPageRoute(
           builder: (_) => BrowserView(
-            initialQuery: 'https://www.google.com',
+            initialQuery: 'https://lens.google.com',
             htmlContent: html,
           )));
     }

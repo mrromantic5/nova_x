@@ -22,7 +22,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.32.0'
+          flutter-version: '3.24.5'
           channel: 'stable'
           cache: true
 
@@ -43,6 +43,12 @@ jobs:
           CACHE="${PUB_CACHE:-$HOME/.pub-cache}"
           find "$CACHE" -name "build.gradle" -exec sed -i 's/jcenter()/mavenCentral()/g' {} +
           echo "✓ jcenter replaced"
+
+      - name: Regenerate Android Platform Files
+        run: |
+          rm -rf android
+          flutter create --platforms android --org com.tlyfe --project-name nova_x .
+          echo "✓ android/ regenerated"
 
       - name: Copy google-services.json
         run: |
@@ -138,34 +144,30 @@ jobs:
         run: |
           APP="android/app/build.gradle"
           SET="android/settings.gradle"
-          # Flutter 3.32 generates settings.gradle without 'apply false' on same line
-          # Handle both old and new format
           if ! grep -q "com.google.gms.google-services" "$SET"; then
-            if grep -q 'id "com.android.application"' "$SET"; then
-              sed -i '/id "com.android.application"/a\    id "com.google.gms.google-services" version "4.4.2" apply false' "$SET"
-              echo "✓ google-services declared in settings.gradle"
-            else
-              echo "::error::Cannot find com.android.application in $SET"
-              cat "$SET"
-              exit 1
-            fi
+            sed -i '/id "com.android.application" version/a\    id "com.google.gms.google-services" version "4.4.0" apply false' "$SET"
+            echo "✓ google-services declared in settings.gradle"
           fi
           if ! grep -q "com.google.gms.google-services" "$APP"; then
-            sed -i '/id "dev.flutter.flutter-gradle-plugin"/a\    id "com.google.gms.google-services"' "$APP"
-            echo "✓ google-services applied after flutter-gradle-plugin in app/build.gradle"
+            sed -i '/^plugins {/a\    id "com.google.gms.google-services"' "$APP"
+            echo "✓ google-services applied in app/build.gradle"
+          fi
+          if head -3 "$APP" | grep -q "^apply plugin"; then
+            echo "::error::apply plugin: found before plugins {} — Gradle will fail"
+            exit 1
           fi
           echo "✅ Firebase Gradle verified"
 
-      - name: Bump compileSdk to 36
+      - name: Bump compileSdk to 35
         run: |
           F="android/app/build.gradle"
-          sed -i 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 36/g' "$F"
-          sed -i 's/targetSdkVersion flutter\.targetSdkVersion/targetSdkVersion 36/g'   "$F"
-          sed -i 's/compileSdk flutter\.compileSdkVersion/compileSdk 36/g'              "$F"
-          sed -i 's/targetSdk flutter\.targetSdkVersion/targetSdk 36/g'                 "$F"
-          sed -i 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 36/g'          "$F"
-          sed -i 's/targetSdk = flutter\.targetSdkVersion/targetSdk = 36/g'             "$F"
-          echo "✓ compileSdk bumped to 36"
+          sed -i 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 35/g' "$F"
+          sed -i 's/targetSdkVersion flutter\.targetSdkVersion/targetSdkVersion 35/g'   "$F"
+          sed -i 's/compileSdk flutter\.compileSdkVersion/compileSdk 35/g'              "$F"
+          sed -i 's/targetSdk flutter\.targetSdkVersion/targetSdk 35/g'                 "$F"
+          sed -i 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 35/g'          "$F"
+          sed -i 's/targetSdk = flutter\.targetSdkVersion/targetSdk = 35/g'             "$F"
+          echo "✓ compileSdk bumped to 35"
           grep -E "compileSdk|targetSdk" "$F"
 
       # ── Manifest patch — IDENTICAL to the old working step ───────────────
@@ -241,10 +243,11 @@ jobs:
 
 
       # ── App Shortcuts — long-press home screen icon ───────────────────────────
-      - name: Remove wrong-path MainActivity
+      - name: Write MainActivity.kt with shortcut support
         run: |
-          rm -rf android/app/src/main/kotlin/com/example
-          echo "Removed com/example — correct MainActivity already in repo at com/tlyfe"
+          mkdir -p android/app/src/main/kotlin/com/tlyfe/nova_x
+          echo "cGFja2FnZSBjb20udGx5ZmUubm92YV94CmltcG9ydCBpby5mbHV0dGVyLmVtYmVkZGluZy5hbmRyb2lkLkZsdXR0ZXJBY3Rpdml0eQppbXBvcnQgaW8uZmx1dHRlci5lbWJlZGRpbmcuZW5naW5lLkZsdXR0ZXJFbmdpbmUKaW1wb3J0IGlvLmZsdXR0ZXIucGx1Z2luLmNvbW1vbi5NZXRob2RDaGFubmVsCmNsYXNzIE1haW5BY3Rpdml0eSA6IEZsdXR0ZXJBY3Rpdml0eSgpIHsKICAgIGNvbXBhbmlvbiBvYmplY3QgeyBwcml2YXRlIGNvbnN0IHZhbCBDSCA9ICJjb20udGx5ZmUubm92YV94L3Nob3J0Y3V0cyIgfQogICAgcHJpdmF0ZSB2YXIgcGVuZGluZyA9ICIiCiAgICBvdmVycmlkZSBmdW4gY29uZmlndXJlRmx1dHRlckVuZ2luZShmbHV0dGVyRW5naW5lOiBGbHV0dGVyRW5naW5lKSB7CiAgICAgICAgc3VwZXIuY29uZmlndXJlRmx1dHRlckVuZ2luZShmbHV0dGVyRW5naW5lKQogICAgICAgIHBlbmRpbmcgPSBpbnRlbnQ/LmFjdGlvbj8udGFrZUlmIHsgaXQuY29udGFpbnMoIm5vdmFfeC4iKSB9ID86ICIiCiAgICAgICAgTWV0aG9kQ2hhbm5lbChmbHV0dGVyRW5naW5lLmRhcnRFeGVjdXRvci5iaW5hcnlNZXNzZW5nZXIsIENIKQogICAgICAgICAgICAuc2V0TWV0aG9kQ2FsbEhhbmRsZXIgeyBjYWxsLCByZXN1bHQgLT4KICAgICAgICAgICAgICAgIGlmIChjYWxsLm1ldGhvZCA9PSAiZ2V0U2hvcnRjdXQiKSB7CiAgICAgICAgICAgICAgICAgICAgcmVzdWx0LnN1Y2Nlc3MocGVuZGluZyk7IHBlbmRpbmcgPSAiIgogICAgICAgICAgICAgICAgfSBlbHNlIHJlc3VsdC5ub3RJbXBsZW1lbnRlZCgpCiAgICAgICAgICAgIH0KICAgIH0KICAgIG92ZXJyaWRlIGZ1biBvbk5ld0ludGVudChpbnRlbnQ6IGFuZHJvaWQuY29udGVudC5JbnRlbnQpIHsKICAgICAgICBzdXBlci5vbk5ld0ludGVudChpbnRlbnQpOyBzZXRJbnRlbnQoaW50ZW50KQogICAgICAgIHBlbmRpbmcgPSBpbnRlbnQuYWN0aW9uPy50YWtlSWYgeyBpdC5jb250YWlucygibm92YV94LiIpIH0gPzogIiIKICAgIH0KfQo=" | base64 -d > android/app/src/main/kotlin/com/tlyfe/nova_x/MainActivity.kt
+          echo "✓ MainActivity.kt written"
 
       - name: Create shortcut resources
         run: |
@@ -370,9 +373,9 @@ jobs:
           CACHE="${PUB_CACHE:-$HOME/.pub-cache}"
           find "$CACHE" -name "build.gradle" -path "*geolocator_android*" 2>/dev/null | while read -r f; do
             echo "Patching $f"
-            sed -i 's/flutter\.compileSdkVersion/36/g'       "$f"
+            sed -i 's/flutter\.compileSdkVersion/35/g'       "$f"
             sed -i 's/flutter\.minSdkVersion/21/g'           "$f"
-            sed -i 's/flutter\.targetSdkVersion/36/g'        "$f"
+            sed -i 's/flutter\.targetSdkVersion/35/g'        "$f"
             sed -i 's/flutter\.ndkVersion/"25.1.8937393"/g'  "$f"
             echo "Patched:"
             grep -n "compileSdk\|minSdk\|targetSdk" "$f" || true
@@ -483,7 +486,7 @@ jobs:
           grep -A6 "buildTypes {" android/app/build.gradle
 
       - name: Build Release APK
-        run: flutter build apk --release --no-tree-shake-icons
+        run: flutter build apk --release
 
       - name: Build Release AAB
         run: flutter build appbundle --release

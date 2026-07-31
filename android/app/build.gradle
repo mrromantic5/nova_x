@@ -17,7 +17,7 @@ def flutterVersionName = localProperties.getProperty('flutter.versionName') ?: '
 
 android {
     namespace "com.tlyfe.nova_x"
-    compileSdk 36
+    compileSdk 35
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
@@ -28,10 +28,14 @@ android {
         jvmTarget = '1.8'
     }
 
+    sourceSets {
+        main.java.srcDirs += 'src/main/kotlin'
+    }
+
     defaultConfig {
         applicationId "com.tlyfe.nova_x"
         minSdk 23
-        targetSdk 36
+        targetSdk 35
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
     }

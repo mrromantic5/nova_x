@@ -4,8 +4,6 @@
     <!-- Required for the browser and AI features -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- Advertising ID — declared in Play Console; must match manifest -->
-    <uses-permission android:name="com.google.android.gms.permission.AD_ID"/>
 
     <!-- Optional: camera/mic for sites that request media access via WebView -->
     <uses-permission android:name="android.permission.CAMERA" />
@@ -83,9 +81,5 @@
             android:name="flutterEmbedding"
             android:value="2" />
 
-        <!-- 16 KB memory page size support — mandatory for Android 16 / API 36 -->
-        <property
-            android:name="android.support.LARGE_PAGE_SIZE"
-            android:value="true"/>
     </application>
 </manifest>

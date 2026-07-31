@@ -35,7 +35,7 @@ class BrowserView extends StatefulWidget {
   final bool incognito;
 
   /// Optional HTML to load directly (e.g. visual search page).
-  /// When set, loaded via loadData() with baseUrl=lens.google.com (for Visual Search)
+  /// When set, loaded via loadData() with baseUrl=google.com
   final String? htmlContent;
 
   /// When true, the Developer Tools panel opens automatically after first load
@@ -693,7 +693,7 @@ class _BrowserViewState extends State<BrowserView>
               data:     widget.htmlContent!,
               mimeType: 'text/html',
               encoding: 'utf-8',
-              baseUrl:  WebUri('https://lens.google.com'),
+              baseUrl:  WebUri('https://www.google.com'),
             );
           });
         }

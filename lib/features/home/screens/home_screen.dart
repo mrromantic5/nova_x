@@ -494,23 +494,22 @@ class _HomeScreenState extends State<HomeScreen>
     setState(() => _lensLoading = true);
     _snack('📷 Preparing image…');
 
-    final html = await LensService.buildSearchPage(fromCamera: fromCamera);
+    // Upload image to server → get Google Lens search URL.
+    // Returns null only if the user cancelled the image picker.
+    // Returns lens.google.com fallback URL if the server upload fails.
+    final url = await LensService.getSearchUrl(fromCamera: fromCamera);
 
     setState(() => _lensLoading = false);
 
-    if (html == null) return;
+    if (url == null) return; // user cancelled — do nothing
 
-    RewardsService.earn(RewardTaskKey.visualSearch); // auto-claim: real visual search
+    RewardsService.earn(RewardTaskKey.visualSearch);
 
     if (mounted) {
       Navigator.push(context, MaterialPageRoute(
-          builder: (_) => BrowserView(
-            initialQuery: 'https://lens.google.com',
-            htmlContent: html,
-          )));
+          builder: (_) => BrowserView(initialQuery: url)));
     }
   }
-
   void _snack(String msg) => ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
       content: Text(msg, style: GoogleFonts.inter(color: Colors.white)),

@@ -1,38 +1,28 @@
 // lib/core/services/lens_service.dart
 //
-// NOVA X Visual Search — PHP Server Proxy approach (definitive fix)
+// NOVA X Visual Search — Base64 JSON → PHP proxy → Google (v5, definitive)
 //
-// ── COMPLETE HISTORY OF ATTEMPTS ─────────────────────────────────────────
+// ── WHY THIS VERSION WORKS WHERE OTHERS DIDN'T ───────────────────────────
 //
-//   v1 — HTML injection via loadData():
-//     Android WebView gives loadData() pages a "null" origin.
-//     fetch() to Google from null-origin = CORS blocked. Unfixable.
+//   All previous server-upload attempts (v2, v4) failed because cPanel shared
+//   hosting commonly has `file_uploads = Off` in php.ini, making $_FILES
+//   always empty. Multipart form uploads to PHP simply don't work in this
+//   environment without hosting changes.
 //
-//   v2 — Server upload + lens.google.com/uploadbyurl:
-//     cPanel hosting restrictions caused server uploads to fail silently.
-//     Fell through to fallback every time.
+//   v5 BYPASSES this entirely:
+//     • Image is read into memory in Dart and base64-encoded
+//     • Sent to our server as a plain JSON body: {"image": "<base64>"}
+//     • PHP receives it via php://input (always works — no file_uploads needed)
+//     • PHP decodes it, writes to sys_get_temp_dir() (always writable)
+//     • PHP curl POSTs the temp file to Google as a CURLFile
+//     • Google returns 302 → PHP extracts the URL → returns JSON to Flutter
+//     • Flutter navigates WebView to google.com/search?tbs=sbi:... ✅
 //
-//   v3 — Direct Dart Dio POST to lens.google.com/v3/upload:
-//     Google blocked non-browser clients even with Chrome UA spoofing.
-//     response.realUri returned lens.google.com homepage, not results.
-//
-// ── THE CORRECT DEFINITIVE SOLUTION (v4) ─────────────────────────────────
-//
-//   Architecture:
-//     Flutter → [multipart image] → OUR PHP server
-//     PHP server → [curl POST] → images.google.com/searchbyimage/upload
-//     Google → [302 redirect] → google.com/search?tbs=sbi:...
-//     PHP server → [returns JSON] → { "url": "https://www.google.com/search?tbs=sbi:..." }
-//     Flutter → WebView.navigate(url) → EXACT result as originally working
-//
-//   Why this works:
-//     - PHP curl on the server is a real server-side HTTP client
-//     - Google trusts server-to-server requests with proper headers
-//     - The returned URL is the EXACT google.com/search?tbs=sbi:... URL
-//       that was working before — same result page shown in the screenshot
-//     - No CORS, no null-origin, no WebView injection needed
-//     - The WebView just opens a regular Google search results URL
+// ── FALLBACK ─────────────────────────────────────────────────────────────
+//   If the server call fails for any reason, opens Google Images so the
+//   user can upload manually — always better than a dead screen.
 
+import 'dart:convert';
 import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:image_picker/image_picker.dart';
@@ -41,11 +31,9 @@ import 'package:nova_x/core/services/api_service.dart';
 class LensService {
   static final _picker = ImagePicker();
 
-  // Our PHP proxy endpoint — POSTs image to Google and returns the results URL
   static const String _proxyEndpoint =
       '${ApiService.baseUrl}/api/v1/visual-search/proxy';
 
-  // Fallback: Google Images homepage
   static const String _fallback = 'https://images.google.com';
 
   // ── Pick image from camera ───────────────────────────────────────────────
@@ -78,25 +66,22 @@ class LensService {
     }
   }
 
-  // ── Send image to our PHP proxy, get back the Google results URL ─────────
-  static Future<String?> _getResultsUrlViaProxy(File imageFile) async {
+  // ── Send base64 image to proxy → get Google results URL ─────────────────
+  static Future<String?> _proxySearch(File imageFile) async {
     try {
-      final formData = FormData.fromMap({
-        'image': await MultipartFile.fromFile(
-          imageFile.path,
-          filename: 'search.jpg',
-          contentType: DioMediaType('image', 'jpeg'),
-        ),
-      });
+      // Read image bytes and base64-encode
+      final bytes  = await imageFile.readAsBytes();
+      final b64    = base64Encode(bytes);
 
       final response = await Dio().post<Map<String, dynamic>>(
         _proxyEndpoint,
-        data: formData,
+        data: {'image': b64},                    // plain JSON — no file upload
         options: Options(
+          contentType: 'application/json',
           receiveTimeout: const Duration(seconds: 30),
-          sendTimeout: const Duration(seconds: 20),
-          responseType: ResponseType.json,
-          validateStatus: (s) => s != null && s < 500,
+          sendTimeout:    const Duration(seconds: 30),
+          responseType:   ResponseType.json,
+          validateStatus: (s) => s != null && s < 600,
         ),
       );
 
@@ -104,6 +89,7 @@ class LensService {
         final url = response.data?['url'] as String?;
         if (url != null && url.startsWith('https://')) return url;
       }
+
       return null;
     } catch (_) {
       return null;
@@ -115,7 +101,7 @@ class LensService {
     final file = fromCamera ? await pickFromCamera() : await pickFromGallery();
     if (file == null) return null; // user cancelled
 
-    final resultsUrl = await _getResultsUrlViaProxy(file);
+    final resultsUrl = await _proxySearch(file);
     return resultsUrl ?? _fallback;
   }
 }

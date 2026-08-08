@@ -22,7 +22,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.5'
+          flutter-version: '3.27.4'
           channel: 'stable'
           cache: true
 
@@ -138,8 +138,6 @@ jobs:
           PYEOF2
 
       # ── Firebase: add google-services plugin inside plugins {} block ──────
-      # ── Firebase: add google-services plugin inside plugins {} block ──────
-      # ── Firebase: add google-services plugin inside plugins {} block ──────
       - name: Apply Google Services Plugin (Firebase)
         run: |
           APP="android/app/build.gradle"
@@ -158,22 +156,24 @@ jobs:
           fi
           echo "✅ Firebase Gradle verified"
 
-      - name: Bump compileSdk to 35
+      - name: Bump compileSdk and targetSdk to 36
         run: |
           F="android/app/build.gradle"
-          sed -i 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 35/g' "$F"
-          sed -i 's/targetSdkVersion flutter\.targetSdkVersion/targetSdkVersion 35/g'   "$F"
-          sed -i 's/compileSdk flutter\.compileSdkVersion/compileSdk 35/g'              "$F"
-          sed -i 's/targetSdk flutter\.targetSdkVersion/targetSdk 35/g'                 "$F"
-          sed -i 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 35/g'          "$F"
-          sed -i 's/targetSdk = flutter\.targetSdkVersion/targetSdk = 35/g'             "$F"
-          echo "✓ compileSdk bumped to 35"
+          sed -i 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 36/g' "$F"
+          sed -i 's/targetSdkVersion flutter\.targetSdkVersion/targetSdkVersion 36/g'   "$F"
+          sed -i 's/compileSdk flutter\.compileSdkVersion/compileSdk 36/g'              "$F"
+          sed -i 's/targetSdk flutter\.targetSdkVersion/targetSdk 36/g'                 "$F"
+          sed -i 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 36/g'          "$F"
+          sed -i 's/targetSdk = flutter\.targetSdkVersion/targetSdk = 36/g'             "$F"
+          sed -i 's/compileSdk 35/compileSdk 36/g'                                      "$F"
+          sed -i 's/targetSdk 35/targetSdk 36/g'                                        "$F"
+          echo "✓ compileSdk and targetSdk bumped to 36"
           grep -E "compileSdk|targetSdk" "$F"
 
-      # ── Manifest patch — IDENTICAL to the old working step ───────────────
-      # DO NOT add android:launchMode here — Flutter 3.24.5 already generates
-      # it in MainActivity. Adding it again creates a duplicate XML attribute
-      # which causes: "Error parsing AndroidManifest.xml"
+      # ── Manifest patch ───────────────────────────────────────────────────
+      # DO NOT add android:launchMode here — Flutter 3.27.4 already generates
+      # it in the activity tag. Adding it again creates a duplicate XML
+      # attribute which causes: "Error parsing AndroidManifest.xml"
       - name: Patch AndroidManifest
         run: |
           M="android/app/src/main/AndroidManifest.xml"
@@ -350,11 +350,15 @@ jobs:
         run: |
           echo "=== google-services.json ==="
           ls -la android/app/google-services.json
-          echo "=== compileSdk ==="
+          echo "=== compileSdk / targetSdk (must both be 36) ==="
           grep -E "compileSdk|targetSdk" android/app/build.gradle | head -4
+          grep -E "compileSdk|targetSdk" android/app/build.gradle | grep -q "36" || {
+            echo "::error::targetSdk is NOT 36 — Google Play will reject this build!"
+            exit 1
+          }
           echo "=== FCM intent filter ==="
           grep "FLUTTER_NOTIFICATION_CLICK" android/app/src/main/AndroidManifest.xml
-          echo "=== launchMode (Flutter already generates this) ==="
+          echo "=== launchMode (Flutter 3.27.4 already generates this) ==="
           grep "launchMode" android/app/src/main/AndroidManifest.xml
           echo "=== No duplicate attributes check ==="
           python3 -c "
@@ -373,9 +377,9 @@ jobs:
           CACHE="${PUB_CACHE:-$HOME/.pub-cache}"
           find "$CACHE" -name "build.gradle" -path "*geolocator_android*" 2>/dev/null | while read -r f; do
             echo "Patching $f"
-            sed -i 's/flutter\.compileSdkVersion/35/g'       "$f"
-            sed -i 's/flutter\.minSdkVersion/21/g'           "$f"
-            sed -i 's/flutter\.targetSdkVersion/35/g'        "$f"
+            sed -i 's/flutter\.compileSdkVersion/36/g'       "$f"
+            sed -i 's/flutter\.minSdkVersion/23/g'           "$f"
+            sed -i 's/flutter\.targetSdkVersion/36/g'        "$f"
             sed -i 's/flutter\.ndkVersion/"25.1.8937393"/g'  "$f"
             echo "Patched:"
             grep -n "compileSdk\|minSdk\|targetSdk" "$f" || true

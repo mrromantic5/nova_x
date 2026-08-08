@@ -156,19 +156,28 @@ jobs:
           fi
           echo "✅ Firebase Gradle verified"
 
-      - name: Bump compileSdk and targetSdk to 36
+      - name: Bump compileSdk, targetSdk to 36 and minSdk to 23
         run: |
           F="android/app/build.gradle"
+          # ── compileSdk → 36 ──────────────────────────────────────────────
           sed -i 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 36/g' "$F"
+          sed -i 's/compileSdk flutter\.compileSdkVersion/compileSdk 36/g'               "$F"
+          sed -i 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 36/g'           "$F"
+          sed -i 's/compileSdk 35/compileSdk 36/g'                                       "$F"
+          # ── targetSdk → 36 ──────────────────────────────────────────────
           sed -i 's/targetSdkVersion flutter\.targetSdkVersion/targetSdkVersion 36/g'   "$F"
-          sed -i 's/compileSdk flutter\.compileSdkVersion/compileSdk 36/g'              "$F"
           sed -i 's/targetSdk flutter\.targetSdkVersion/targetSdk 36/g'                 "$F"
-          sed -i 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 36/g'          "$F"
           sed -i 's/targetSdk = flutter\.targetSdkVersion/targetSdk = 36/g'             "$F"
-          sed -i 's/compileSdk 35/compileSdk 36/g'                                      "$F"
           sed -i 's/targetSdk 35/targetSdk 36/g'                                        "$F"
-          echo "✓ compileSdk and targetSdk bumped to 36"
-          grep -E "compileSdk|targetSdk" "$F"
+          # ── minSdk → 23 (flutter create sets flutter.minSdkVersion=21, ──
+          # ── which causes manifest merge failure with geolocator_android) ─
+          sed -i 's/minSdkVersion flutter\.minSdkVersion/minSdkVersion 23/g'            "$F"
+          sed -i 's/minSdk flutter\.minSdkVersion/minSdk 23/g'                          "$F"
+          sed -i 's/minSdk = flutter\.minSdkVersion/minSdk = 23/g'                      "$F"
+          sed -i 's/minSdkVersion 21/minSdkVersion 23/g'                                "$F"
+          sed -i 's/minSdk 21/minSdk 23/g'                                              "$F"
+          echo "✓ compileSdk=36, targetSdk=36, minSdk=23 applied"
+          grep -E "compileSdk|targetSdk|minSdk" "$F"
 
       # ── Manifest patch ───────────────────────────────────────────────────
       # DO NOT add android:launchMode here — Flutter 3.27.4 already generates

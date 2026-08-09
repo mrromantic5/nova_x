@@ -50,6 +50,28 @@ jobs:
           flutter create --platforms android --org com.tlyfe --project-name nova_x .
           echo "✓ android/ regenerated"
 
+      - name: Inject versionCode and versionName from pubspec into local.properties
+        run: |
+          # flutter create resets local.properties to versionCode=1 / versionName=1.0
+          # This step overwrites those values with what pubspec.yaml declares,
+          # so Play Store receives the correct incrementing versionCode every build.
+          VERSION_LINE=$(grep '^version:' pubspec.yaml | head -1)
+          # e.g. "version: 3.1.0+4"
+          VERSION_NAME=$(echo "$VERSION_LINE" | sed 's/version: //' | cut -d'+' -f1 | tr -d ' ')
+          VERSION_CODE=$(echo "$VERSION_LINE" | sed 's/version: //' | cut -d'+' -f2 | tr -d ' ')
+          if [ -z "$VERSION_CODE" ] || [ -z "$VERSION_NAME" ]; then
+            echo "::error::Could not parse version from pubspec.yaml: $VERSION_LINE"
+            exit 1
+          fi
+          LP="android/local.properties"
+          # Remove any existing flutter.versionCode/Name lines then append correct ones
+          sed -i '/^flutter\.versionCode=/d' "$LP"
+          sed -i '/^flutter\.versionName=/d' "$LP"
+          echo "flutter.versionCode=$VERSION_CODE" >> "$LP"
+          echo "flutter.versionName=$VERSION_NAME" >> "$LP"
+          echo "✓ local.properties updated: versionCode=$VERSION_CODE versionName=$VERSION_NAME"
+          grep "flutter.version" "$LP"
+
       - name: Copy google-services.json
         run: |
           if [ -f "google-services.json" ]; then

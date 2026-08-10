@@ -870,21 +870,27 @@ class _HomeScreenState extends State<HomeScreen>
                           size: 20),
                     ),
                   ),
-                  const SizedBox(width: 4),
-                  // ── Lens / Camera search button ──────────────────
-                  GestureDetector(
-                    onTap: _showLensSheet,
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      padding: const EdgeInsets.all(8),
-                      child: _lensLoading
-                          ? const SizedBox(width: 20, height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: AppTheme.accentCyan))
-                          : const Icon(Icons.image_search_rounded,
-                              color: AppTheme.accentCyan, size: 22),
-                    ),
+                  // ── Lens icon hidden — restore in next update ────
+                  // To show again: remove the Offstage wrapper (keep inner content)
+                  Offstage(
+                    offstage: true,
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      const SizedBox(width: 4),
+                      GestureDetector(
+                        onTap: _showLensSheet,
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          padding: const EdgeInsets.all(8),
+                          child: _lensLoading
+                              ? const SizedBox(width: 20, height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: AppTheme.accentCyan))
+                              : const Icon(Icons.image_search_rounded,
+                                  color: AppTheme.accentCyan, size: 22),
+                        ),
+                      ),
+                    ]),
                   ),
                   const SizedBox(width: 4),
                   GestureDetector(

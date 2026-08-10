@@ -22,7 +22,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.27.4'
+          flutter-version: '3.32.0'
           channel: 'stable'
           cache: true
 
@@ -411,7 +411,7 @@ jobs:
             sed -i 's/flutter\.compileSdkVersion/36/g'       "$f"
             sed -i 's/flutter\.minSdkVersion/23/g'           "$f"
             sed -i 's/flutter\.targetSdkVersion/36/g'        "$f"
-            sed -i 's/flutter\.ndkVersion/"25.1.8937393"/g'  "$f"
+            sed -i 's/flutter\.ndkVersion/"27.1.12297006"/g'  "$f"
             echo "Patched:"
             grep -n "compileSdk\|minSdk\|targetSdk" "$f" || true
           done
@@ -521,14 +521,24 @@ jobs:
           grep -A6 "buildTypes {" android/app/build.gradle
 
       - name: Build Release APK
-        run: flutter build apk --release
+        run: flutter build apk --release --split-debug-info=build/symbols --obfuscate
 
       - name: Build Release AAB
-        run: flutter build appbundle --release
+        run: flutter build appbundle --release --split-debug-info=build/symbols --obfuscate
+
+      - name: Zip debug symbols for Play Console upload
+        run: |
+          cd build/symbols
+          zip -r ../../native-debug-symbols.zip .
+          cd ../..
+          echo "✓ native-debug-symbols.zip ready for Play Console upload"
+          ls -lh native-debug-symbols.zip
 
       - name: Archive Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: nova-x-v3.0.0-release-${{ github.sha }}
-          path: build/app/outputs/
+          name: nova-x-v3.1.0-release-${{ github.sha }}
+          path: |
+            build/app/outputs/
+            native-debug-symbols.zip
           retention-days: 14

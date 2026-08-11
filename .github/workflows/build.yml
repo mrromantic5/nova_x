@@ -50,6 +50,25 @@ jobs:
           flutter create --platforms android --org com.tlyfe --project-name nova_x .
           echo "✓ android/ regenerated"
 
+      - name: Detect Gradle DSL (Groovy vs Kotlin)
+        run: |
+          # Flutter 3.32.0+ generates Kotlin DSL (.kts files)
+          # Flutter 3.27.x and below generates Groovy DSL (.gradle files)
+          # Export the correct paths so every subsequent step uses the right files
+          if [ -f "android/app/build.gradle.kts" ]; then
+            echo "APP=android/app/build.gradle.kts" >> $GITHUB_ENV
+          else
+            echo "APP=android/app/build.gradle" >> $GITHUB_ENV
+          fi
+          if [ -f "android/settings.gradle.kts" ]; then
+            echo "SET=android/settings.gradle.kts" >> $GITHUB_ENV
+          else
+            echo "SET=android/settings.gradle" >> $GITHUB_ENV
+          fi
+          echo "✓ DSL detected:"
+          echo "  APP = $(cat $GITHUB_ENV | grep ^APP= | cut -d= -f2)"
+          echo "  SET = $(cat $GITHUB_ENV | grep ^SET= | cut -d= -f2)"
+
       - name: Inject versionCode and versionName from pubspec into local.properties
         run: |
           # flutter create resets local.properties to versionCode=1 / versionName=1.0
@@ -162,15 +181,8 @@ jobs:
       # ── Firebase: add google-services plugin inside plugins {} block ──────
       - name: Apply Google Services Plugin (Firebase)
         run: |
-          APP="android/app/build.gradle"
-          # Flutter 3.32.0+ generates settings.gradle.kts (Kotlin DSL)
-          # Flutter 3.27.x and below generates settings.gradle (Groovy DSL)
-          if [ -f "android/settings.gradle.kts" ]; then
-            SET="android/settings.gradle.kts"
-          else
-            SET="android/settings.gradle"
-          fi
-          echo "Using settings file: $SET"
+          # $APP and $SET are set by the "Detect Gradle DSL" step above
+          echo "Using: APP=$APP  SET=$SET"
           if ! grep -q "com.google.gms.google-services" "$SET"; then
             sed -i '/id("com.android.application")/a\    id("com.google.gms.google-services") version "4.4.0" apply false' "$SET" || \
             sed -i '/id "com.android.application" version/a\    id "com.google.gms.google-services" version "4.4.0" apply false' "$SET"
@@ -178,7 +190,7 @@ jobs:
           fi
           if ! grep -q "com.google.gms.google-services" "$APP"; then
             sed -i '/^plugins {/a\    id "com.google.gms.google-services"' "$APP"
-            echo "✓ google-services applied in app/build.gradle"
+            echo "✓ google-services applied in $APP"
           fi
           if head -3 "$APP" | grep -q "^apply plugin"; then
             echo "::error::apply plugin: found before plugins {} — Gradle will fail"
@@ -188,7 +200,7 @@ jobs:
 
       - name: Bump compileSdk, targetSdk to 36 and minSdk to 23
         run: |
-          F="android/app/build.gradle"
+          F="$APP"
           # ── compileSdk → 36 ──────────────────────────────────────────────
           sed -i 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 36/g' "$F"
           sed -i 's/compileSdk flutter\.compileSdkVersion/compileSdk 36/g'               "$F"
@@ -390,8 +402,8 @@ jobs:
           echo "=== google-services.json ==="
           ls -la android/app/google-services.json
           echo "=== compileSdk / targetSdk (must both be 36) ==="
-          grep -E "compileSdk|targetSdk" android/app/build.gradle | head -4
-          grep -E "compileSdk|targetSdk" android/app/build.gradle | grep -q "36" || {
+          grep -E "compileSdk|targetSdk" "$APP" | head -4
+          grep -E "compileSdk|targetSdk" "$APP" | grep -q "36" || {
             echo "::error::targetSdk is NOT 36 — Google Play will reject this build!"
             exit 1
           }
@@ -475,8 +487,8 @@ jobs:
           # 3. Inject signingConfigs + point release at it, using Python for a
           #    safe, idempotent rewrite of app/build.gradle.
           python3 << 'PYEOF'
-          import re
-          p = 'android/app/build.gradle'
+          import re, os
+          p = os.environ.get('APP', 'android/app/build.gradle')
           s = open(p).read()
 
           # Load key.properties at the top of the android {} via a loader block,
@@ -522,11 +534,11 @@ jobs:
                          s, count=1)
 
           open(p, 'w').write(s)
-          print("✓ build.gradle updated for release signing")
+          print(f"✓ {p} updated for release signing")
           PYEOF
 
           echo "--- release buildType ---"
-          grep -A6 "buildTypes {" android/app/build.gradle
+          grep -A6 "buildTypes {" "$APP"
 
       - name: Build Release APK
         run: flutter build apk --release --split-debug-info=build/symbols --obfuscate

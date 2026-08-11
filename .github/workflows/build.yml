@@ -532,7 +532,7 @@ jobs:
               s = s.replace("android {", loader + "android {", 1)
 
           # ── signingConfigs block ─────────────────────────────────────────
-          if 'signingConfigs' not in s:
+          if 'signingConfigs {' not in s:
               if is_kts:
                   sign_block = (
                       '    signingConfigs {\n'

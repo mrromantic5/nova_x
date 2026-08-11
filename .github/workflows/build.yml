@@ -183,13 +183,30 @@ jobs:
         run: |
           # $APP and $SET are set by the "Detect Gradle DSL" step above
           echo "Using: APP=$APP  SET=$SET"
+
+          # Choose correct plugin syntax based on DSL type
+          if [[ "$SET" == *.kts ]]; then
+            # Kotlin DSL — must use id("...") with parentheses
+            SET_PLUGIN='    id("com.google.gms.google-services") version "4.4.0" apply false'
+            SET_ANCHOR='id("com.android.application")'
+          else
+            # Groovy DSL — uses id "..." without parentheses
+            SET_PLUGIN='    id "com.google.gms.google-services" version "4.4.0" apply false'
+            SET_ANCHOR='id "com.android.application" version'
+          fi
+
+          if [[ "$APP" == *.kts ]]; then
+            APP_PLUGIN='    id("com.google.gms.google-services")'
+          else
+            APP_PLUGIN='    id "com.google.gms.google-services"'
+          fi
+
           if ! grep -q "com.google.gms.google-services" "$SET"; then
-            sed -i '/id("com.android.application")/a\    id("com.google.gms.google-services") version "4.4.0" apply false' "$SET" || \
-            sed -i '/id "com.android.application" version/a\    id "com.google.gms.google-services" version "4.4.0" apply false' "$SET"
+            sed -i "/$SET_ANCHOR/a\\$SET_PLUGIN" "$SET"
             echo "✓ google-services declared in $SET"
           fi
           if ! grep -q "com.google.gms.google-services" "$APP"; then
-            sed -i '/^plugins {/a\    id "com.google.gms.google-services"' "$APP"
+            sed -i "/^plugins {/a\\$APP_PLUGIN" "$APP"
             echo "✓ google-services applied in $APP"
           fi
           if head -3 "$APP" | grep -q "^apply plugin"; then
@@ -484,57 +501,91 @@ jobs:
           EOF
           echo "✓ key.properties written"
 
-          # 3. Inject signingConfigs + point release at it, using Python for a
-          #    safe, idempotent rewrite of app/build.gradle.
+          # 3. Inject signingConfigs + point release at it — handles both
+          #    Groovy DSL (build.gradle) and Kotlin DSL (build.gradle.kts).
           python3 << 'PYEOF'
           import re, os
           p = os.environ.get('APP', 'android/app/build.gradle')
           s = open(p).read()
+          is_kts = p.endswith('.kts')
 
-          # Load key.properties at the top of the android {} via a loader block,
-          # inserted right before "android {".
+          # ── Key properties loader ────────────────────────────────────────
           if 'keystoreProperties' not in s:
-              loader = (
-                  "def keystoreProperties = new Properties()\n"
-                  "def keystorePropertiesFile = rootProject.file('key.properties')\n"
-                  "if (keystorePropertiesFile.exists()) {\n"
-                  "    keystorePropertiesFile.withReader('UTF-8') { r -> keystoreProperties.load(r) }\n"
-                  "}\n\n"
-              )
+              if is_kts:
+                  loader = (
+                      'import java.util.Properties\n'
+                      'import java.io.FileInputStream\n\n'
+                      'val keystoreProperties = Properties()\n'
+                      'val keystorePropertiesFile = rootProject.file("key.properties")\n'
+                      'if (keystorePropertiesFile.exists()) {\n'
+                      '    keystoreProperties.load(FileInputStream(keystorePropertiesFile))\n'
+                      '}\n\n'
+                  )
+              else:
+                  loader = (
+                      "def keystoreProperties = new Properties()\n"
+                      "def keystorePropertiesFile = rootProject.file('key.properties')\n"
+                      "if (keystorePropertiesFile.exists()) {\n"
+                      "    keystorePropertiesFile.withReader('UTF-8') { r -> keystoreProperties.load(r) }\n"
+                      "}\n\n"
+                  )
               s = s.replace("android {", loader + "android {", 1)
 
-          # Add a signingConfigs { release {...} } block just before buildTypes {.
-          if 'signingConfigs {' not in s:
-              sign_block = (
-                  "    signingConfigs {\n"
-                  "        release {\n"
-                  "            keyAlias keystoreProperties['keyAlias']\n"
-                  "            keyPassword keystoreProperties['keyPassword']\n"
-                  "            storeFile keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null\n"
-                  "            storePassword keystoreProperties['storePassword']\n"
-                  "        }\n"
-                  "    }\n\n"
-                  "    buildTypes {"
-              )
+          # ── signingConfigs block ─────────────────────────────────────────
+          if 'signingConfigs' not in s:
+              if is_kts:
+                  sign_block = (
+                      '    signingConfigs {\n'
+                      '        create("release") {\n'
+                      '            keyAlias = keystoreProperties["keyAlias"] as String\n'
+                      '            keyPassword = keystoreProperties["keyPassword"] as String\n'
+                      '            storeFile = keystoreProperties["storeFile"]?.let { file(it) }\n'
+                      '            storePassword = keystoreProperties["storePassword"] as String\n'
+                      '        }\n'
+                      '    }\n\n'
+                      '    buildTypes {'
+                  )
+              else:
+                  sign_block = (
+                      "    signingConfigs {\n"
+                      "        release {\n"
+                      "            keyAlias keystoreProperties['keyAlias']\n"
+                      "            keyPassword keystoreProperties['keyPassword']\n"
+                      "            storeFile keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null\n"
+                      "            storePassword keystoreProperties['storePassword']\n"
+                      "        }\n"
+                      "    }\n\n"
+                      "    buildTypes {"
+                  )
               s = s.replace("buildTypes {", sign_block, 1)
 
-          # Point the release buildType at the release signingConfig.
-          # Handle both Groovy ("signingConfig signingConfigs.debug") and the
-          # occasional "=" form, and only fall back to release if a debug ref
-          # is present.
-          if 'signingConfigs.debug' in s:
-              s = s.replace("signingConfig = signingConfigs.debug",
-                            "signingConfig = signingConfigs.release")
-              s = s.replace("signingConfig signingConfigs.debug",
-                            "signingConfig signingConfigs.release")
-          elif 'signingConfig' not in s.split('buildTypes {',1)[1].split('}',1)[0]:
-              # No signingConfig line inside release at all — add one.
-              s = re.sub(r"(release\s*\{)",
-                         r"\1\n            signingConfig signingConfigs.release",
-                         s, count=1)
+          # ── Point release buildType at release signingConfig ─────────────
+          if is_kts:
+              if 'signingConfigs.getByName("release")' not in s:
+                  if 'signingConfigs.getByName("debug")' in s:
+                      s = s.replace(
+                          'signingConfig = signingConfigs.getByName("debug")',
+                          'signingConfig = signingConfigs.getByName("release")'
+                      )
+                  else:
+                      s = re.sub(
+                          r'(getByName\("release"\)\s*\{)',
+                          r'\1\n            signingConfig = signingConfigs.getByName("release")',
+                          s, count=1
+                      )
+          else:
+              if 'signingConfigs.debug' in s:
+                  s = s.replace("signingConfig = signingConfigs.debug",
+                                "signingConfig = signingConfigs.release")
+                  s = s.replace("signingConfig signingConfigs.debug",
+                                "signingConfig signingConfigs.release")
+              elif 'signingConfig' not in s.split('buildTypes {',1)[1].split('}',1)[0]:
+                  s = re.sub(r"(release\s*\{)",
+                             r"\1\n            signingConfig signingConfigs.release",
+                             s, count=1)
 
           open(p, 'w').write(s)
-          print(f"✓ {p} updated for release signing")
+          print(f"✓ {p} updated for release signing ({'KTS' if is_kts else 'Groovy'})")
           PYEOF
 
           echo "--- release buildType ---"

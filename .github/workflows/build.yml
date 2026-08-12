@@ -235,8 +235,19 @@ jobs:
           sed -i 's/minSdk = flutter\.minSdkVersion/minSdk = 23/g'                      "$F"
           sed -i 's/minSdkVersion 21/minSdkVersion 23/g'                                "$F"
           sed -i 's/minSdk 21/minSdk 23/g'                                              "$F"
-          echo "✓ compileSdk=36, targetSdk=36, minSdk=23 applied"
-          grep -E "compileSdk|targetSdk|minSdk" "$F"
+          # ── ndkVersion → 27.0.12077973 ──────────────────────────────────
+          # Flutter 3.32.0 defaults to NDK 26.3.11579264 but all plugins
+          # (firebase, geolocator, speech_to_text etc.) require 27.0.12077973.
+          # Replace flutter.ndkVersion variable OR inject after android { block.
+          sed -i 's/ndkVersion = flutter\.ndkVersion/ndkVersion = "27.0.12077973"/g'   "$F"
+          sed -i 's/ndkVersion flutter\.ndkVersion/ndkVersion "27.0.12077973"/g'        "$F"
+          # If ndkVersion not present at all, inject it after android { line
+          if ! grep -q "ndkVersion" "$F"; then
+            sed -i '/^android {/a\    ndkVersion = "27.0.12077973"' "$F"
+            echo "✓ ndkVersion injected into android block"
+          fi
+          echo "✓ compileSdk=36, targetSdk=36, minSdk=23, ndkVersion=27.0.12077973 applied"
+          grep -E "compileSdk|targetSdk|minSdk|ndkVersion" "$F"
 
       # ── Manifest patch ───────────────────────────────────────────────────
       # DO NOT add android:launchMode here — Flutter 3.27.4 already generates
@@ -448,7 +459,7 @@ jobs:
             sed -i 's/flutter\.compileSdkVersion/36/g'       "$f"
             sed -i 's/flutter\.minSdkVersion/23/g'           "$f"
             sed -i 's/flutter\.targetSdkVersion/36/g'        "$f"
-            sed -i 's/flutter\.ndkVersion/"27.1.12297006"/g'  "$f"
+            sed -i 's/flutter\.ndkVersion/"27.0.12077973"/g'  "$f"
             echo "Patched:"
             grep -n "compileSdk\|minSdk\|targetSdk" "$f" || true
           done

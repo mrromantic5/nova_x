@@ -48,6 +48,7 @@ import 'package:nova_x/core/services/advert_service.dart';
 import 'package:nova_x/core/services/business_badge_service.dart';
 import 'package:nova_x/features/notifications/screens/notifications_screen.dart';
 import 'package:nova_x/features/devtools/screens/code_editor_screen.dart';
+import 'package:nova_x/core/services/update_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -188,6 +189,10 @@ class _HomeScreenState extends State<HomeScreen>
     _searchHist = LocalDB.getSearchHistory();
     _searchCtrl.addListener(_onSearchChanged);
     _searchFocus.addListener(_onFocusChanged);
+    // Check for app updates after home screen loads
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      UpdateService.checkForUpdate(context);
+    });
   }
 
   @override

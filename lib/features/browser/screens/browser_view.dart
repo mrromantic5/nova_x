@@ -28,6 +28,7 @@ import 'package:nova_x/features/offline/screens/offline_pages_screen.dart';
 import 'package:nova_x/core/services/tabs_service.dart';
 import 'package:nova_x/features/browser/screens/tabs_screen.dart';
 import '../widgets/devtools_panel.dart';
+import 'package:url_launcher/url_launcher.dart' as ul;
 
 class BrowserView extends StatefulWidget {
   final String initialQuery;
@@ -749,6 +750,78 @@ class _BrowserViewState extends State<BrowserView>
             return null;
           },
         );
+      },
+
+      // ── Handle special URL schemes (intent://, market://, snssdk://, etc.) ──
+      shouldOverrideUrlLoading: (controller, navigationAction) async {
+        final uri = navigationAction.request.url;
+        if (uri == null) return NavigationActionPolicy.ALLOW;
+        final scheme = uri.scheme.toLowerCase();
+
+        // Standard schemes — let WebView handle normally
+        if (scheme == 'https' || scheme == 'http' ||
+            scheme == 'data'  || scheme == 'blob' ||
+            scheme == 'about' || scheme == 'javascript') {
+          return NavigationActionPolicy.ALLOW;
+        }
+
+        // intent:// — Android intent URL (Play Store, app deep links, etc.)
+        if (scheme == 'intent') {
+          try {
+            final uriStr = uri.toString();
+            // Extract fallback browser_fallback_url if present
+            final fallbackMatch =
+                RegExp(r'browser_fallback_url=([^;]+)').firstMatch(uriStr);
+            if (fallbackMatch != null) {
+              final fallback = Uri.decodeFull(fallbackMatch.group(1)!);
+              final fallbackUri = Uri.parse(fallback);
+              if (await ul.canLaunchUrl(fallbackUri)) {
+                await ul.launchUrl(fallbackUri,
+                    mode: ul.LaunchMode.externalApplication);
+                return NavigationActionPolicy.CANCEL;
+              }
+            }
+            // Try launching the intent URL directly via Android
+            if (await ul.canLaunchUrl(uri)) {
+              await ul.launchUrl(uri,
+                  mode: ul.LaunchMode.externalApplication);
+            }
+          } catch (_) {}
+          return NavigationActionPolicy.CANCEL;
+        }
+
+        // market:// — Direct Play Store scheme
+        if (scheme == 'market') {
+          try {
+            final playUrl = Uri.parse(
+                'https://play.google.com/store/apps/details?' +
+                uri.toString().replaceFirst('market://details?', ''));
+            await ul.launchUrl(playUrl,
+                mode: ul.LaunchMode.externalApplication);
+          } catch (_) {}
+          return NavigationActionPolicy.CANCEL;
+        }
+
+        // mailto:, tel:, sms: — native handlers
+        if (scheme == 'mailto' || scheme == 'tel' || scheme == 'sms') {
+          try {
+            if (await ul.canLaunchUrl(uri)) {
+              await ul.launchUrl(uri,
+                  mode: ul.LaunchMode.externalApplication);
+            }
+          } catch (_) {}
+          return NavigationActionPolicy.CANCEL;
+        }
+
+        // Any other unknown scheme (snssdk://, fb://, tg://, whatsapp://, etc.)
+        // Try to open with the native app, silently cancel if not possible
+        try {
+          if (await ul.canLaunchUrl(uri)) {
+            await ul.launchUrl(uri,
+                mode: ul.LaunchMode.externalApplication);
+          }
+        } catch (_) {}
+        return NavigationActionPolicy.CANCEL;
       },
 
       onLoadStart: (c, url) async {

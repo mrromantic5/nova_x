@@ -20,7 +20,7 @@ import 'package:nova_x/core/widgets/update_dialog.dart';
 class UpdateService {
   // ── Hosted on your server — update version.json whenever you release ──────
   static const String _versionUrl =
-      'https://c.x.t-lyfe.com.ng/nova_x/version.json';
+      'https://api.browser.t-lyfe.com.ng/version.json';
 
   static const String _firstSeenKey = 'nx_update_first_seen_';
 

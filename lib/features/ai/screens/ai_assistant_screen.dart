@@ -34,7 +34,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
   bool _speechAvail = false;
 
   // ── API endpoints ──────────────────────────────────────────────────────────
-  static const String _textApi  = 'https://brains-jet-ai.brainsjetai.workers.dev/?model=llama-3.1-8b-instant&q=';
+  static const String _textApi  = 'https://brains-jet-ai.brainsjetai.workers.dev/?model=openai/gpt-oss-20b&q=';
   static const String _ttsApi   = 'https://brains-tts.brainsjetai.workers.dev/';
   static const String _imageApi = 'https://ab-text-toimgfast.abrahamdw882.workers.dev/?text=';
   static const String _videoApi = 'https://eliteprotech-apis.zone.id/aivideo?q=';

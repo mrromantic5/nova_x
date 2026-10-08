@@ -44,11 +44,32 @@ jobs:
           find "$CACHE" -name "build.gradle" -exec sed -i 's/jcenter()/mavenCentral()/g' {} +
           echo "✓ jcenter replaced"
 
-      - name: Regenerate Android Platform Files
+      - name: Ensure Android Platform Files Exist
         run: |
-          rm -rf android
-          flutter create --platforms android --org com.tlyfe --project-name nova_x .
-          echo "✓ android/ regenerated"
+          # IMPORTANT: Do NOT wipe android/ — it contains our custom build.gradle
+          # with minSdk 24, targetSdk 36, compileSdk 36 already set correctly.
+          # Only run flutter create if android/ is completely missing.
+          if [ ! -f "android/app/build.gradle" ] && [ ! -f "android/app/build.gradle.kts" ]; then
+            echo "android/ missing — running flutter create"
+            flutter create --platforms android --org com.tlyfe --project-name nova_x .
+            echo "✓ android/ created from scratch"
+          else
+            echo "✓ android/ already present — preserving custom build.gradle (minSdk=24, targetSdk=36)"
+            # Still run flutter create to update any non-gradle platform files,
+            # but protect the gradle files we care about.
+            cp android/app/build.gradle /tmp/build_gradle_backup 2>/dev/null || true
+            cp android/app/build.gradle.kts /tmp/build_gradle_kts_backup 2>/dev/null || true
+            flutter create --platforms android --org com.tlyfe --project-name nova_x . 2>/dev/null || true
+            # Restore our custom build.gradle (has correct SDK versions)
+            if [ -f /tmp/build_gradle_backup ]; then
+              cp /tmp/build_gradle_backup android/app/build.gradle
+              echo "✓ Custom build.gradle restored (minSdk=24, targetSdk=36)"
+            fi
+            if [ -f /tmp/build_gradle_kts_backup ]; then
+              cp /tmp/build_gradle_kts_backup android/app/build.gradle.kts
+              echo "✓ Custom build.gradle.kts restored"
+            fi
+          fi
 
       - name: Detect Gradle DSL (Groovy vs Kotlin)
         run: |
@@ -215,26 +236,39 @@ jobs:
           fi
           echo "✅ Firebase Gradle verified"
 
-      - name: Bump compileSdk, targetSdk to 36 and minSdk to 23
+      - name: Bump compileSdk, targetSdk to 36 and minSdk to 24
         run: |
           F="$APP"
           # ── compileSdk → 36 ──────────────────────────────────────────────
           sed -i 's/compileSdkVersion flutter\.compileSdkVersion/compileSdkVersion 36/g' "$F"
           sed -i 's/compileSdk flutter\.compileSdkVersion/compileSdk 36/g'               "$F"
           sed -i 's/compileSdk = flutter\.compileSdkVersion/compileSdk = 36/g'           "$F"
+          sed -i 's/compileSdk flutter\.compileSdkVersion/compileSdk 36/g'               "$F"
           sed -i 's/compileSdk 35/compileSdk 36/g'                                       "$F"
+          sed -i 's/compileSdk 34/compileSdk 36/g'                                       "$F"
           # ── targetSdk → 36 ──────────────────────────────────────────────
           sed -i 's/targetSdkVersion flutter\.targetSdkVersion/targetSdkVersion 36/g'   "$F"
           sed -i 's/targetSdk flutter\.targetSdkVersion/targetSdk 36/g'                 "$F"
           sed -i 's/targetSdk = flutter\.targetSdkVersion/targetSdk = 36/g'             "$F"
           sed -i 's/targetSdk 35/targetSdk 36/g'                                        "$F"
-          # ── minSdk → 23 (flutter create sets flutter.minSdkVersion=21, ──
-          # ── which causes manifest merge failure with geolocator_android) ─
-          sed -i 's/minSdkVersion flutter\.minSdkVersion/minSdkVersion 23/g'            "$F"
-          sed -i 's/minSdk flutter\.minSdkVersion/minSdk 23/g'                          "$F"
-          sed -i 's/minSdk = flutter\.minSdkVersion/minSdk = 23/g'                      "$F"
-          sed -i 's/minSdkVersion 21/minSdkVersion 23/g'                                "$F"
-          sed -i 's/minSdk 21/minSdk 23/g'                                              "$F"
+          sed -i 's/targetSdk 34/targetSdk 36/g'                                        "$F"
+          # ── minSdk → 24 ─────────────────────────────────────────────────
+          # MUST be 24+ for Google Play Automatic Protection (Play Protect).
+          # Our repo build.gradle already has minSdk 24 — this guards against
+          # flutter create or plugin patches accidentally setting a lower value.
+          sed -i 's/minSdkVersion flutter\.minSdkVersion/minSdkVersion 24/g'            "$F"
+          sed -i 's/minSdk flutter\.minSdkVersion/minSdk 24/g'                          "$F"
+          sed -i 's/minSdk = flutter\.minSdkVersion/minSdk = 24/g'                      "$F"
+          sed -i 's/minSdkVersion 21/minSdkVersion 24/g'                                "$F"
+          sed -i 's/minSdk 21/minSdk 24/g'                                              "$F"
+          sed -i 's/minSdkVersion 22/minSdkVersion 24/g'                                "$F"
+          sed -i 's/minSdk 22/minSdk 24/g'                                              "$F"
+          sed -i 's/minSdkVersion 23/minSdkVersion 24/g'                                "$F"
+          sed -i 's/minSdk 23/minSdk 24/g'                                              "$F"
+          # Also handle Kotlin DSL (= syntax)
+          sed -i 's/minSdk = 21/minSdk = 24/g'                                          "$F"
+          sed -i 's/minSdk = 22/minSdk = 24/g'                                          "$F"
+          sed -i 's/minSdk = 23/minSdk = 24/g'                                          "$F"
           # ── ndkVersion → 27.0.12077973 ──────────────────────────────────
           # Flutter 3.32.0 defaults to NDK 26.3.11579264 but all plugins
           # (firebase, geolocator, speech_to_text etc.) require 27.0.12077973.
@@ -246,7 +280,14 @@ jobs:
             sed -i '/^android {/a\    ndkVersion = "27.0.12077973"' "$F"
             echo "✓ ndkVersion injected into android block"
           fi
-          echo "✓ compileSdk=36, targetSdk=36, minSdk=23, ndkVersion=27.0.12077973 applied"
+          # ── HARD VERIFICATION — fail fast if minSdk is still below 24 ───
+          MINSDK_VAL=$(grep -E "^\s*minSdk[^V]" "$F" | grep -o '[0-9]\+' | head -1)
+          if [ -n "$MINSDK_VAL" ] && [ "$MINSDK_VAL" -lt 24 ]; then
+            echo "::error::minSdk is $MINSDK_VAL after patching — Play Store requires 24+ for Automatic Protection. Check $F"
+            cat "$F"
+            exit 1
+          fi
+          echo "✓ compileSdk=36, targetSdk=36, minSdk=24, ndkVersion=27.0.12077973 applied"
           grep -E "compileSdk|targetSdk|minSdk|ndkVersion" "$F"
 
       # ── Manifest patch ───────────────────────────────────────────────────
@@ -429,12 +470,18 @@ jobs:
         run: |
           echo "=== google-services.json ==="
           ls -la android/app/google-services.json
-          echo "=== compileSdk / targetSdk (must both be 36) ==="
-          grep -E "compileSdk|targetSdk" "$APP" | head -4
+          echo "=== compileSdk / targetSdk / minSdk ==="
+          grep -E "compileSdk|targetSdk|minSdk" "$APP" | head -6
           grep -E "compileSdk|targetSdk" "$APP" | grep -q "36" || {
             echo "::error::targetSdk is NOT 36 — Google Play will reject this build!"
             exit 1
           }
+          MINSDK_FINAL=$(grep -E "^\s*minSdk[^V]" "$APP" | grep -o '[0-9]\+' | head -1)
+          if [ -n "$MINSDK_FINAL" ] && [ "$MINSDK_FINAL" -lt 24 ]; then
+            echo "::error::minSdk=$MINSDK_FINAL — Play Automatic Protection requires minSdk >= 24! Build will be rejected."
+            exit 1
+          fi
+          echo "✅ minSdk=$MINSDK_FINAL (>= 24 ✓)"
           echo "=== FCM intent filter ==="
           grep "FLUTTER_NOTIFICATION_CLICK" android/app/src/main/AndroidManifest.xml
           echo "=== launchMode (Flutter 3.27.4 already generates this) ==="
@@ -457,7 +504,9 @@ jobs:
           find "$CACHE" -name "build.gradle" -path "*geolocator_android*" 2>/dev/null | while read -r f; do
             echo "Patching $f"
             sed -i 's/flutter\.compileSdkVersion/36/g'       "$f"
-            sed -i 's/flutter\.minSdkVersion/23/g'           "$f"
+            sed -i 's/flutter\.minSdkVersion/24/g'           "$f"
+            sed -i 's/minSdkVersion 21/minSdkVersion 24/g'   "$f"
+            sed -i 's/minSdkVersion 23/minSdkVersion 24/g'   "$f"
             sed -i 's/flutter\.targetSdkVersion/36/g'        "$f"
             sed -i 's/flutter\.ndkVersion/"27.0.12077973"/g'  "$f"
             echo "Patched:"

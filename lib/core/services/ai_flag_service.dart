@@ -2,127 +2,141 @@
 //
 // NOVA X — AI-Generated Content Report Service
 // Google Play AI-Generated Content Policy compliance.
-// v1.0.0 — verified clean
+// v2.0.0 — Font Awesome icons, professional SaaS-grade design
 
 import 'package:dio/dio.dart';
+import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'api_service.dart';
 
 // ── Category model ─────────────────────────────────────────────────────────
 class AiFlagCategory {
-  final String key;
-  final String label;
-  final String emoji;
-  final String description;
+  final String   key;
+  final String   label;
+  final String   description;
+  final IconData icon;
+  final Color    iconColor;
+  final Color    iconBg;
 
   const AiFlagCategory({
     required this.key,
     required this.label,
-    required this.emoji,
     required this.description,
+    required this.icon,
+    required this.iconColor,
+    required this.iconBg,
   });
 }
 
 // ── Service ────────────────────────────────────────────────────────────────
 class AiFlagService {
-  // All report categories — keys must match PHP whitelist in index.php
   static const List<AiFlagCategory> categories = [
     AiFlagCategory(
       key:         'offensive',
       label:       'Offensive Content',
-      emoji:       '\u{1F6AB}',
       description: 'Hate speech, slurs, or targeted harassment',
+      icon:        FontAwesomeIcons.userSlash,
+      iconColor:   Color(0xFFFF4444),
+      iconBg:      Color(0x22FF4444),
     ),
     AiFlagCategory(
       key:         'harmful',
       label:       'Harmful / Dangerous',
-      emoji:       '\u26A0\uFE0F',
       description: 'Content that could cause real-world harm',
+      icon:        FontAwesomeIcons.triangleExclamation,
+      iconColor:   Color(0xFFFFAB00),
+      iconBg:      Color(0x22FFAB00),
     ),
     AiFlagCategory(
       key:         'sexual',
       label:       'Sexual / Explicit',
-      emoji:       '\u{1F51E}',
       description: 'Sexually explicit or inappropriate content',
+      icon:        FontAwesomeIcons.eyeSlash,
+      iconColor:   Color(0xFFFF6B9D),
+      iconBg:      Color(0x22FF6B9D),
     ),
     AiFlagCategory(
       key:         'violent',
       label:       'Violence / Gore',
-      emoji:       '\u{1F4A2}',
       description: 'Graphic violence, threats, or disturbing imagery',
+      icon:        FontAwesomeIcons.bolt,
+      iconColor:   Color(0xFFFF7043),
+      iconBg:      Color(0x22FF7043),
     ),
     AiFlagCategory(
       key:         'misinformation',
       label:       'Misinformation',
-      emoji:       '\u{1F4E2}',
       description: 'False, misleading, or deceptive content',
+      icon:        FontAwesomeIcons.circleXmark,
+      iconColor:   Color(0xFFFFC107),
+      iconBg:      Color(0x22FFC107),
     ),
     AiFlagCategory(
       key:         'privacy',
       label:       'Privacy Violation',
-      emoji:       '\u{1F510}',
       description: 'Exposes personal or private information',
+      icon:        FontAwesomeIcons.lock,
+      iconColor:   Color(0xFF00D4FF),
+      iconBg:      Color(0x2200D4FF),
     ),
     AiFlagCategory(
       key:         'spam',
       label:       'Spam / Scam',
-      emoji:       '\u{1F4E7}',
       description: 'Promotional spam, phishing, or scam content',
+      icon:        FontAwesomeIcons.envelopeCircleCheck,
+      iconColor:   Color(0xFF7C4DFF),
+      iconBg:      Color(0x227C4DFF),
     ),
     AiFlagCategory(
       key:         'other',
       label:       'Other Issue',
-      emoji:       '\u{1F4DD}',
       description: 'Another concern not listed above',
+      icon:        FontAwesomeIcons.ellipsis,
+      iconColor:   Color(0xFFB0C4DE),
+      iconBg:      Color(0x22B0C4DE),
     ),
   ];
 
   static final Dio _dio = Dio(BaseOptions(
-    baseUrl:         ApiService.baseUrl,
-    connectTimeout:  const Duration(seconds: 15),
-    receiveTimeout:  const Duration(seconds: 30),
-    validateStatus:  (_) => true, // handle errors ourselves
-    headers:         const {'Accept': 'application/json'},
+    baseUrl:        ApiService.baseUrl,
+    connectTimeout: const Duration(seconds: 15),
+    receiveTimeout: const Duration(seconds: 30),
+    validateStatus: (_) => true,
+    headers:        const {'Accept': 'application/json'},
   ));
 
-  /// Submit a flag report to the backend. Returns true on success.
-  /// Works for both authenticated and guest users.
+  /// Submit a flag report. Returns true on success.
   static Future<bool> submitReport({
-    required String contentType,  // 'text' | 'image' | 'video'
+    required String contentType,
     required String reasonKey,
     required String reasonLabel,
-    String?         contentRef,   // URL or first 500 chars of AI text
-    String?         description,  // optional extra detail from user
+    String?         contentRef,
+    String?         description,
   }) async {
     try {
       final token = await ApiService.getToken();
       final user  = await ApiService.getCachedUser();
 
-      final Map<String, dynamic> payload = {
+      final payload = <String, dynamic>{
         'content_type': contentType,
-        'reason':        reasonKey,
-        'reason_label':  reasonLabel,
+        'reason':       reasonKey,
+        'reason_label': reasonLabel,
         if (contentRef  != null && contentRef.isNotEmpty)
-          'content_ref':  contentRef,
+          'content_ref': contentRef,
         if (description != null && description.isNotEmpty)
-          'description':  description,
-        if (user != null && user['username'] != null)
-          'username': user['username'],
-        if (user != null && user['email'] != null)
-          'email': user['email'],
-      };
-
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-        if (token != null) 'Authorization': 'Bearer $token',
+          'description': description,
+        if (user?['username'] != null) 'username': user!['username'],
+        if (user?['email']    != null) 'email':    user!['email'],
       };
 
       final res = await _dio.post(
         '/api/v1/ai-flag-report',
         data:    payload,
-        options: Options(headers: headers),
+        options: Options(headers: {
+          'Content-Type':  'application/json',
+          if (token != null) 'Authorization': 'Bearer $token',
+        }),
       );
-
-      // Accept 200 or 201 as success
       return res.statusCode == 200 || res.statusCode == 201;
     } catch (_) {
       return false;

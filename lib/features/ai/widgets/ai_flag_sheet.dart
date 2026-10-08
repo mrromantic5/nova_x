@@ -1,15 +1,16 @@
 // lib/features/ai/widgets/ai_flag_sheet.dart
 //
 // NOVA X — AI Content Report Bottom Sheet
-// 3-step modal: choose reason → add detail → confirmation
+// SaaS-grade professional design with Font Awesome icons.
 // Google Play AI-Generated Content Policy compliance.
-// v1.0.1 — verified clean (apostrophe bug fixed, animation simplified)
+// v2.0.0 — Font Awesome, no emojis, verified clean
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:nova_x/core/theme/app_theme.dart';
 import 'package:nova_x/core/services/ai_flag_service.dart';
+import 'package:nova_x/core/theme/app_theme.dart';
 
 /// Show the AI content report sheet.
 /// [contentType] — 'text' | 'image' | 'video'
@@ -42,12 +43,10 @@ class _AiFlagSheet extends StatefulWidget {
 }
 
 class _AiFlagSheetState extends State<_AiFlagSheet> {
-  // Steps: 0 = select reason | 1 = add detail | 2 = result
-  int             _step       = 0;
+  int             _step       = 0; // 0=select 1=detail 2=result
   bool            _submitting = false;
   bool            _success    = false;
   AiFlagCategory? _selected;
-
   final TextEditingController _detailCtrl = TextEditingController();
 
   @override
@@ -56,12 +55,10 @@ class _AiFlagSheetState extends State<_AiFlagSheet> {
     super.dispose();
   }
 
-  // ── Submit ─────────────────────────────────────────────────────────────────
   Future<void> _submit() async {
     if (_selected == null) return;
     HapticFeedback.mediumImpact();
     setState(() => _submitting = true);
-
     final detail = _detailCtrl.text.trim();
     final ok = await AiFlagService.submitReport(
       contentType: widget.contentType,
@@ -70,39 +67,34 @@ class _AiFlagSheetState extends State<_AiFlagSheet> {
       contentRef:  widget.contentRef,
       description: detail.isEmpty ? null : detail,
     );
-
     if (!mounted) return;
-    setState(() {
-      _submitting = false;
-      _success    = ok;
-      _step       = 2;
-    });
+    setState(() { _submitting = false; _success = ok; _step = 2; });
     HapticFeedback.lightImpact();
   }
 
-  void _next() {
-    if (_step == 0 && _selected == null) return;
-    setState(() => _step++);
-  }
+  void _next() { if (_selected != null) setState(() => _step++); }
+  void _back() { if (_step > 0) setState(() => _step--); }
 
-  void _back() {
-    if (_step > 0) setState(() => _step--);
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
-
     return Container(
-      margin: EdgeInsets.only(bottom: keyboardHeight),
+      margin: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       decoration: const BoxDecoration(
         color:        AppTheme.bgCard,
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      // AnimatedSwitcher provides step transition
       child: AnimatedSwitcher(
         duration: const Duration(milliseconds: 220),
+        transitionBuilder: (child, anim) => FadeTransition(
+          opacity:  anim,
+          child:    SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, 0.04),
+              end:   Offset.zero,
+            ).animate(anim),
+            child: child,
+          ),
+        ),
         child: _buildStep(),
       ),
     );
@@ -110,41 +102,38 @@ class _AiFlagSheetState extends State<_AiFlagSheet> {
 
   Widget _buildStep() {
     switch (_step) {
-      case 0:
-        return _StepSelectReason(
-          key:      const ValueKey<int>(0),
-          selected: _selected,
-          onSelect: (c) => setState(() => _selected = c),
-          onNext:   _next,
-          onClose:  () => Navigator.pop(context),
-        );
-      case 1:
-        return _StepAddDetail(
-          key:        const ValueKey<int>(1),
-          category:   _selected!,
-          controller: _detailCtrl,
-          submitting: _submitting,
-          onBack:     _back,
-          onSubmit:   _submit,
-        );
-      default:
-        return _StepResult(
-          key:     const ValueKey<int>(2),
-          success: _success,
-          onClose: () => Navigator.pop(context),
-        );
+      case 0:  return _StepSelect(
+        key:      const ValueKey<int>(0),
+        selected: _selected,
+        onSelect: (c) => setState(() => _selected = c),
+        onNext:   _next,
+        onClose:  () => Navigator.pop(context),
+      );
+      case 1:  return _StepDetail(
+        key:        const ValueKey<int>(1),
+        category:   _selected!,
+        controller: _detailCtrl,
+        submitting: _submitting,
+        onBack:     _back,
+        onSubmit:   _submit,
+      );
+      default: return _StepResult(
+        key:     const ValueKey<int>(2),
+        success: _success,
+        onClose: () => Navigator.pop(context),
+      );
     }
   }
 }
 
-// ─── Step 0 — Choose a reason ─────────────────────────────────────────────
-class _StepSelectReason extends StatelessWidget {
+// ─── Step 0 — Select Reason ───────────────────────────────────────────────
+class _StepSelect extends StatelessWidget {
   final AiFlagCategory?             selected;
   final ValueChanged<AiFlagCategory> onSelect;
   final VoidCallback                onNext;
   final VoidCallback                onClose;
 
-  const _StepSelectReason({
+  const _StepSelect({
     super.key,
     required this.selected,
     required this.onSelect,
@@ -154,26 +143,40 @@ class _StepSelectReason extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasSelection = selected != null;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 28),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
-        // Handle
-        _Handle(),
+
+        // ── Handle bar ──────────────────────────────────────────────────
+        Center(
+          child: Container(
+            width: 40, height: 4,
+            decoration: BoxDecoration(
+              color:        AppTheme.divider,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+        ),
         const SizedBox(height: 20),
 
-        // Header row
+        // ── Header ──────────────────────────────────────────────────────
         Row(children: [
+          // Flag icon container — Font Awesome
           Container(
-            width: 42, height: 42,
+            width: 44, height: 44,
             decoration: BoxDecoration(
               color:        const Color(0xFF1A0A0A),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(13),
               border: Border.all(
                   color: AppTheme.danger.withOpacity(0.35), width: 1.2),
             ),
-            child: const Icon(Icons.flag_rounded,
-                color: AppTheme.danger, size: 20),
+            child: const Center(
+              child: FaIcon(
+                FontAwesomeIcons.flag,
+                color: AppTheme.danger,
+                size:  18,
+              ),
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(child: Column(
@@ -191,33 +194,45 @@ class _StepSelectReason extends StatelessWidget {
           )),
           GestureDetector(
             onTap: onClose,
-            child: const Padding(
-              padding: EdgeInsets.all(4),
-              child: Icon(Icons.close_rounded,
-                  color: AppTheme.textHint, size: 20),
+            child: Container(
+              width: 32, height: 32,
+              decoration: BoxDecoration(
+                color:        AppTheme.bgElevated,
+                borderRadius: BorderRadius.circular(10),
+                border:       Border.all(color: AppTheme.divider),
+              ),
+              child: const Center(
+                child: FaIcon(FontAwesomeIcons.xmark,
+                    color: AppTheme.textHint, size: 14),
+              ),
             ),
           ),
         ]),
 
-        const SizedBox(height: 18),
-        // Using double-quoted string to safely include the apostrophe character
+        const SizedBox(height: 20),
+
+        // ── Divider ─────────────────────────────────────────────────────
+        Container(height: 1, color: AppTheme.divider),
+        const SizedBox(height: 16),
+
         Text("What's the issue?",
             style: GoogleFonts.inter(
                 color: AppTheme.textSecondary,
                 fontSize: 13,
-                fontWeight: FontWeight.w500)),
-        const SizedBox(height: 10),
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.2)),
+        const SizedBox(height: 12),
 
-        // Category list
+        // ── Category list ────────────────────────────────────────────────
         Flexible(
           child: SingleChildScrollView(
             physics: const BouncingScrollPhysics(),
             child: Column(
               children: AiFlagService.categories.map((cat) {
-                final isSelected = selected?.key == cat.key;
+                final isSel = selected?.key == cat.key;
                 return GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onTap: () {
+                  onTap:    () {
                     HapticFeedback.selectionClick();
                     onSelect(cat);
                   },
@@ -225,43 +240,70 @@ class _StepSelectReason extends StatelessWidget {
                     duration: const Duration(milliseconds: 160),
                     margin:  const EdgeInsets.only(bottom: 8),
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 11),
+                        horizontal: 14, vertical: 12),
                     decoration: BoxDecoration(
-                      color: isSelected
-                          ? AppTheme.danger.withOpacity(0.11)
+                      color: isSel
+                          ? cat.iconColor.withOpacity(0.08)
                           : AppTheme.bgElevated,
                       borderRadius: BorderRadius.circular(13),
                       border: Border.all(
-                        color: isSelected
-                            ? AppTheme.danger.withOpacity(0.55)
+                        color: isSel
+                            ? cat.iconColor.withOpacity(0.50)
                             : AppTheme.divider,
-                        width: isSelected ? 1.5 : 1.0,
+                        width: isSel ? 1.5 : 1.0,
                       ),
                     ),
                     child: Row(children: [
-                      Text(cat.emoji,
-                          style: const TextStyle(fontSize: 19)),
+                      // FA icon in colored container
+                      Container(
+                        width: 36, height: 36,
+                        decoration: BoxDecoration(
+                          color:        isSel
+                              ? cat.iconColor.withOpacity(0.18)
+                              : cat.iconBg,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Center(
+                          child: FaIcon(cat.icon,
+                              color: cat.iconColor, size: 15),
+                        ),
+                      ),
                       const SizedBox(width: 12),
                       Expanded(child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(cat.label,
                               style: GoogleFonts.inter(
-                                  color: isSelected
+                                  color: isSel
                                       ? Colors.white
                                       : AppTheme.textPrimary,
                                   fontSize: 13,
                                   fontWeight: FontWeight.w600)),
-                          const SizedBox(height: 1),
+                          const SizedBox(height: 2),
                           Text(cat.description,
                               style: GoogleFonts.inter(
                                   color: AppTheme.textHint,
-                                  fontSize: 11)),
+                                  fontSize: 11,
+                                  height: 1.3)),
                         ],
                       )),
-                      if (isSelected)
-                        const Icon(Icons.check_circle_rounded,
-                            color: AppTheme.danger, size: 18),
+                      const SizedBox(width: 8),
+                      // Checkmark — FA
+                      AnimatedOpacity(
+                        duration: const Duration(milliseconds: 160),
+                        opacity:  isSel ? 1.0 : 0.0,
+                        child: Container(
+                          width: 22, height: 22,
+                          decoration: BoxDecoration(
+                            color:  cat.iconColor,
+                            shape:  BoxShape.circle,
+                          ),
+                          child: const Center(
+                            child: FaIcon(FontAwesomeIcons.check,
+                                color: Colors.white, size: 10),
+                          ),
+                        ),
+                      ),
                     ]),
                   ),
                 );
@@ -272,10 +314,11 @@ class _StepSelectReason extends StatelessWidget {
 
         const SizedBox(height: 16),
 
-        // Continue button
-        _PrimaryButton(
+        // ── Continue button ──────────────────────────────────────────────
+        _PrimaryBtn(
           label:   'Continue',
-          enabled: hasSelection,
+          enabled: selected != null,
+          icon:    FontAwesomeIcons.arrowRight,
           onTap:   onNext,
         ),
       ]),
@@ -283,15 +326,15 @@ class _StepSelectReason extends StatelessWidget {
   }
 }
 
-// ─── Step 1 — Add detail ──────────────────────────────────────────────────
-class _StepAddDetail extends StatelessWidget {
+// ─── Step 1 — Add Detail ──────────────────────────────────────────────────
+class _StepDetail extends StatelessWidget {
   final AiFlagCategory        category;
   final TextEditingController controller;
   final bool                  submitting;
   final VoidCallback          onBack;
   final VoidCallback          onSubmit;
 
-  const _StepAddDetail({
+  const _StepDetail({
     super.key,
     required this.category,
     required this.controller,
@@ -303,9 +346,19 @@ class _StepAddDetail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 28),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
-        _Handle(),
+
+        // Handle
+        Center(
+          child: Container(
+            width: 40, height: 4,
+            decoration: BoxDecoration(
+              color:        AppTheme.divider,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+        ),
         const SizedBox(height: 20),
 
         // Back + title
@@ -313,14 +366,16 @@ class _StepAddDetail extends StatelessWidget {
           GestureDetector(
             onTap: onBack,
             child: Container(
-              padding: const EdgeInsets.all(8),
+              width: 36, height: 36,
               decoration: BoxDecoration(
                 color:        AppTheme.bgElevated,
                 borderRadius: BorderRadius.circular(10),
                 border:       Border.all(color: AppTheme.divider),
               ),
-              child: const Icon(Icons.arrow_back_ios_new_rounded,
-                  color: AppTheme.textSecondary, size: 14),
+              child: const Center(
+                child: FaIcon(FontAwesomeIcons.chevronLeft,
+                    color: AppTheme.textSecondary, size: 13),
+              ),
             ),
           ),
           const SizedBox(width: 12),
@@ -332,29 +387,39 @@ class _StepAddDetail extends StatelessWidget {
         ]),
         const SizedBox(height: 18),
 
-        // Selected reason pill
+        // Selected category pill
         Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
           decoration: BoxDecoration(
-            color:        AppTheme.danger.withOpacity(0.10),
+            color:        category.iconColor.withOpacity(0.08),
             borderRadius: BorderRadius.circular(12),
-            border:       Border.all(
-                color: AppTheme.danger.withOpacity(0.30), width: 1.2),
+            border: Border.all(
+                color: category.iconColor.withOpacity(0.30), width: 1.2),
           ),
           child: Row(children: [
-            Text(category.emoji,
-                style: const TextStyle(fontSize: 18)),
+            Container(
+              width: 30, height: 30,
+              decoration: BoxDecoration(
+                color:        category.iconBg,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Center(
+                child: FaIcon(category.icon,
+                    color: category.iconColor, size: 13),
+              ),
+            ),
             const SizedBox(width: 10),
             Text(category.label,
                 style: GoogleFonts.inter(
-                    color: AppTheme.danger,
+                    color: category.iconColor,
                     fontSize: 13,
                     fontWeight: FontWeight.w600)),
           ]),
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 16),
 
+        // Label
         Align(
           alignment: Alignment.centerLeft,
           child: Text('Additional context (optional)',
@@ -365,7 +430,7 @@ class _StepAddDetail extends StatelessWidget {
         ),
         const SizedBox(height: 8),
 
-        // Detail text field
+        // Text field
         Container(
           decoration: BoxDecoration(
             color:        AppTheme.bgElevated,
@@ -376,71 +441,51 @@ class _StepAddDetail extends StatelessWidget {
             controller:  controller,
             maxLines:    4,
             maxLength:   500,
-            style:       GoogleFonts.inter(color: Colors.white, fontSize: 14),
-            decoration:  InputDecoration(
-              border:           InputBorder.none,
-              hintText:         'Describe the issue in more detail\u2026',
-              hintStyle:        GoogleFonts.inter(
+            style:       GoogleFonts.inter(
+                color: Colors.white, fontSize: 14, height: 1.5),
+            decoration: InputDecoration(
+              border:         InputBorder.none,
+              hintText:       'Describe the issue in more detail\u2026',
+              hintStyle:      GoogleFonts.inter(
                   color: AppTheme.textHint, fontSize: 13),
-              contentPadding:   const EdgeInsets.all(14),
-              counterStyle:     GoogleFonts.inter(
+              contentPadding: const EdgeInsets.all(14),
+              counterStyle:   GoogleFonts.inter(
                   color: AppTheme.textHint, fontSize: 10),
             ),
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 10),
 
         // Privacy note
-        Row(children: [
-          const Icon(Icons.lock_outline_rounded,
-              color: AppTheme.textHint, size: 12),
-          const SizedBox(width: 6),
-          Expanded(child: Text(
-              'Your report is private. Our team reviews all reports within 24h.',
-              style: GoogleFonts.inter(
-                  color: AppTheme.textHint, fontSize: 11))),
-        ]),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          decoration: BoxDecoration(
+            color:        AppTheme.bgElevated,
+            borderRadius: BorderRadius.circular(10),
+            border:       Border.all(color: AppTheme.divider),
+          ),
+          child: Row(children: [
+            const FaIcon(FontAwesomeIcons.shieldHalved,
+                color: AppTheme.accentCyan, size: 13),
+            const SizedBox(width: 8),
+            Expanded(child: Text(
+                'Your report is private. Our team reviews all reports within 24 hours.',
+                style: GoogleFonts.inter(
+                    color: AppTheme.textSecondary,
+                    fontSize: 11,
+                    height: 1.4))),
+          ]),
+        ),
         const SizedBox(height: 18),
 
         // Submit button
-        GestureDetector(
-          onTap: submitting ? null : onSubmit,
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 15),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFFE53935), Color(0xFFFF6B6B)],
-                begin:  Alignment.centerLeft,
-                end:    Alignment.centerRight,
-              ),
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color:      const Color(0xFFE53935).withOpacity(0.28),
-                  blurRadius: 16,
-                  offset:     const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Center(
-              child: submitting
-                  ? const SizedBox(
-                      width:  20, height: 20,
-                      child: CircularProgressIndicator(
-                          color: Colors.white, strokeWidth: 2.2))
-                  : Row(mainAxisSize: MainAxisSize.min, children: [
-                      const Icon(Icons.send_rounded,
-                          color: Colors.white, size: 16),
-                      const SizedBox(width: 8),
-                      Text('Submit Report',
-                          style: GoogleFonts.spaceGrotesk(
-                              color: Colors.white,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700)),
-                    ]),
-            ),
-          ),
+        _PrimaryBtn(
+          label:      'Submit Report',
+          enabled:    !submitting,
+          loading:    submitting,
+          icon:       FontAwesomeIcons.paperPlane,
+          onTap:      onSubmit,
+          isDestructive: true,
         ),
       ]),
     );
@@ -462,18 +507,25 @@ class _StepResult extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = success ? AppTheme.success : AppTheme.danger;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 32, 24, 44),
+      padding: const EdgeInsets.fromLTRB(24, 36, 24, 44),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
+
+        // Icon circle
         Container(
-          width: 72, height: 72,
+          width: 76, height: 76,
           decoration: BoxDecoration(
             color:  color.withOpacity(0.12),
             shape:  BoxShape.circle,
-            border: Border.all(color: color.withOpacity(0.40), width: 2),
+            border: Border.all(color: color.withOpacity(0.35), width: 2),
           ),
-          child: Icon(
-            success ? Icons.check_rounded : Icons.error_outline_rounded,
-            color: color, size: 36,
+          child: Center(
+            child: FaIcon(
+              success
+                  ? FontAwesomeIcons.circleCheck
+                  : FontAwesomeIcons.circleExclamation,
+              color: color,
+              size: 32,
+            ),
           ),
         ),
         const SizedBox(height: 20),
@@ -482,37 +534,40 @@ class _StepResult extends StatelessWidget {
           success ? 'Report Submitted' : 'Submission Failed',
           style: GoogleFonts.spaceGrotesk(
               color: AppTheme.textPrimary,
-              fontSize: 20,
+              fontSize: 21,
               fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 10),
 
         Text(
           success
-              // FIX: use escaped apostrophes inside double-quoted strings
               ? "Thank you for helping keep NOVA X safe.\nOur team will review your report within 24 hours."
               : "We couldn't send your report right now.\nPlease check your connection and try again.",
           textAlign: TextAlign.center,
           style: GoogleFonts.inter(
-              color: AppTheme.textSecondary, fontSize: 14, height: 1.6),
+              color: AppTheme.textSecondary,
+              fontSize: 14,
+              height: 1.65),
         ),
 
         if (success) ...[
           const SizedBox(height: 20),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
             decoration: BoxDecoration(
               color:        AppTheme.bgElevated,
               borderRadius: BorderRadius.circular(12),
               border:       Border.all(color: AppTheme.divider),
             ),
             child: Row(mainAxisSize: MainAxisSize.min, children: [
-              const Icon(Icons.shield_outlined,
-                  color: AppTheme.accentCyan, size: 16),
+              const FaIcon(FontAwesomeIcons.userShield,
+                  color: AppTheme.accentCyan, size: 13),
               const SizedBox(width: 8),
               Text('Your identity is kept private',
                   style: GoogleFonts.inter(
-                      color: AppTheme.textSecondary, fontSize: 12)),
+                      color: AppTheme.textSecondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500)),
             ]),
           ),
         ],
@@ -524,7 +579,7 @@ class _StepResult extends StatelessWidget {
           onTap: onClose,
           child: Container(
             width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 14),
+            padding: const EdgeInsets.symmetric(vertical: 15),
             decoration: BoxDecoration(
               color:        AppTheme.bgElevated,
               borderRadius: BorderRadius.circular(14),
@@ -542,55 +597,72 @@ class _StepResult extends StatelessWidget {
   }
 }
 
-// ─── Shared sub-widgets ────────────────────────────────────────────────────
-class _Handle extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) => Center(
-    child: Container(
-      width: 40, height: 4,
-      decoration: BoxDecoration(
-        color:        AppTheme.divider,
-        borderRadius: BorderRadius.circular(2),
-      ),
-    ),
-  );
-}
-
-class _PrimaryButton extends StatelessWidget {
-  final String     label;
-  final bool       enabled;
+// ─── Shared: Primary Button ────────────────────────────────────────────────
+class _PrimaryBtn extends StatelessWidget {
+  final String   label;
+  final bool     enabled;
+  final bool     loading;
+  final IconData icon;
   final VoidCallback onTap;
+  final bool     isDestructive;
 
-  const _PrimaryButton({
+  const _PrimaryBtn({
     required this.label,
     required this.enabled,
+    required this.icon,
     required this.onTap,
+    this.loading       = false,
+    this.isDestructive = false,
   });
 
   @override
   Widget build(BuildContext context) {
+    final activeGrad = isDestructive
+        ? const LinearGradient(
+            colors: [Color(0xFFE53935), Color(0xFFFF6B6B)],
+            begin:  Alignment.centerLeft,
+            end:    Alignment.centerRight)
+        : AppTheme.primaryGradient;
+
     return GestureDetector(
-      onTap: enabled ? onTap : null,
+      onTap: (enabled && !loading) ? onTap : null,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
         width:   double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 15),
         decoration: BoxDecoration(
-          gradient: enabled
-              ? const LinearGradient(
-                  colors: [Color(0xFFE53935), Color(0xFFFF6B6B)],
-                  begin:  Alignment.centerLeft,
-                  end:    Alignment.centerRight)
-              : null,
-          color:        enabled ? null : AppTheme.bgElevated,
+          gradient:     (enabled && !loading) ? activeGrad : null,
+          color:        (enabled && !loading) ? null : AppTheme.bgElevated,
           borderRadius: BorderRadius.circular(16),
+          boxShadow:    (enabled && !loading)
+              ? [BoxShadow(
+                  color: (isDestructive
+                          ? const Color(0xFFE53935)
+                          : AppTheme.primaryBlue)
+                      .withOpacity(0.30),
+                  blurRadius: 16,
+                  offset: const Offset(0, 4))]
+              : null,
         ),
         child: Center(
-          child: Text(label,
-              style: GoogleFonts.spaceGrotesk(
-                  color: enabled ? Colors.white : AppTheme.textHint,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700)),
+          child: loading
+              ? const SizedBox(
+                  width: 20, height: 20,
+                  child: CircularProgressIndicator(
+                      color: Colors.white, strokeWidth: 2.2))
+              : Row(mainAxisSize: MainAxisSize.min, children: [
+                  FaIcon(icon,
+                      color: enabled ? Colors.white : AppTheme.textHint,
+                      size:  14),
+                  const SizedBox(width: 10),
+                  Text(label,
+                      style: GoogleFonts.spaceGrotesk(
+                          color: enabled
+                              ? Colors.white
+                              : AppTheme.textHint,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700)),
+                ]),
         ),
       ),
     );

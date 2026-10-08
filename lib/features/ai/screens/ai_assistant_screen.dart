@@ -14,6 +14,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:nova_x/core/services/rewards_service.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
 import 'package:nova_x/features/ai/widgets/ai_flag_sheet.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
@@ -408,20 +409,19 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
         Tooltip(
           message: 'Report AI Content',
           child: IconButton(
-            icon: const Icon(Icons.flag_outlined,
-                color: AppTheme.textHint, size: 20),
-            onPressed: () =>
-                _reportContent(contentType: 'text'),
+            icon: const FaIcon(FontAwesomeIcons.flag,
+                color: AppTheme.textHint, size: 16),
+            onPressed: () => _reportContent(contentType: 'text'),
           ),
         ),
         // Stop TTS
         IconButton(
-          icon: Icon(
+          icon: FaIcon(
             _isSpeaking
-                ? Icons.volume_up_rounded
-                : Icons.volume_off_rounded,
+                ? FontAwesomeIcons.volumeHigh
+                : FontAwesomeIcons.volumeXmark,
             color: _isSpeaking ? AppTheme.accentCyan : AppTheme.textHint,
-            size: 20,
+            size: 16,
           ),
           tooltip: 'Stop speaking',
           onPressed: () async {
@@ -523,8 +523,8 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
               child: Row(mainAxisSize: MainAxisSize.min, children: [
                 _ActionBtn(
                   icon:  _speakingId == id
-                      ? Icons.stop_circle_outlined
-                      : Icons.volume_up_outlined,
+                      ? FontAwesomeIcons.stop
+                      : FontAwesomeIcons.volumeHigh,
                   label: _speakingId == id ? 'Stop' : 'Read aloud',
                   color: _speakingId == id
                       ? Colors.redAccent
@@ -533,7 +533,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
                 ),
                 const SizedBox(width: 14),
                 _ActionBtn(
-                  icon:  Icons.flag_outlined,
+                  icon:  FontAwesomeIcons.flag,
                   label: 'Report',
                   color: AppTheme.textHint,
                   onTap: () => _reportContent(
@@ -546,22 +546,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
               ]),
             ),
 
-          // Action row — user message
-          if (isUser)
-            Padding(
-              padding: const EdgeInsets.only(right: 4, bottom: 4),
-              child: _ActionBtn(
-                icon:  Icons.flag_outlined,
-                label: 'Report',
-                color: AppTheme.textHint,
-                onTap: () => _reportContent(
-                  contentType: 'text',
-                  contentRef: content.length > 500
-                      ? content.substring(0, 500)
-                      : content,
-                ),
-              ),
-            ),
+          // NOTE: No report button on user messages — only AI responses are flaggable.
         ],
       ),
     );
@@ -637,7 +622,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
           Padding(
             padding: const EdgeInsets.only(left: 4, bottom: 4),
             child: _ActionBtn(
-              icon:  Icons.flag_outlined,
+              icon:  FontAwesomeIcons.flag,
               label: 'Report image',
               color: AppTheme.textHint,
               onTap: () =>
@@ -708,7 +693,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
           Padding(
             padding: const EdgeInsets.only(left: 4, bottom: 4),
             child: _ActionBtn(
-              icon:  Icons.flag_outlined,
+              icon:  FontAwesomeIcons.flag,
               label: 'Report video',
               color: AppTheme.textHint,
               onTap: () =>
@@ -921,8 +906,8 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
                     color: AppTheme.danger.withOpacity(0.3), width: 1.2),
               ),
               child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                const Icon(Icons.flag_outlined,
-                    color: AppTheme.danger, size: 18),
+                const FaIcon(FontAwesomeIcons.flag,
+                    color: AppTheme.danger, size: 15),
                 const SizedBox(width: 8),
                 Text('Report This Video',
                     style: GoogleFonts.inter(
@@ -968,8 +953,8 @@ class _ActionBtn extends StatelessWidget {
     onTap: onTap,
     behavior: HitTestBehavior.opaque,
     child: Row(mainAxisSize: MainAxisSize.min, children: [
-      Icon(icon, color: color, size: 14),
-      const SizedBox(width: 4),
+      FaIcon(icon, color: color, size: 11),
+      const SizedBox(width: 5),
       Text(label,
           style: GoogleFonts.inter(color: color, fontSize: 10)),
     ]),
@@ -1080,7 +1065,7 @@ class _ImagePreviewScreenState extends State<_ImagePreviewScreen> {
             child: Row(children: [
               // Close
               _CircleBtn(
-                icon: Icons.close_rounded,
+                icon: FontAwesomeIcons.xmark,
                 onTap: () => Navigator.pop(context),
               ),
               const Spacer(),
@@ -1092,7 +1077,7 @@ class _ImagePreviewScreenState extends State<_ImagePreviewScreen> {
               const Spacer(),
               // Report
               _CircleBtn(
-                icon: Icons.flag_outlined,
+                icon: FontAwesomeIcons.flag,
                 onTap: () => showAiFlagSheet(
                   context,
                   contentType: 'image',
@@ -1168,9 +1153,11 @@ class _CircleBtn extends StatelessWidget {
     onTap: onTap,
     child: Container(
       width: 40, height: 40,
-      decoration: BoxDecoration(
+      decoration: const BoxDecoration(
           color: Colors.black45, shape: BoxShape.circle),
-      child: Icon(icon, color: Colors.white70, size: 20),
+      child: Center(
+        child: FaIcon(icon, color: Colors.white70, size: 16),
+      ),
     ),
   );
 }

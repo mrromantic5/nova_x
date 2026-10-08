@@ -46,30 +46,58 @@ jobs:
 
       - name: Ensure Android Platform Files Exist
         run: |
-          # IMPORTANT: Do NOT wipe android/ — it contains our custom build.gradle
-          # with minSdk 24, targetSdk 36, compileSdk 36 already set correctly.
-          # Only run flutter create if android/ is completely missing.
-          if [ ! -f "android/app/build.gradle" ] && [ ! -f "android/app/build.gradle.kts" ]; then
-            echo "android/ missing — running flutter create"
-            flutter create --platforms android --org com.tlyfe --project-name nova_x .
-            echo "✓ android/ created from scratch"
-          else
-            echo "✓ android/ already present — preserving custom build.gradle (minSdk=24, targetSdk=36)"
-            # Still run flutter create to update any non-gradle platform files,
-            # but protect the gradle files we care about.
-            cp android/app/build.gradle /tmp/build_gradle_backup 2>/dev/null || true
-            cp android/app/build.gradle.kts /tmp/build_gradle_kts_backup 2>/dev/null || true
-            flutter create --platforms android --org com.tlyfe --project-name nova_x . 2>/dev/null || true
-            # Restore our custom build.gradle (has correct SDK versions)
-            if [ -f /tmp/build_gradle_backup ]; then
+          # Backup our custom build.gradle (has minSdk=24, targetSdk=36, compileSdk=36)
+          cp android/app/build.gradle /tmp/build_gradle_backup 2>/dev/null || true
+          cp android/app/build.gradle.kts /tmp/build_gradle_kts_backup 2>/dev/null || true
+
+          # Run flutter create to ensure all platform files are up to date.
+          # --org com.tlyfe ensures it generates com/tlyfe/nova_x package.
+          flutter create --platforms android --org com.tlyfe --project-name nova_x .
+          echo "✓ flutter create done"
+
+          # ── FIX 1: Remove com/example/ directory ────────────────────────
+          # flutter create sometimes generates a second MainActivity.kt under
+          # com/example/nova_x/ in addition to com/tlyfe/nova_x/.
+          # Having TWO MainActivity classes causes:
+          #   "Redeclaration: class MainActivity"
+          #   "Unresolved reference: io" (because example package lacks Flutter imports)
+          # Delete the wrong one entirely — only com/tlyfe/ should exist.
+          rm -rf android/app/src/main/kotlin/com/example
+          echo "✓ Deleted com/example/ (duplicate MainActivity removed)"
+
+          # Verify only the correct package directory remains
+          echo "=== Kotlin source dirs after cleanup ==="
+          find android/app/src/main/kotlin -name "*.kt" | sort
+
+          # ── FIX 2: Remove duplicate settings.gradle ──────────────────────
+          # flutter create generates settings.gradle.kts (Kotlin DSL).
+          # If the repo also has settings.gradle (Groovy DSL), Gradle sees both
+          # and prints: "settings.gradle.kts is ignored. This is likely a mistake."
+          # The wrong file takes precedence. Keep only the .kts one.
+          if [ -f "android/settings.gradle.kts" ] && [ -f "android/settings.gradle" ]; then
+            rm android/settings.gradle
+            echo "✓ Removed duplicate android/settings.gradle (kept .kts)"
+          fi
+          if [ -f "android/app/build.gradle.kts" ] && [ -f "android/app/build.gradle" ]; then
+            rm android/app/build.gradle
+            echo "✓ Removed duplicate android/app/build.gradle (kept .kts)"
+          fi
+
+          # ── Restore our custom build.gradle ─────────────────────────────
+          # flutter create resets SDK versions — put our version back.
+          if [ -f /tmp/build_gradle_kts_backup ]; then
+            cp /tmp/build_gradle_kts_backup android/app/build.gradle.kts
+            echo "✓ Restored custom build.gradle.kts (minSdk=24, targetSdk=36)"
+          elif [ -f /tmp/build_gradle_backup ]; then
+            # Only restore .gradle if no .kts exists (avoid duplicates)
+            if [ ! -f "android/app/build.gradle.kts" ]; then
               cp /tmp/build_gradle_backup android/app/build.gradle
-              echo "✓ Custom build.gradle restored (minSdk=24, targetSdk=36)"
-            fi
-            if [ -f /tmp/build_gradle_kts_backup ]; then
-              cp /tmp/build_gradle_kts_backup android/app/build.gradle.kts
-              echo "✓ Custom build.gradle.kts restored"
+              echo "✓ Restored custom build.gradle (minSdk=24, targetSdk=36)"
             fi
           fi
+
+          echo "=== Final android/ gradle files ==="
+          find android -name "*.gradle" -o -name "*.gradle.kts" | sort
 
       - name: Detect Gradle DSL (Groovy vs Kotlin)
         run: |
@@ -365,9 +393,46 @@ jobs:
       # ── App Shortcuts — long-press home screen icon ───────────────────────────
       - name: Write MainActivity.kt with shortcut support
         run: |
+          # Safety: nuke any leftover com/example/ directory that would cause
+          # "Redeclaration: class MainActivity" Kotlin compile error
+          rm -rf android/app/src/main/kotlin/com/example
+          echo "✓ Ensured com/example/ is gone"
+
+          # Write our real MainActivity into the correct package directory
           mkdir -p android/app/src/main/kotlin/com/tlyfe/nova_x
-          echo "cGFja2FnZSBjb20udGx5ZmUubm92YV94CmltcG9ydCBpby5mbHV0dGVyLmVtYmVkZGluZy5hbmRyb2lkLkZsdXR0ZXJBY3Rpdml0eQppbXBvcnQgaW8uZmx1dHRlci5lbWJlZGRpbmcuZW5naW5lLkZsdXR0ZXJFbmdpbmUKaW1wb3J0IGlvLmZsdXR0ZXIucGx1Z2luLmNvbW1vbi5NZXRob2RDaGFubmVsCmNsYXNzIE1haW5BY3Rpdml0eSA6IEZsdXR0ZXJBY3Rpdml0eSgpIHsKICAgIGNvbXBhbmlvbiBvYmplY3QgeyBwcml2YXRlIGNvbnN0IHZhbCBDSCA9ICJjb20udGx5ZmUubm92YV94L3Nob3J0Y3V0cyIgfQogICAgcHJpdmF0ZSB2YXIgcGVuZGluZyA9ICIiCiAgICBvdmVycmlkZSBmdW4gY29uZmlndXJlRmx1dHRlckVuZ2luZShmbHV0dGVyRW5naW5lOiBGbHV0dGVyRW5naW5lKSB7CiAgICAgICAgc3VwZXIuY29uZmlndXJlRmx1dHRlckVuZ2luZShmbHV0dGVyRW5naW5lKQogICAgICAgIHBlbmRpbmcgPSBpbnRlbnQ/LmFjdGlvbj8udGFrZUlmIHsgaXQuY29udGFpbnMoIm5vdmFfeC4iKSB9ID86ICIiCiAgICAgICAgTWV0aG9kQ2hhbm5lbChmbHV0dGVyRW5naW5lLmRhcnRFeGVjdXRvci5iaW5hcnlNZXNzZW5nZXIsIENIKQogICAgICAgICAgICAuc2V0TWV0aG9kQ2FsbEhhbmRsZXIgeyBjYWxsLCByZXN1bHQgLT4KICAgICAgICAgICAgICAgIGlmIChjYWxsLm1ldGhvZCA9PSAiZ2V0U2hvcnRjdXQiKSB7CiAgICAgICAgICAgICAgICAgICAgcmVzdWx0LnN1Y2Nlc3MocGVuZGluZyk7IHBlbmRpbmcgPSAiIgogICAgICAgICAgICAgICAgfSBlbHNlIHJlc3VsdC5ub3RJbXBsZW1lbnRlZCgpCiAgICAgICAgICAgIH0KICAgIH0KICAgIG92ZXJyaWRlIGZ1biBvbk5ld0ludGVudChpbnRlbnQ6IGFuZHJvaWQuY29udGVudC5JbnRlbnQpIHsKICAgICAgICBzdXBlci5vbk5ld0ludGVudChpbnRlbnQpOyBzZXRJbnRlbnQoaW50ZW50KQogICAgICAgIHBlbmRpbmcgPSBpbnRlbnQuYWN0aW9uPy50YWtlSWYgeyBpdC5jb250YWlucygibm92YV94LiIpIH0gPzogIiIKICAgIH0KfQo=" | base64 -d > android/app/src/main/kotlin/com/tlyfe/nova_x/MainActivity.kt
-          echo "✓ MainActivity.kt written"
+          cat > android/app/src/main/kotlin/com/tlyfe/nova_x/MainActivity.kt << 'KOTLIN_EOF'
+package com.tlyfe.nova_x
+
+import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
+import android.content.Intent
+
+class MainActivity : FlutterActivity() {
+    companion object { private const val CH = "com.tlyfe.nova_x/shortcuts" }
+    private var pending = ""
+
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+        pending = intent?.action?.takeIf { it.contains("nova_x.") } ?: ""
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CH)
+            .setMethodCallHandler { call, result ->
+                if (call.method == "getShortcut") {
+                    result.success(pending); pending = ""
+                } else result.notImplemented()
+            }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pending = intent.action?.takeIf { it.contains("nova_x.") } ?: ""
+    }
+}
+KOTLIN_EOF
+          echo "✓ MainActivity.kt written (package com.tlyfe.nova_x)"
+          echo "=== Only these .kt files should exist ==="
+          find android/app/src/main/kotlin -name "*.kt" | sort
 
       - name: Create shortcut resources
         run: |

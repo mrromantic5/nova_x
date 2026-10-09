@@ -118,6 +118,27 @@ jobs:
           echo "  APP = $(cat $GITHUB_ENV | grep ^APP= | cut -d= -f2)"
           echo "  SET = $(cat $GITHUB_ENV | grep ^SET= | cut -d= -f2)"
 
+      - name: Upgrade Gradle wrapper to 8.14 (Flutter 3.47+ minimum)
+        run: |
+          WRAPPER="android/gradle/wrapper/gradle-wrapper.properties"
+          # Flutter 3.47.5 requires Gradle >= 8.14.0
+          # Repo ships gradle-8.9 which causes:
+          # "Your project's Gradle version (8.9.0) is lower than Flutter's
+          #  minimum supported version of 8.14.0"
+          sed -i 's|gradle-8\.9-all\.zip|gradle-8.14-all.zip|g'   "$WRAPPER"
+          sed -i 's|gradle-8\.9-bin\.zip|gradle-8.14-bin.zip|g'   "$WRAPPER"
+          sed -i 's|gradle-8\.10-all\.zip|gradle-8.14-all.zip|g'  "$WRAPPER"
+          sed -i 's|gradle-8\.10-bin\.zip|gradle-8.14-bin.zip|g'  "$WRAPPER"
+          sed -i 's|gradle-8\.11-all\.zip|gradle-8.14-all.zip|g'  "$WRAPPER"
+          sed -i 's|gradle-8\.12-all\.zip|gradle-8.14-all.zip|g'  "$WRAPPER"
+          sed -i 's|gradle-8\.13-all\.zip|gradle-8.14-all.zip|g'  "$WRAPPER"
+          # Hard-set if none of the above matched (e.g. no wrapper existed before)
+          if ! grep -q "gradle-8\.14" "$WRAPPER"; then
+            sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-8.14-all.zip|' "$WRAPPER"
+          fi
+          echo "✓ Gradle wrapper version:"
+          grep distributionUrl "$WRAPPER"
+
       - name: Inject versionCode and versionName from pubspec into local.properties
         run: |
           # flutter create resets local.properties to versionCode=1 / versionName=1.0
@@ -398,38 +419,10 @@ jobs:
           rm -rf android/app/src/main/kotlin/com/example
           echo "✓ Ensured com/example/ is gone"
 
-          # Write our real MainActivity into the correct package directory
+          # Write our real MainActivity — base64 encoded to avoid YAML heredoc
+          # issues with unindented Kotlin code (which broke YAML parsing at L404)
           mkdir -p android/app/src/main/kotlin/com/tlyfe/nova_x
-          cat > android/app/src/main/kotlin/com/tlyfe/nova_x/MainActivity.kt << 'KOTLIN_EOF'
-package com.tlyfe.nova_x
-
-import io.flutter.embedding.android.FlutterActivity
-import io.flutter.embedding.engine.FlutterEngine
-import io.flutter.plugin.common.MethodChannel
-import android.content.Intent
-
-class MainActivity : FlutterActivity() {
-    companion object { private const val CH = "com.tlyfe.nova_x/shortcuts" }
-    private var pending = ""
-
-    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
-        super.configureFlutterEngine(flutterEngine)
-        pending = intent?.action?.takeIf { it.contains("nova_x.") } ?: ""
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CH)
-            .setMethodCallHandler { call, result ->
-                if (call.method == "getShortcut") {
-                    result.success(pending); pending = ""
-                } else result.notImplemented()
-            }
-    }
-
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        pending = intent.action?.takeIf { it.contains("nova_x.") } ?: ""
-    }
-}
-KOTLIN_EOF
+          echo "cGFja2FnZSBjb20udGx5ZmUubm92YV94CgppbXBvcnQgaW8uZmx1dHRlci5lbWJlZGRpbmcuYW5kcm9pZC5GbHV0dGVyQWN0aXZpdHkKaW1wb3J0IGlvLmZsdXR0ZXIuZW1iZWRkaW5nLmVuZ2luZS5GbHV0dGVyRW5naW5lCmltcG9ydCBpby5mbHV0dGVyLnBsdWdpbi5jb21tb24uTWV0aG9kQ2hhbm5lbAppbXBvcnQgYW5kcm9pZC5jb250ZW50LkludGVudAoKY2xhc3MgTWFpbkFjdGl2aXR5IDogRmx1dHRlckFjdGl2aXR5KCkgewogICAgY29tcGFuaW9uIG9iamVjdCB7IHByaXZhdGUgY29uc3QgdmFsIENIID0gImNvbS50bHlmZS5ub3ZhX3gvc2hvcnRjdXRzIiB9CiAgICBwcml2YXRlIHZhciBwZW5kaW5nID0gIiIKCiAgICBvdmVycmlkZSBmdW4gY29uZmlndXJlRmx1dHRlckVuZ2luZShmbHV0dGVyRW5naW5lOiBGbHV0dGVyRW5naW5lKSB7CiAgICAgICAgc3VwZXIuY29uZmlndXJlRmx1dHRlckVuZ2luZShmbHV0dGVyRW5naW5lKQogICAgICAgIHBlbmRpbmcgPSBpbnRlbnQ/LmFjdGlvbj8udGFrZUlmIHsgaXQuY29udGFpbnMoIm5vdmFfeC4iKSB9ID86ICIiCiAgICAgICAgTWV0aG9kQ2hhbm5lbChmbHV0dGVyRW5naW5lLmRhcnRFeGVjdXRvci5iaW5hcnlNZXNzZW5nZXIsIENIKQogICAgICAgICAgICAuc2V0TWV0aG9kQ2FsbEhhbmRsZXIgeyBjYWxsLCByZXN1bHQgLT4KICAgICAgICAgICAgICAgIGlmIChjYWxsLm1ldGhvZCA9PSAiZ2V0U2hvcnRjdXQiKSB7CiAgICAgICAgICAgICAgICAgICAgcmVzdWx0LnN1Y2Nlc3MocGVuZGluZyk7IHBlbmRpbmcgPSAiIgogICAgICAgICAgICAgICAgfSBlbHNlIHJlc3VsdC5ub3RJbXBsZW1lbnRlZCgpCiAgICAgICAgICAgIH0KICAgIH0KCiAgICBvdmVycmlkZSBmdW4gb25OZXdJbnRlbnQoaW50ZW50OiBJbnRlbnQpIHsKICAgICAgICBzdXBlci5vbk5ld0ludGVudChpbnRlbnQpCiAgICAgICAgc2V0SW50ZW50KGludGVudCkKICAgICAgICBwZW5kaW5nID0gaW50ZW50LmFjdGlvbj8udGFrZUlmIHsgaXQuY29udGFpbnMoIm5vdmFfeC4iKSB9ID86ICIiCiAgICB9Cn0K" | base64 -d > android/app/src/main/kotlin/com/tlyfe/nova_x/MainActivity.kt
           echo "✓ MainActivity.kt written (package com.tlyfe.nova_x)"
           echo "=== Only these .kt files should exist ==="
           find android/app/src/main/kotlin -name "*.kt" | sort

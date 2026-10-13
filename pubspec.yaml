@@ -28,6 +28,7 @@ dependencies:
   local_auth: ^2.1.8
   file_picker: ^8.0.0+1
   font_awesome_flutter: ^10.7.0
+  rive: ^0.13.17
 
 dependency_overrides:
   js: ^0.7.1
@@ -42,3 +43,4 @@ flutter:
   assets:
     - assets/images/
     - assets/backgrounds/
+    - assets/bear.riv

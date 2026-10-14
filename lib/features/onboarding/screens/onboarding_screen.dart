@@ -24,7 +24,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   bool _isAnimating = false;
 
   static const _slides = kOnboardingSlides;
-  static const _lastIndex = kOnboardingSlides.length - 1;
+  static final _lastIndex = kOnboardingSlides.length - 1;
 
   // ── Complete onboarding and go to auth ─────────────────────────────────────
   Future<void> _finish() async {

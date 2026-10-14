@@ -2,7 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:rive/rive.dart' hide LinearGradient, RadialGradient;
+import 'package:rive/rive.dart' hide LinearGradient, RadialGradient, Image;
 import '../models/onboarding_data.dart';
 
 class OnboardingSlideWidget extends StatefulWidget {

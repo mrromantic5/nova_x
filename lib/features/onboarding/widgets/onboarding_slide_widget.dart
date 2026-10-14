@@ -62,11 +62,11 @@ class _OnboardingSlideWidgetState extends State<OnboardingSlideWidget> {
         height: 260,
         child: ShaderMask(
           blendMode: BlendMode.dstIn,
-          shaderCallback: (bounds) => const RadialGradient(
-            center: Alignment.center,
-            radius: 0.50,
+          shaderCallback: (bounds) => const LinearGradient(
+            begin: Alignment.topCenter,
+            end:   Alignment.bottomCenter,
             colors: [Colors.white, Colors.white, Colors.transparent],
-            stops:  [0.0, 0.68, 1.0],
+            stops:  [0.0, 0.80, 1.0],
           ).createShader(bounds),
           child: RiveAnimation.asset(
             widget.slide.riveAsset!,
@@ -79,30 +79,21 @@ class _OnboardingSlideWidgetState extends State<OnboardingSlideWidget> {
   }
 
   Widget _buildImageHero() {
-    final shader = widget.slide.shaderType;
     return Transform.translate(
       offset: Offset(widget.parallaxOffset * -40, 0),
       child: SizedBox(
-        height: 280,
+        height: 300,
         child: ShaderMask(
+          // Only a gentle bottom fade so image bleeds into background smoothly.
+          // Images already have a dark navy background that matches AppTheme.bgDark,
+          // so we don't need aggressive masking — just a soft bottom-edge dissolve.
           blendMode: BlendMode.dstIn,
-          shaderCallback: (bounds) {
-            if (shader == ShaderType.linearBottom) {
-              return const LinearGradient(
-                begin: Alignment.topCenter,
-                end:   Alignment.bottomCenter,
-                colors: [Colors.white, Colors.white, Colors.transparent],
-                stops:  [0.0, 0.62, 1.0],
-              ).createShader(bounds);
-            }
-            // Default: radial — fades all edges
-            return const RadialGradient(
-              center: Alignment.center,
-              radius: 0.52,
-              colors: [Colors.white, Colors.white, Colors.transparent],
-              stops:  [0.0, 0.60, 1.0],
-            ).createShader(bounds);
-          },
+          shaderCallback: (bounds) => const LinearGradient(
+            begin: Alignment.topCenter,
+            end:   Alignment.bottomCenter,
+            colors: [Colors.white, Colors.white, Colors.transparent],
+            stops:  [0.0, 0.82, 1.0],  // image fully visible until 82% height
+          ).createShader(bounds),
           child: Image.asset(
             widget.slide.assetPath!,
             fit: BoxFit.contain,

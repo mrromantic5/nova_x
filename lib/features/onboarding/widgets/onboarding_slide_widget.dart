@@ -3,11 +3,12 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:rive/rive.dart' hide LinearGradient, RadialGradient, Image;
+import 'package:nova_x/core/theme/app_theme.dart';
 import '../models/onboarding_data.dart';
 
 class OnboardingSlideWidget extends StatefulWidget {
   final OnboardingSlide slide;
-  final double parallaxOffset; // value from AnimatedBuilder for parallax
+  final double parallaxOffset;
 
   const OnboardingSlideWidget({
     super.key,
@@ -19,54 +20,106 @@ class OnboardingSlideWidget extends StatefulWidget {
   State<OnboardingSlideWidget> createState() => _OnboardingSlideWidgetState();
 }
 
-class _OnboardingSlideWidgetState extends State<OnboardingSlideWidget> {
-  // ── Rive state (only used on slide 1) ─────────────────────────────────────
+class _OnboardingSlideWidgetState extends State<OnboardingSlideWidget>
+    with SingleTickerProviderStateMixin {
+
+  // ── Rive state ─────────────────────────────────────────────────────────────
   Artboard? _artboard;
   RiveAnimationController? _ctrl;
+  bool _waveStarted = false;
+
+  // ── Glow pulse (bear slide only) ───────────────────────────────────────────
+  late final AnimationController _glowCtrl;
+  late final Animation<double> _glowAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _glowCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2200),
+    );
+    _glowAnim = Tween(begin: 0.5, end: 1.0).animate(
+      CurvedAnimation(parent: _glowCtrl, curve: Curves.easeInOut),
+    );
+    if (widget.slide.heroType == SlideHeroType.rive) {
+      _glowCtrl.repeat(reverse: true);
+    }
+  }
 
   @override
   void dispose() {
+    _glowCtrl.dispose();
     if (_artboard != null && _ctrl != null) {
-      _artboard!.removeController(_ctrl!);
+      try { _artboard!.removeController(_ctrl!); } catch (_) {}
     }
     super.dispose();
   }
 
   void _onRiveInit(Artboard artboard) {
     _artboard = artboard;
-    // Play wave once, then settle into idle
-    final wave = OneShotAnimation('wave', autoplay: true);
-    _ctrl = wave;
-    artboard.addController(wave);
-    Future.delayed(const Duration(milliseconds: 1800), () {
+    if (_waveStarted) return;
+    _waveStarted = true;
+
+    // Try every capitalisation variant — Rive names are case-sensitive
+    const waveNames = ['Wave', 'wave', 'Waving', 'waving', 'WAVE'];
+    bool waveFound = false;
+
+    for (final name in waveNames) {
+      try {
+        final wave = OneShotAnimation(name, autoplay: true);
+        _ctrl = wave;
+        artboard.addController(wave);
+        waveFound = true;
+        break;
+      } catch (_) {}
+    }
+
+    // After wave duration, switch to idle
+    final waitMs = waveFound ? 2200 : 100;
+    Future.delayed(Duration(milliseconds: waitMs), () {
       if (!mounted || _artboard == null) return;
-      _artboard!.removeController(_ctrl!);
-      final idle = SimpleAnimation('idle', autoplay: true);
-      _ctrl = idle;
-      _artboard!.addController(idle);
+      if (_ctrl != null) {
+        try { _artboard!.removeController(_ctrl!); } catch (_) {}
+      }
+      const idleNames = ['idle', 'Idle', 'IDLE', 'walk', 'Walk'];
+      for (final name in idleNames) {
+        try {
+          final idle = SimpleAnimation(name, autoplay: true);
+          _ctrl = idle;
+          _artboard!.addController(idle);
+          break;
+        } catch (_) {}
+      }
     });
   }
 
-  // ── Hero builder ───────────────────────────────────────────────────────────
+  // ── Hero dispatcher ────────────────────────────────────────────────────────
   Widget _buildHero() {
-    if (widget.slide.heroType == SlideHeroType.rive) {
-      return _buildRiveHero();
-    }
-    return _buildImageHero();
+    return widget.slide.heroType == SlideHeroType.rive
+        ? _buildRiveHero()
+        : _buildImageHero();
   }
 
+  // ── Bear hero ──────────────────────────────────────────────────────────────
+  // Radial ShaderMask dissolves the square edges of the Rive artboard into the
+  // dark background, keeping the white circle + bear fully visible at centre.
+  // radius 0.50 fills to the shorter axis, stops [0, 0.80, 1.0] means the
+  // inner 80% is fully opaque — the bear + white circle stay intact — and only
+  // the outermost 20% ring fades out, removing the hard square corners.
   Widget _buildRiveHero() {
     return Transform.translate(
       offset: Offset(widget.parallaxOffset * -40, 0),
       child: SizedBox(
-        height: 260,
+        width: 300,
+        height: 300,
         child: ShaderMask(
           blendMode: BlendMode.dstIn,
           shaderCallback: (bounds) => const RadialGradient(
             center: Alignment.center,
             radius: 0.50,
             colors: [Colors.white, Colors.white, Colors.transparent],
-            stops:  [0.0, 0.68, 1.0],
+            stops: [0.0, 0.80, 1.0],
           ).createShader(bounds),
           child: RiveAnimation.asset(
             widget.slide.riveAsset!,
@@ -78,31 +131,20 @@ class _OnboardingSlideWidgetState extends State<OnboardingSlideWidget> {
     );
   }
 
+  // ── Image hero: radial round fade on ALL image slides ─────────────────────
   Widget _buildImageHero() {
-    final shader = widget.slide.shaderType;
     return Transform.translate(
       offset: Offset(widget.parallaxOffset * -40, 0),
       child: SizedBox(
-        height: 280,
+        height: 300,
         child: ShaderMask(
           blendMode: BlendMode.dstIn,
-          shaderCallback: (bounds) {
-            if (shader == ShaderType.linearBottom) {
-              return const LinearGradient(
-                begin: Alignment.topCenter,
-                end:   Alignment.bottomCenter,
-                colors: [Colors.white, Colors.white, Colors.transparent],
-                stops:  [0.0, 0.62, 1.0],
-              ).createShader(bounds);
-            }
-            // Default: radial — fades all edges
-            return const RadialGradient(
-              center: Alignment.center,
-              radius: 0.52,
-              colors: [Colors.white, Colors.white, Colors.transparent],
-              stops:  [0.0, 0.60, 1.0],
-            ).createShader(bounds);
-          },
+          shaderCallback: (bounds) => const RadialGradient(
+            center: Alignment.center,
+            radius: 0.50,
+            colors: [Colors.white, Colors.white, Colors.transparent],
+            stops: [0.0, 0.72, 1.0],
+          ).createShader(bounds),
           child: Image.asset(
             widget.slide.assetPath!,
             fit: BoxFit.contain,
@@ -112,36 +154,33 @@ class _OnboardingSlideWidgetState extends State<OnboardingSlideWidget> {
     );
   }
 
+  // ── Main build ─────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        // ── Hero ──────────────────────────────────────────────────────────
         _buildHero(),
 
         const SizedBox(height: 40),
 
-        // ── Headline ──────────────────────────────────────────────────────
+        // Headline with accent→white gradient
         Transform.translate(
           offset: Offset(widget.parallaxOffset * -20, 0),
           child: ShaderMask(
             shaderCallback: (bounds) => LinearGradient(
-              colors: [
-                widget.slide.accentColor,
-                Colors.white,
-              ],
+              colors: [widget.slide.accentColor, Colors.white],
               begin: Alignment.topLeft,
-              end:   Alignment.bottomRight,
+              end: Alignment.bottomRight,
             ).createShader(bounds),
             child: Text(
               widget.slide.headline,
               textAlign: TextAlign.center,
               style: GoogleFonts.spaceGrotesk(
-                color:      Colors.white,
-                fontSize:   28,
+                color: Colors.white,
+                fontSize: 28,
                 fontWeight: FontWeight.w800,
-                height:     1.2,
+                height: 1.2,
               ),
             ),
           ),
@@ -149,7 +188,7 @@ class _OnboardingSlideWidgetState extends State<OnboardingSlideWidget> {
 
         const SizedBox(height: 16),
 
-        // ── Subheadline ───────────────────────────────────────────────────
+        // Subheadline
         Transform.translate(
           offset: Offset(widget.parallaxOffset * -10, 0),
           child: Padding(
@@ -158,10 +197,10 @@ class _OnboardingSlideWidgetState extends State<OnboardingSlideWidget> {
               widget.slide.subheadline,
               textAlign: TextAlign.center,
               style: GoogleFonts.inter(
-                color:      Colors.white.withOpacity(0.65),
-                fontSize:   15,
+                color: Colors.white.withOpacity(0.65),
+                fontSize: 15,
                 fontWeight: FontWeight.w400,
-                height:     1.6,
+                height: 1.6,
               ),
             ),
           ),

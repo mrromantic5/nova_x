@@ -3,42 +3,56 @@
 // Opera-style full-screen permission slides shown once after first login/signup.
 // Slides: 1) Notifications  2) Microphone  3) Set as Default Browser
 //
-// Usage — call after successful login/signup:
-//   Navigator.of(context).push(MaterialPageRoute(
-//     builder: (_) => const PermissionSlidesScreen(),
-//   ));
+// NO external permission_handler dependency — uses only:
+//   • firebase_messaging (already in pubspec) for notifications
+//   • MethodChannel 'com.tlyfe.nova_x/default_browser' (already in MainActivity) for browser
+//   • MethodChannel 'com.tlyfe.nova_x/permissions' (add to MainActivity — see below) for mic
 //
-// On completion (all granted or skipped) navigates to HomeScreen.
-
-import 'dart:io';
+// ─── Add to MainActivity.kt inside configureFlutterEngine() ──────────────────
+//   MethodChannel(flutterEngine.dartExecutor.binaryMessenger,
+//       "com.tlyfe.nova_x/permissions").setMethodCallHandler { call, result ->
+//     when (call.method) {
+//       "requestMicrophone" -> {
+//         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+//           requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 9001)
+//         }
+//         result.success(true)
+//       }
+//       else -> result.notImplemented()
+//     }
+//   }
+// ─────────────────────────────────────────────────────────────────────────────
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:nova_x/core/theme/app_theme.dart';
 import 'package:nova_x/features/home/screens/home_screen.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Data model for each slide
+// Channels (match exactly what MainActivity already uses)
+// ─────────────────────────────────────────────────────────────────────────────
+const _browserChannel = MethodChannel('com.tlyfe.nova_x/default_browser');
+const _permChannel    = MethodChannel('com.tlyfe.nova_x/permissions');
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Slide data
 // ─────────────────────────────────────────────────────────────────────────────
 class _PermSlide {
   final String imagePath;
   final String title;
   final String body;
-  final String primaryLabel;   // button that triggers the permission
-  final String skipLabel;      // secondary button
-  final Color accentColor;
+  final String primaryLabel;
+  final Color  accentColor;
 
   const _PermSlide({
     required this.imagePath,
     required this.title,
     required this.body,
     required this.primaryLabel,
-    this.skipLabel = 'Skip',
     required this.accentColor,
   });
 }
@@ -81,10 +95,9 @@ class _PermissionSlidesScreenState extends State<PermissionSlidesScreen>
     with TickerProviderStateMixin {
 
   final PageController _pageCtrl = PageController();
-  int _currentIndex = 0;
-  bool _loading = false;
+  int  _currentIndex = 0;
+  bool _loading      = false;
 
-  // Per-slide fade+slide-up animation
   late final List<AnimationController> _animCtrl;
   late final List<Animation<double>>   _fadeAnim;
   late final List<Animation<Offset>>   _slideAnim;
@@ -110,7 +123,6 @@ class _PermissionSlidesScreenState extends State<PermissionSlidesScreen>
             .animate(CurvedAnimation(parent: c, curve: Curves.easeOut))
     ).toList();
 
-    // Animate first slide in
     _animCtrl[0].forward();
   }
 
@@ -134,10 +146,8 @@ class _PermissionSlidesScreenState extends State<PermissionSlidesScreen>
   }
 
   Future<void> _finish() async {
-    // Mark permissions flow as complete so it never shows again
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('permissions_shown', true);
-
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
       PageRouteBuilder(
@@ -152,7 +162,7 @@ class _PermissionSlidesScreenState extends State<PermissionSlidesScreen>
     );
   }
 
-  // ── Permission handlers ────────────────────────────────────────────────────
+  // ── Permission handlers — zero external packages ───────────────────────────
   Future<void> _handlePrimary(int index) async {
     setState(() => _loading = true);
     try {
@@ -161,12 +171,15 @@ class _PermissionSlidesScreenState extends State<PermissionSlidesScreen>
         case 1: await _requestMicrophone();    break;
         case 2: await _openDefaultBrowser();   break;
       }
+    } catch (_) {
+      // Never block the user — if permission call fails just advance
     } finally {
       if (mounted) setState(() => _loading = false);
       _advance();
     }
   }
 
+  // Slide 1 — Notifications via firebase_messaging (already in pubspec)
   Future<void> _requestNotifications() async {
     await FirebaseMessaging.instance.requestPermission(
       alert:         true,
@@ -179,20 +192,22 @@ class _PermissionSlidesScreenState extends State<PermissionSlidesScreen>
     );
   }
 
+  // Slide 2 — Microphone via native MethodChannel (no permission_handler needed)
+  // Add the handler to MainActivity.kt — snippet is in the file header above.
   Future<void> _requestMicrophone() async {
-    await Permission.microphone.request();
+    try {
+      await _permChannel.invokeMethod('requestMicrophone');
+    } on MissingPluginException {
+      // Channel not yet wired in MainActivity — safe to ignore, advance anyway
+    }
   }
 
+  // Slide 3 — Default browser via existing MainActivity channel
   Future<void> _openDefaultBrowser() async {
-    // Opens Android role manager / default apps settings
-    if (Platform.isAndroid) {
-      const channel = MethodChannel('nova_x/default_browser');
-      try {
-        await channel.invokeMethod('openDefaultBrowserSettings');
-      } catch (_) {
-        // Fallback: open app settings if method not implemented yet
-        await openAppSettings();
-      }
+    try {
+      await _browserChannel.invokeMethod('request');
+    } on MissingPluginException {
+      // Fallback — ignore
     }
   }
 
@@ -205,7 +220,7 @@ class _PermissionSlidesScreenState extends State<PermissionSlidesScreen>
         children: [
           PageView.builder(
             controller: _pageCtrl,
-            physics: const NeverScrollableScrollPhysics(), // user cannot swipe
+            physics: const NeverScrollableScrollPhysics(),
             itemCount: _slides.length,
             onPageChanged: (i) {
               setState(() => _currentIndex = i);
@@ -218,7 +233,7 @@ class _PermissionSlidesScreenState extends State<PermissionSlidesScreen>
             ),
           ),
 
-          // ── Skip (top-right) ──────────────────────────────────────────────
+          // Skip button
           SafeArea(
             child: Align(
               alignment: Alignment.topRight,
@@ -239,7 +254,7 @@ class _PermissionSlidesScreenState extends State<PermissionSlidesScreen>
             ),
           ),
 
-          // ── Bottom controls (pagination + button) ─────────────────────────
+          // Bottom bar
           Positioned(
             left:   0,
             right:  0,
@@ -259,12 +274,12 @@ class _PermissionSlidesScreenState extends State<PermissionSlidesScreen>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Individual slide page
+// Slide page
 // ─────────────────────────────────────────────────────────────────────────────
 class _SlidePage extends StatelessWidget {
-  final _PermSlide          slide;
-  final Animation<double>   fadeAnim;
-  final Animation<Offset>   slideAnim;
+  final _PermSlide        slide;
+  final Animation<double> fadeAnim;
+  final Animation<Offset> slideAnim;
 
   const _SlidePage({
     required this.slide,
@@ -276,20 +291,16 @@ class _SlidePage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // ── Hero image fills top ~55% ──────────────────────────────────────
+        // Hero image — top 55%, fades out at bottom edge
         Expanded(
           flex: 55,
           child: ShaderMask(
             blendMode: BlendMode.dstIn,
-            shaderCallback: (bounds) => LinearGradient(
-              begin: Alignment.topCenter,
-              end:   Alignment.bottomCenter,
-              stops: const [0.0, 0.65, 1.0],
-              colors: [
-                Colors.white,
-                Colors.white,
-                Colors.transparent,
-              ],
+            shaderCallback: (bounds) => const LinearGradient(
+              begin:  Alignment.topCenter,
+              end:    Alignment.bottomCenter,
+              stops:  [0.0, 0.65, 1.0],
+              colors: [Colors.white, Colors.white, Colors.transparent],
             ).createShader(bounds),
             child: Image.asset(
               slide.imagePath,
@@ -299,7 +310,7 @@ class _SlidePage extends StatelessWidget {
           ),
         ),
 
-        // ── Text content ──────────────────────────────────────────────────
+        // Text content — bottom 45%, animates in
         Expanded(
           flex: 45,
           child: FadeTransition(
@@ -312,8 +323,6 @@ class _SlidePage extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const SizedBox(height: 8),
-
-                    // Title
                     Text(
                       slide.title,
                       style: GoogleFonts.spaceGrotesk(
@@ -323,10 +332,7 @@ class _SlidePage extends StatelessWidget {
                         height:     1.15,
                       ),
                     ),
-
                     const SizedBox(height: 14),
-
-                    // Body
                     Text(
                       slide.body,
                       style: GoogleFonts.inter(
@@ -348,7 +354,7 @@ class _SlidePage extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Bottom bar: pagination dots + primary button
+// Bottom bar: dots + button
 // ─────────────────────────────────────────────────────────────────────────────
 class _BottomBar extends StatelessWidget {
   final List<_PermSlide> slides;
@@ -380,20 +386,20 @@ class _BottomBar extends StatelessWidget {
       ),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end:   Alignment.bottomCenter,
+          begin:  Alignment.topCenter,
+          end:    Alignment.bottomCenter,
+          stops:  const [0.0, 0.25, 1.0],
           colors: [
             AppTheme.bgDark.withOpacity(0),
             AppTheme.bgDark,
             AppTheme.bgDark,
           ],
-          stops: const [0.0, 0.25, 1.0],
         ),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Pagination dots
+          // Animated pagination dots
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: List.generate(slides.length, (i) {
@@ -405,7 +411,7 @@ class _BottomBar extends StatelessWidget {
                 width:      active ? 24 : 7,
                 height:     7,
                 decoration: BoxDecoration(
-                  color:        active
+                  color: active
                       ? slides[currentIndex].accentColor
                       : Colors.white.withOpacity(0.22),
                   borderRadius: BorderRadius.circular(4),
@@ -416,20 +422,16 @@ class _BottomBar extends StatelessWidget {
 
           const SizedBox(height: 22),
 
-          // Primary action button
+          // Primary button
           SizedBox(
             width:  double.infinity,
             height: 56,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 300),
+            child: DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [
-                    accent,
-                    Color.lerp(accent, Colors.white, 0.15)!,
-                  ],
-                  begin: Alignment.centerLeft,
-                  end:   Alignment.centerRight,
+                  colors: [accent, Color.lerp(accent, Colors.white, 0.15)!],
+                  begin:  Alignment.centerLeft,
+                  end:    Alignment.centerRight,
                 ),
                 borderRadius: BorderRadius.circular(16),
                 boxShadow: [
@@ -459,9 +461,9 @@ class _BottomBar extends StatelessWidget {
                         : Text(
                             label,
                             style: GoogleFonts.spaceGrotesk(
-                              color:      Colors.white,
-                              fontSize:   16,
-                              fontWeight: FontWeight.w700,
+                              color:         Colors.white,
+                              fontSize:      16,
+                              fontWeight:    FontWeight.w700,
                               letterSpacing: 0.3,
                             ),
                           ),
@@ -471,7 +473,6 @@ class _BottomBar extends StatelessWidget {
             ),
           ),
 
-          // "Not now" link — only on non-last slides
           if (!isLast) ...[
             const SizedBox(height: 14),
             GestureDetector(

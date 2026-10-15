@@ -23,6 +23,8 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        // ── Default browser channel ────────────────────────────────────────────
         channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
         channel?.setMethodCallHandler { call, result ->
             when (call.method) {
@@ -33,6 +35,28 @@ class MainActivity : FlutterFragmentActivity() {
             }
         }
         pendingUrl = extractUrl(intent)
+
+        // ── Microphone permission channel ──────────────────────────────────────
+        // Flutter PermissionSlidesScreen calls requestMicrophone() on slide 2.
+        // We call requestPermissions() here so the system dialog appears exactly
+        // when the user taps "Allow microphone" — not at app launch.
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "com.tlyfe.nova_x/permissions"
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "requestMicrophone" -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        requestPermissions(
+                            arrayOf(android.Manifest.permission.RECORD_AUDIO),
+                            9001
+                        )
+                    }
+                    result.success(true)
+                }
+                else -> result.notImplemented()
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {

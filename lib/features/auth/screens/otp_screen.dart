@@ -1,11 +1,14 @@
 // lib/features/auth/screens/otp_screen.dart
+
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:nova_x/core/services/api_service.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
 import '../../home/screens/home_screen.dart';
+import '../../permissions/screens/permission_slides_screen.dart';
 
 class OtpScreen extends StatefulWidget {
   final int    userId;
@@ -27,8 +30,6 @@ class _OtpScreenState extends State<OtpScreen>
   bool _verifying = false;
   bool _resending  = false;
   String _error   = '';
-
-  // Countdown timer for resend
   int _countdown  = 60;
   Timer? _timer;
 
@@ -40,7 +41,6 @@ class _OtpScreenState extends State<OtpScreen>
     _fadeAnim = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
     _animCtrl.forward();
     _startCountdown();
-    // Auto-focus first box
     WidgetsBinding.instance.addPostFrameCallback((_) => _nodes[0].requestFocus());
   }
 
@@ -64,6 +64,26 @@ class _OtpScreenState extends State<OtpScreen>
 
   String get _code => _ctrls.map((c) => c.text).join();
 
+  // ── Permission-aware navigation after OTP success ─────────────────────────────
+  Future<void> _onVerifySuccess() async {
+    final prefs = await SharedPreferences.getInstance();
+    final permsDone = prefs.getBool('permissions_shown') ?? false;
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => permsDone
+            ? const HomeScreen()
+            : const PermissionSlidesScreen(),
+        transitionDuration: const Duration(milliseconds: 450),
+        transitionsBuilder: (_, anim, __, child) => FadeTransition(
+          opacity: CurvedAnimation(parent: anim, curve: Curves.easeOut),
+          child: child,
+        ),
+      ),
+      (route) => false,
+    );
+  }
+
   Future<void> _verify() async {
     if (_code.length < 4) {
       setState(() => _error = 'Please enter all 4 digits');
@@ -76,12 +96,9 @@ class _OtpScreenState extends State<OtpScreen>
     setState(() => _verifying = false);
     if (res['success'] == true) {
       HapticFeedback.lightImpact();
-      Navigator.pushAndRemoveUntil(context,
-          MaterialPageRoute(builder: (_) => const HomeScreen()),
-          (r) => false);
+      await _onVerifySuccess();       // ← permission-aware navigation
     } else {
       setState(() => _error = res['message'] as String? ?? 'Invalid code.');
-      // Shake + clear boxes
       for (final c in _ctrls) c.clear();
       _nodes[0].requestFocus();
     }
@@ -110,7 +127,6 @@ class _OtpScreenState extends State<OtpScreen>
       body: FadeTransition(
         opacity: _fadeAnim,
         child: Stack(children: [
-          // Glow orbs
           Positioned(top: -80, right: -80, child: Container(
             width: 250, height: 250,
             decoration: BoxDecoration(shape: BoxShape.circle,
@@ -129,7 +145,6 @@ class _OtpScreenState extends State<OtpScreen>
             child: Column(children: [
               const SizedBox(height: 40),
 
-              // Icon
               Container(
                 width: 80, height: 80,
                 decoration: BoxDecoration(
@@ -155,8 +170,8 @@ class _OtpScreenState extends State<OtpScreen>
 
               const SizedBox(height: 44),
 
-              // OTP input boxes
-              Row(mainAxisAlignment: MainAxisAlignment.center, children: List.generate(4, (i) {
+              Row(mainAxisAlignment: MainAxisAlignment.center,
+                  children: List.generate(4, (i) {
                 return Container(
                   width: 64, height: 72,
                   margin: const EdgeInsets.symmetric(horizontal: 8),
@@ -198,13 +213,8 @@ class _OtpScreenState extends State<OtpScreen>
                     inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                     onChanged: (v) {
                       setState(() {});
-                      if (v.isNotEmpty && i < 3) {
-                        _nodes[i + 1].requestFocus();
-                      }
-                      if (v.isEmpty && i > 0) {
-                        _nodes[i - 1].requestFocus();
-                      }
-                      // Auto-submit when all filled
+                      if (v.isNotEmpty && i < 3) _nodes[i + 1].requestFocus();
+                      if (v.isEmpty && i > 0) _nodes[i - 1].requestFocus();
                       if (_code.length == 4 && !_verifying) {
                         Future.delayed(const Duration(milliseconds: 100), _verify);
                       }
@@ -215,7 +225,6 @@ class _OtpScreenState extends State<OtpScreen>
 
               const SizedBox(height: 16),
 
-              // Error
               if (_error.isNotEmpty) Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 decoration: BoxDecoration(
@@ -234,7 +243,6 @@ class _OtpScreenState extends State<OtpScreen>
 
               const SizedBox(height: 32),
 
-              // Verify button
               GestureDetector(
                 onTap: _verifying ? null : _verify,
                 child: AnimatedContainer(
@@ -257,7 +265,6 @@ class _OtpScreenState extends State<OtpScreen>
 
               const SizedBox(height: 24),
 
-              // Resend
               GestureDetector(
                 onTap: _countdown > 0 ? null : _resend,
                 child: _resending

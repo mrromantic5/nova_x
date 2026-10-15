@@ -1,13 +1,16 @@
 // lib/features/auth/screens/auth_screen.dart
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:rive/rive.dart' hide LinearGradient, RadialGradient;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:nova_x/core/services/api_service.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
 import '../../legal/screens/terms_screen.dart';
 import '../../legal/screens/privacy_screen.dart';
 import '../../home/screens/home_screen.dart';
+import '../../permissions/screens/permission_slides_screen.dart';
 import 'otp_screen.dart';
 
 class AuthScreen extends StatefulWidget {
@@ -21,9 +24,9 @@ class _AuthScreenState extends State<AuthScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabs;
   bool _loading = false;
-  bool _obscure  = true;   // login password
-  bool _obscure2 = true;   // signup password
-  bool _obscure3 = true;   // signup confirm password
+  bool _obscure  = true;
+  bool _obscure2 = true;
+  bool _obscure3 = true;
   String _error = '';
   bool _agreed  = false;
 
@@ -47,10 +50,7 @@ class _AuthScreenState extends State<AuthScreen>
   Artboard? _riveArtboard;
   RiveAnimationController? _currentController;
   String _currentBearState = '';
-
-  // ── Track which password field is currently active ──────────────────────────
-  // 'login' | 'regPass' | 'regPass2' | ''
-  String _activePassField = '';
+  String _activePassField  = '';
 
   @override
   void initState() {
@@ -58,13 +58,11 @@ class _AuthScreenState extends State<AuthScreen>
     _tabs = TabController(length: 2, vsync: this);
     _tabs.addListener(_onTabChange);
 
-    // Login tab listeners
     _loginEmailFocus.addListener(_onLoginEmailFocus);
     _loginPassFocus.addListener(_onLoginPassFocus);
     _loginEmailCtrl.addListener(_onEmailTyped);
     _loginPassCtrl.addListener(_onPasswordTyped);
 
-    // Signup tab listeners
     _regNameFocus.addListener(_onRegNameFocus);
     _regEmailFocus.addListener(_onRegEmailFocus);
     _regPassFocus.addListener(_onRegPassFocus);
@@ -72,6 +70,28 @@ class _AuthScreenState extends State<AuthScreen>
     _regEmailCtrl.addListener(_onEmailTyped);
     _regPassCtrl.addListener(_onPasswordTyped);
     _regPass2Ctrl.addListener(_onPasswordTyped);
+  }
+
+  // ── Permission-aware navigation ──────────────────────────────────────────────
+  // Called after BOTH direct login success AND OTP verification success.
+  // Checks whether permission slides have been shown before; if not, shows them.
+  Future<void> _onAuthSuccess() async {
+    final prefs = await SharedPreferences.getInstance();
+    final permsDone = prefs.getBool('permissions_shown') ?? false;
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => permsDone
+            ? const HomeScreen()
+            : const PermissionSlidesScreen(),
+        transitionDuration: const Duration(milliseconds: 450),
+        transitionsBuilder: (_, anim, __, child) => FadeTransition(
+          opacity: CurvedAnimation(parent: anim, curve: Curves.easeOut),
+          child: child,
+        ),
+      ),
+      (route) => false,
+    );
   }
 
   // ── Rive helpers ─────────────────────────────────────────────────────────────
@@ -103,7 +123,6 @@ class _AuthScreenState extends State<AuthScreen>
     });
   }
 
-  // Returns the correct resting state given current visibility/text.
   String get _restingState {
     final passVisible = !_isActivePassObscured && _activePassField.isNotEmpty;
     final hasText = _activePassCtrl?.text.isNotEmpty ?? false;
@@ -113,26 +132,24 @@ class _AuthScreenState extends State<AuthScreen>
 
   bool get _isActivePassObscured {
     switch (_activePassField) {
-      case 'login':   return _obscure;
-      case 'regPass': return _obscure2;
-      case 'regPass2':return _obscure3;
-      default:        return true;
+      case 'login':    return _obscure;
+      case 'regPass':  return _obscure2;
+      case 'regPass2': return _obscure3;
+      default:         return true;
     }
   }
 
   TextEditingController? get _activePassCtrl {
     switch (_activePassField) {
-      case 'login':   return _loginPassCtrl;
-      case 'regPass': return _regPassCtrl;
-      case 'regPass2':return _regPass2Ctrl;
-      default:        return null;
+      case 'login':    return _loginPassCtrl;
+      case 'regPass':  return _regPassCtrl;
+      case 'regPass2': return _regPass2Ctrl;
+      default:         return null;
     }
   }
 
   void _bearHandsUp() {
-    if (_currentBearState != 'hands_up') {
-      _setAnimation('hands_up', loop: true);
-    }
+    if (_currentBearState != 'hands_up') _setAnimation('hands_up', loop: true);
   }
 
   void _reactFail({String? fallback}) {
@@ -151,12 +168,10 @@ class _AuthScreenState extends State<AuthScreen>
 
   void _onTabChange() {
     setState(() => _error = '');
-    // Return bear to idle on tab switch
     _activePassField = '';
     _setAnimation('idle', loop: true, force: true);
   }
 
-  // Email fields — bear looks around
   void _onLoginEmailFocus() {
     if (_loginEmailFocus.hasFocus) {
       _activePassField = '';
@@ -186,7 +201,6 @@ class _AuthScreenState extends State<AuthScreen>
     }
   }
 
-  // Email typing — bear looks left/right
   void _onEmailTyped() {
     final ctrl = _loginEmailFocus.hasFocus
         ? _loginEmailCtrl
@@ -200,7 +214,6 @@ class _AuthScreenState extends State<AuthScreen>
     }
   }
 
-  // Password fields — bear covers eyes when visible, relaxes when hidden
   void _onLoginPassFocus() {
     if (_loginPassFocus.hasFocus) {
       _activePassField = 'login';
@@ -210,7 +223,6 @@ class _AuthScreenState extends State<AuthScreen>
         _activePassField = '';
         _oneShotThenLoop('hands_down', 'idle', delayMs: 900);
       }
-      // else password is visible with text → stay hands_up
     }
   }
 
@@ -242,13 +254,12 @@ class _AuthScreenState extends State<AuthScreen>
     }
   }
 
-  // Typing in any password field — keep hands up if visible
   void _onPasswordTyped() {
     if (_activePassField.isEmpty) return;
     if (!_isActivePassObscured) _bearHandsUp();
   }
 
-  // ── Eye toggle helpers ────────────────────────────────────────────────────────
+  // ── Eye toggles ───────────────────────────────────────────────────────────────
 
   void _toggleLoginPass() {
     setState(() => _obscure = !_obscure);
@@ -283,7 +294,7 @@ class _AuthScreenState extends State<AuthScreen>
     }
   }
 
-  // ── Auth actions (unchanged logic) ───────────────────────────────────────────
+  // ── Auth actions ──────────────────────────────────────────────────────────────
 
   Future<void> _login() async {
     final email = _loginEmailCtrl.text.trim();
@@ -302,14 +313,15 @@ class _AuthScreenState extends State<AuthScreen>
       _reactSuccess();
       await Future.delayed(const Duration(milliseconds: 600));
       if (!mounted) return;
-      Navigator.pushReplacement(context,
-          MaterialPageRoute(builder: (_) => const HomeScreen()));
+      await _onAuthSuccess();          // ← permission-aware navigation
     } else if (res['needs_verification'] == true) {
       _reactFail(fallback: 'idle');
-      Navigator.push(context, MaterialPageRoute(builder: (_) => OtpScreen(
-        userId: res['user_id'] as int? ?? 0,
-        email:  email,
-      )));
+      Navigator.push(context, MaterialPageRoute(
+        builder: (_) => OtpScreen(
+          userId: res['user_id'] as int? ?? 0,
+          email:  email,
+        ),
+      ));
     } else {
       _reactFail(fallback: _restingState);
       setState(() => _error = res['message'] as String? ?? 'Login failed.');
@@ -351,10 +363,13 @@ class _AuthScreenState extends State<AuthScreen>
       _reactSuccess();
       await Future.delayed(const Duration(milliseconds: 600));
       if (!mounted) return;
-      Navigator.push(context, MaterialPageRoute(builder: (_) => OtpScreen(
-        userId: res['user_id'] as int? ?? 0,
-        email:  email,
-      )));
+      // Signup always goes to OTP first — permission slides fire after OTP verify
+      Navigator.push(context, MaterialPageRoute(
+        builder: (_) => OtpScreen(
+          userId: res['user_id'] as int? ?? 0,
+          email:  email,
+        ),
+      ));
     } else {
       _reactFail(fallback: 'idle');
       setState(() => _error = res['message'] as String? ?? 'Registration failed.');
@@ -383,7 +398,6 @@ class _AuthScreenState extends State<AuthScreen>
     return Scaffold(
       backgroundColor: AppTheme.bgDark,
       body: Stack(children: [
-        // Background glow blobs (unchanged)
         Positioned(top: -100, right: -100, child: Container(width: 300, height: 300,
           decoration: BoxDecoration(shape: BoxShape.circle,
             gradient: RadialGradient(colors: [
@@ -398,10 +412,8 @@ class _AuthScreenState extends State<AuthScreen>
           child: Column(children: [
             const SizedBox(height: 32),
 
-            // ── Bear replaces logo ──────────────────────────────────────────
             _buildBear(),
 
-            // ── NOVA X brand text (unchanged) ───────────────────────────────
             ShaderMask(
               shaderCallback: (b) => AppTheme.primaryGradient.createShader(b),
               child: Text('NOVA X', style: GoogleFonts.spaceGrotesk(
@@ -414,7 +426,6 @@ class _AuthScreenState extends State<AuthScreen>
                 textAlign: TextAlign.center),
             const SizedBox(height: 28),
 
-            // ── Tab bar (unchanged) ─────────────────────────────────────────
             Container(
               height: 48,
               decoration: BoxDecoration(
@@ -439,7 +450,6 @@ class _AuthScreenState extends State<AuthScreen>
             ),
             const SizedBox(height: 28),
 
-            // ── Forms ───────────────────────────────────────────────────────
             SizedBox(
               height: _tabs.index == 0 ? 160 : 336,
               child: TabBarView(controller: _tabs, children: [
@@ -448,7 +458,6 @@ class _AuthScreenState extends State<AuthScreen>
               ]),
             ),
 
-            // ── Error banner (unchanged) ────────────────────────────────────
             if (_error.isNotEmpty) ...[
               const SizedBox(height: 12),
               Container(
@@ -470,7 +479,6 @@ class _AuthScreenState extends State<AuthScreen>
 
             const SizedBox(height: 20),
 
-            // ── Submit button (unchanged) ───────────────────────────────────
             GestureDetector(
               onTap: _loading ? null : (_tabs.index == 0 ? _login : _register),
               child: AnimatedContainer(
@@ -496,7 +504,6 @@ class _AuthScreenState extends State<AuthScreen>
               ),
             ),
 
-            // ── Sign-up extras (unchanged) ──────────────────────────────────
             if (_tabs.index == 1) ...[
               const SizedBox(height: 10),
               Container(
@@ -571,7 +578,6 @@ class _AuthScreenState extends State<AuthScreen>
               ),
             ],
 
-            // ── Guest option (unchanged) ────────────────────────────────────
             if (widget.showGuestOption) ...[
               const SizedBox(height: 20),
               Row(mainAxisAlignment: MainAxisAlignment.center, children: [
@@ -602,7 +608,7 @@ class _AuthScreenState extends State<AuthScreen>
     );
   }
 
-  // ── Bear widget ───────────────────────────────────────────────────────────────
+  // ── Bear ──────────────────────────────────────────────────────────────────────
 
   Widget _buildBear() {
     return SizedBox(
@@ -624,7 +630,7 @@ class _AuthScreenState extends State<AuthScreen>
     );
   }
 
-  // ── Login form ────────────────────────────────────────────────────────────────
+  // ── Forms ─────────────────────────────────────────────────────────────────────
 
   Widget _loginForm() => Column(children: [
     _field('Email address', _loginEmailCtrl,
@@ -638,8 +644,6 @@ class _AuthScreenState extends State<AuthScreen>
         obscure: _obscure,
         toggleObscure: _toggleLoginPass),
   ]);
-
-  // ── Register form ─────────────────────────────────────────────────────────────
 
   Widget _registerForm() => Column(children: [
     _field('Username (display name)', _regNameCtrl,
@@ -663,8 +667,6 @@ class _AuthScreenState extends State<AuthScreen>
         obscure: _obscure3,
         toggleObscure: _toggleRegPass2),
   ]);
-
-  // ── Field builder ─────────────────────────────────────────────────────────────
 
   Widget _field(String hint, TextEditingController ctrl, {
     required FocusNode focusNode,

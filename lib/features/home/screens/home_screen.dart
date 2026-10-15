@@ -183,7 +183,11 @@ class _HomeScreenState extends State<HomeScreen>
     _fadeAnim = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
     _animCtrl.forward();
     _loadAll();
-    _initSpeech();
+    // NOTE: _initSpeech() is NOT called here on startup.
+    // speech_to_text.initialize() triggers Android's microphone permission dialog.
+    // Microphone permission is requested by the user tapping "Allow microphone"
+    // on the PermissionSlidesScreen (shown once after first login/signup).
+    // Speech is initialized lazily on first mic button tap instead — see _toggleListen().
     _fetchNews();
     _scrollCtrl.addListener(_onScroll);
     _searchHist = LocalDB.getSearchHistory();
@@ -290,13 +294,20 @@ class _HomeScreenState extends State<HomeScreen>
     if (mounted) setState(() {});
   }
 
+  // Lazy speech init — called only on first mic button tap, never on startup.
+  // This prevents speech_to_text from triggering Android's microphone permission
+  // dialog at app launch. The user grants permission via PermissionSlidesScreen first.
   Future<void> _initSpeech() async {
     _speechAvail = await _speech.initialize(
         onError: (_) => setState(() => _isListening = false));
   }
 
   Future<void> _toggleListen() async {
-    if (!_speechAvail) { _showSnack('Microphone not available'); return; }
+    // Initialize lazily on first tap rather than at startup
+    if (!_speechAvail) {
+      await _initSpeech();
+      if (!_speechAvail) { _showSnack('Microphone not available'); return; }
+    }
     HapticFeedback.mediumImpact();
     if (_isListening) {
       _speech.stop(); setState(() => _isListening = false);

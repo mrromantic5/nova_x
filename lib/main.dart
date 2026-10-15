@@ -137,11 +137,15 @@ class _NovaXAppState extends State<NovaXApp> {
   }
 
   // ── FCM initialisation ─────────────────────────────────────────────────────
+  //
+  // NOTE: requestPermission() is intentionally NOT called here.
+  // Notification permission is requested by the user tapping "Enable notifications"
+  // on the PermissionSlidesScreen (shown once after first login/signup).
+  // Calling it here would show the system dialog at app launch, bypassing the slide.
   Future<void> _initFCM() async {
     final msg = FirebaseMessaging.instance;
 
-    await msg.requestPermission(
-        alert: true, badge: true, sound: true, provisional: false);
+    // Do NOT call msg.requestPermission() here — handled by PermissionSlidesScreen
     await msg.setForegroundNotificationPresentationOptions(
         alert: true, badge: true, sound: true);
 

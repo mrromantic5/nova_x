@@ -24,8 +24,9 @@ class LocalDB {
   static const _kBackground     = 'nx_background_image';   // NEW
   static const _kSpeedDial      = 'nx_speed_dial';         // NEW
   static const _kSpeedDialRemoved = 'nx_speed_dial_removed'; // NEW — removed shortcuts kept for re-adding
-  static const _kAdBlock        = 'nx_ad_block_enabled';
-  static const _kSavePasswords  = 'nx_save_passwords_enabled';
+  static const _kAdBlock             = 'nx_ad_block_enabled';
+  static const _kSavePasswords       = 'nx_save_passwords_enabled';
+  static const _kGreetingNotifications = 'nx_greeting_notifications';
 
   // ── Default Quick Access list (used until user customises) ────────────────
   static const List<Map<String, dynamic>> defaultSpeedDial = [
@@ -372,6 +373,13 @@ class LocalDB {
   static bool  getAskedDefaultBrowser()    => _p.getBool('nx_asked_default_browser') ?? false;
   static Future<void> setAskedDefaultBrowser(bool v) async =>
       _p.setBool('nx_asked_default_browser', v);
+
+  // ── Greeting notifications (morning / afternoon / evening daily nudges) ──
+  // Defaults to true (ON). Does NOT affect admin broadcasts or business alerts.
+  static bool getGreetingNotifications() =>
+      _p.getBool(_kGreetingNotifications) ?? true;
+  static Future<void> setGreetingNotifications(bool v) async =>
+      _p.setBool(_kGreetingNotifications, v);
 
   static Future<void> clearAll() async {
     await clearSearchHistory();

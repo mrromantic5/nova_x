@@ -172,6 +172,21 @@ class ApiService {
     } catch (_) {}
   }
 
+  // ── Sync notification preferences to server ──────────────────
+  // Only controls greeting (daily nudge) notifications.
+  // Admin broadcasts and business alerts are always delivered.
+  static Future<void> setGreetingNotifications(bool enabled) async {
+    final loggedIn = await isLoggedIn();
+    if (!loggedIn) return;
+    try {
+      await _dio.post(
+        '/api/v1/sync/preferences',
+        data: {'greeting_notifications': enabled ? 1 : 0},
+        options: await _authOpts(),
+      );
+    } catch (_) {}
+  }
+
   // ── Profile ──────────────────────────────────────────────────
   static Future<Map<String, dynamic>?> getProfile() async {
     try {

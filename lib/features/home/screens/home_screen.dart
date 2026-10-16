@@ -89,10 +89,11 @@ class _HomeScreenState extends State<HomeScreen>
   bool _hasMoreNews = true;
 
   // Search UI state
-  List<String> _suggestions = [];
-  List<String> _searchHist  = [];
-  bool _showSuggest = false;
-  bool _isListening = false;
+  List<String> _suggestions  = [];
+  List<String> _searchHist   = [];
+  bool _showSuggest  = false;
+  bool _isListening  = false;
+  String _searchEngine = 'google'; // matches LocalDB keys
 
   // Voice
   final SpeechToText _speech      = SpeechToText();
@@ -291,7 +292,36 @@ class _HomeScreenState extends State<HomeScreen>
     _profileImgPath = LocalDB.getProfileImagePath();
     _backgroundPath = LocalDB.getBackgroundImage();
     _speedDial      = LocalDB.getSpeedDial();
+    _searchEngine   = LocalDB.getSearchEngine();
     if (mounted) setState(() {});
+  }
+
+  // ── Search engine data ─────────────────────────────────────────────────────
+  static const _engines = [
+    {'key': 'google',     'label': 'Google',     'icon': 'assets/images/engine_google.png',     'color': 0xFF4285F4},
+    {'key': 'bing',       'label': 'Bing',        'icon': 'assets/images/engine_bing.png',       'color': 0xFF00809D},
+    {'key': 'duckduckgo', 'label': 'DuckDuckGo',  'icon': 'assets/images/engine_duckduckgo.png', 'color': 0xFFDE5833},
+    {'key': 'yahoo',      'label': 'Yahoo',       'icon': 'assets/images/engine_yahoo.png',      'color': 0xFF6001D2},
+  ];
+
+  Map<String, dynamic> get _currentEngine =>
+      (_engines.firstWhere((e) => e['key'] == _searchEngine,
+          orElse: () => _engines.first) as Map<String, dynamic>);
+
+  // ── Engine picker bottom sheet ─────────────────────────────────────────────
+  Future<void> _showEnginePicker() async {
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _EnginePickerSheet(
+        engines:       _engines.cast<Map<String, dynamic>>(),
+        currentEngine: _searchEngine,
+        onSelected: (key) async {
+          await LocalDB.setSearchEngine(key);
+          if (mounted) setState(() => _searchEngine = key);
+        },
+      ),
+    );
   }
 
   // Lazy speech init — called only on first mic button tap, never on startup.
@@ -842,9 +872,36 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                 child: Row(children: [
-                  Icon(_isListening ? Icons.hearing : Icons.search,
-                      color: _isListening ? Colors.redAccent : AppTheme.accentCyan,
-                      size: 22),
+                  // Engine logo — tap to change search engine
+                  GestureDetector(
+                    onTap: _isListening ? null : _showEnginePicker,
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 220),
+                      child: _isListening
+                          ? const Icon(Icons.hearing,
+                              key: ValueKey('hearing'),
+                              color: Colors.redAccent, size: 22)
+                          : Container(
+                              key: ValueKey(_searchEngine),
+                              width: 26, height: 26,
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Color(0xFF1E2535),
+                              ),
+                              child: ClipOval(
+                                child: Image.asset(
+                                  _currentEngine['icon'] as String,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => Icon(
+                                    Icons.search,
+                                    size: 16,
+                                    color: Color(_currentEngine['color'] as int),
+                                  ),
+                                ),
+                              ),
+                            ),
+                    ),
+                  ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: TextField(
@@ -1689,6 +1746,125 @@ class _PointsChipState extends State<_PointsChip> {
                   color: Colors.black87, fontWeight: FontWeight.w800,
                   fontSize: 13.5)),
         ]),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Search Engine Picker Bottom Sheet
+// ─────────────────────────────────────────────────────────────────────────────
+class _EnginePickerSheet extends StatelessWidget {
+  final List<Map<String, dynamic>> engines;
+  final String                     currentEngine;
+  final void Function(String key)  onSelected;
+
+  const _EnginePickerSheet({
+    required this.engines,
+    required this.currentEngine,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      decoration: BoxDecoration(
+        color: const Color(0xFF111827),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        border: Border(top: BorderSide(color: Colors.white.withOpacity(0.08))),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Handle
+          Container(
+            width: 36, height: 4,
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.18),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+
+          Text(
+            'Search engine',
+            style: GoogleFonts.spaceGrotesk(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          ...engines.map((e) {
+            final key     = e['key']   as String;
+            final label   = e['label'] as String;
+            final icon    = e['icon']  as String;
+            final color   = Color(e['color'] as int);
+            final active  = key == currentEngine;
+
+            return GestureDetector(
+              onTap: () {
+                onSelected(key);
+                Navigator.pop(context);
+              },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                decoration: BoxDecoration(
+                  color: active
+                      ? color.withOpacity(0.12)
+                      : Colors.white.withOpacity(0.04),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: active ? color.withOpacity(0.5) : Colors.white.withOpacity(0.08),
+                    width: active ? 1.5 : 1,
+                  ),
+                ),
+                child: Row(children: [
+                  Container(
+                    width: 36, height: 36,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Color(0xFF1E2535),
+                    ),
+                    child: ClipOval(
+                      child: Image.asset(
+                        icon, fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) =>
+                            Icon(Icons.search, size: 18, color: color),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Text(
+                    label,
+                    style: GoogleFonts.inter(
+                      color: active ? Colors.white : Colors.white70,
+                      fontSize: 15,
+                      fontWeight: active ? FontWeight.w600 : FontWeight.w400,
+                    ),
+                  ),
+                  const Spacer(),
+                  if (active)
+                    Container(
+                      width: 20, height: 20,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: color,
+                      ),
+                      child: const Icon(Icons.check,
+                          color: Colors.white, size: 13),
+                    ),
+                ]),
+              ),
+            );
+          }),
+
+          SizedBox(height: MediaQuery.of(context).padding.bottom + 16),
+        ],
       ),
     );
   }

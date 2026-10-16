@@ -1,6 +1,7 @@
 // lib/features/settings/screens/settings_screen.dart
 import 'package:flutter/material.dart';
 import 'package:nova_x/core/services/default_browser_service.dart';
+import 'package:nova_x/core/services/api_service.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:nova_x/core/database/local_db.dart';
@@ -22,11 +23,12 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  bool   _adBlock       = false;
-  bool   _savePasswords = true;
-  bool   _biometricLock = true;
-  bool   _isDefaultBrowser = false;
-  int    _savedPwCount  = 0;
+  bool   _adBlock              = false;
+  bool   _savePasswords        = true;
+  bool   _biometricLock        = true;
+  bool   _isDefaultBrowser     = false;
+  bool   _greetingNotifications = true;
+  int    _savedPwCount         = 0;
 
   String _engine = 'google';
   Map<String, dynamic> _profile = {};
@@ -34,10 +36,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
-    _engine        = LocalDB.getSearchEngine();
-    _adBlock       = LocalDB.getAdBlockEnabled();
-    _savePasswords = LocalDB.getSavePasswordsEnabled();
-    _biometricLock = LocalDB.getBiometricLockEnabled();
+    _engine                = LocalDB.getSearchEngine();
+    _adBlock               = LocalDB.getAdBlockEnabled();
+    _savePasswords         = LocalDB.getSavePasswordsEnabled();
+    _biometricLock         = LocalDB.getBiometricLockEnabled();
+    _greetingNotifications = LocalDB.getGreetingNotifications();
     _checkDefaultBrowser();
     _loadPwCount();
     _profile = LocalDB.getProfile();
@@ -206,6 +209,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 'Edit your speed-dial shortcuts',
                 AppTheme.accentPurple,
                 () => _push(const SpeedDialEditorScreen())),
+            _greetingNotificationsTile(),
           ]),
 
           // ── Search Engine ──────────────────────────────────────────────
@@ -577,6 +581,64 @@ class _SettingsScreenState extends State<SettingsScreen> {
               fontWeight: FontWeight.w700))),
         ]),
       );
+
+  // ── Greeting Notifications toggle ────────────────────────────────────────
+  Widget _greetingNotificationsTile() {
+    final on = _greetingNotifications;
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      leading: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        width: 34, height: 34,
+        decoration: BoxDecoration(
+          color: (on ? const Color(0xFF00D4FF) : AppTheme.textHint).withOpacity(0.12),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(
+          on ? Icons.notifications_active_rounded : Icons.notifications_off_outlined,
+          color: on ? const Color(0xFF00D4FF) : AppTheme.textHint,
+          size: 17,
+        ),
+      ),
+      title: Text(
+        'Daily Greetings',
+        style: GoogleFonts.inter(
+          color: AppTheme.textPrimary,
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      subtitle: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 200),
+        child: Align(
+          key: ValueKey(on),
+          alignment: Alignment.centerLeft,
+          child: Text(
+            on
+              ? 'Morning, afternoon & evening check-ins. Turn off to stop daily nudges — important alerts still reach you.'
+              : 'Daily greetings paused. Turn on to stay motivated with morning, afternoon & evening updates.',
+            style: GoogleFonts.inter(
+              color: on ? AppTheme.textHint : AppTheme.textHint.withOpacity(0.65),
+              fontSize: 11,
+            ),
+          ),
+        ),
+      ),
+      trailing: Switch(
+        value: on,
+        onChanged: (v) async {
+          // 1. Save locally immediately — feels instant to the user
+          await LocalDB.setGreetingNotifications(v);
+          setState(() => _greetingNotifications = v);
+          // 2. Sync to server so notify.php respects the choice
+          await ApiService.setGreetingNotifications(v);
+        },
+        activeColor: const Color(0xFF00D4FF),
+        inactiveThumbColor: AppTheme.textHint,
+        inactiveTrackColor: AppTheme.bgElevated,
+      ),
+    );
+  }
 
   Widget _sectionHeader(String label) => Padding(
     padding: const EdgeInsets.fromLTRB(4, 20, 4, 10),

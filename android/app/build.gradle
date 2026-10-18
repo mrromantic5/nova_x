@@ -52,3 +52,9 @@ android {
 flutter {
     source '../..'
 }
+
+dependencies {
+    // Required by the AppCompat themes in res/values/styles.xml
+    // (local_auth on FlutterFragmentActivity needs an AppCompat theme).
+    implementation("androidx.appcompat:appcompat:1.7.0")
+}

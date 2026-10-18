@@ -37,7 +37,6 @@ class _SettingsScreenState extends State<SettingsScreen>
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _engine                = LocalDB.getSearchEngine();
     _adBlock               = LocalDB.getAdBlockEnabled();
     _savePasswords         = LocalDB.getSavePasswordsEnabled();
@@ -46,6 +45,7 @@ class _SettingsScreenState extends State<SettingsScreen>
     _checkDefaultBrowser();
     _loadPwCount();
     _profile = LocalDB.getProfile();
+    WidgetsBinding.instance.addObserver(this);
   }
 
   @override
@@ -54,12 +54,11 @@ class _SettingsScreenState extends State<SettingsScreen>
     super.dispose();
   }
 
-  // Re-check when returning from Android 9 Default Apps settings
+  // Refresh the Default Browser row when the user comes back from the
+  // system dialog / Default apps settings.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && !_isDefaultBrowser) {
-      _checkDefaultBrowser();
-    }
+    if (state == AppLifecycleState.resumed) _checkDefaultBrowser();
   }
 
   Future<void> _checkDefaultBrowser() async {
@@ -398,20 +397,10 @@ class _SettingsScreenState extends State<SettingsScreen>
                   ? const Icon(Icons.check_circle_rounded, color: AppTheme.success, size:20)
                   : TextButton(
                       onPressed: () async {
-                        // Register callback BEFORE calling request() so we get
-                        // the role-dialog result even if it returns synchronously.
-                        DefaultBrowserService.onRoleResult = (granted) {
-                          if (mounted) {
-                            if (granted) setState(() => _isDefaultBrowser = true);
-                            // Whether granted or not, re-check to sync UI.
-                            _checkDefaultBrowser();
-                          }
-                        };
+                        // Completes after the system dialog is answered and
+                        // awards the points if NOVA X became the default.
                         await DefaultBrowserService.request();
-                        // Android 9 and below opens Default Apps settings with no
-                        // callback; re-check when the user returns (handled in
-                        // _checkDefaultBrowser called from WidgetsBindingObserver
-                        // or simply when they navigate back here).
+                        _checkDefaultBrowser();
                       },
                       child: Text('Set',
                           style: GoogleFonts.spaceGrotesk(

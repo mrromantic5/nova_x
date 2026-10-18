@@ -36,7 +36,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:launchMode="singleTop"
+            android:launchMode="singleTask"
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
@@ -47,40 +47,41 @@
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme" />
 
+            <!-- REQUIRED for a browser: Flutter 3.27+ enables deep linking by
+                 default and would treat every opened http(s) link as an in-app
+                 route (falls back to the home screen / throws "Could not find a
+                 generator for route"). Links are handled by MainActivity's
+                 default_browser channel instead. -->
+            <meta-data
+                android:name="flutter_deeplinking_enabled"
+                android:value="false" />
+
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- ══ Default-browser eligibility ════════════════════════════════
-                 Android requires ALL of these filters together for RoleManager
-                 ROLE_BROWSER to recognise an app as a browser candidate.
-                 The android:host="*" wildcard lets the filter match any URL,
-                 not just URLs whose host is literally empty.
-                 ═══════════════════════════════════════════════════════════ -->
-
-            <!-- Primary VIEW filter: every http/https URL with any host -->
+            <!-- Declares NOVA X as a web browser (default-browser eligible).
+                 singleTask (above) routes links from other apps to the running
+                 instance via MainActivity.onNewIntent(). -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="http"  android:host="*" />
-                <data android:scheme="https" android:host="*" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
             </intent-filter>
-
-            <!-- APP_BROWSER category — required to appear in RoleManager list -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.APP_BROWSER" />
             </intent-filter>
-
-            <!-- MIME-type VIEW filter (for HTML files opened from file manager, etc.) -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="http"  android:host="*" android:mimeType="text/html" />
-                <data android:scheme="https" android:host="*" android:mimeType="text/html" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+                <data android:mimeType="text/html" />
                 <data android:mimeType="text/plain" />
                 <data android:mimeType="application/xhtml+xml" />
             </intent-filter>

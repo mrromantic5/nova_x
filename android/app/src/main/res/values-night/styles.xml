@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Parents MUST be AppCompat themes: local_auth (biometric unlock for
+        saved passwords) runs on FlutterFragmentActivity and crashes on
+        Android 8 and below with a non-AppCompat theme.
+        Theme.AppCompat.NoActionBar is dark with no title bar — visually
+        identical to the previous Theme.Black.NoTitleBar.
+    -->
+
+    <!-- Launch screen theme (shown before Flutter renders its first frame) -->
+    <style name="LaunchTheme" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:windowBackground">@drawable/launch_background</item>
+    </style>
+
+    <!-- Applied once the Flutter UI is ready -->
+    <style name="NormalTheme" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:windowBackground">?android:colorBackground</item>
+    </style>
+</resources>

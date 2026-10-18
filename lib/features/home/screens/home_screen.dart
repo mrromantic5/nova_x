@@ -57,12 +57,16 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen>
-    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   final TextEditingController _searchCtrl  = TextEditingController();
   final FocusNode             _searchFocus = FocusNode();
   final ScrollController      _scrollCtrl  = ScrollController();
   late AnimationController    _animCtrl;
   late Animation<double>      _fadeAnim;
+
+  // Engine logo pulse animation
+  late AnimationController _pulseCtrl;
+  late Animation<double>   _pulseAnim;
 
   // Profile
   String? _profileImgPath;
@@ -89,10 +93,11 @@ class _HomeScreenState extends State<HomeScreen>
   bool _hasMoreNews = true;
 
   // Search UI state
-  List<String> _suggestions = [];
-  List<String> _searchHist  = [];
-  bool _showSuggest = false;
-  bool _isListening = false;
+  List<String> _suggestions  = [];
+  List<String> _searchHist   = [];
+  bool _showSuggest  = false;
+  bool _isListening  = false;
+  String _searchEngine = 'google'; // matches LocalDB keys
 
   // Voice
   final SpeechToText _speech      = SpeechToText();
@@ -182,6 +187,12 @@ class _HomeScreenState extends State<HomeScreen>
         vsync: this, duration: const Duration(milliseconds: 800));
     _fadeAnim = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
     _animCtrl.forward();
+
+    // Pulse: ease in → ease out → repeat — like a heartbeat glow on the logo
+    _pulseCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 1600))
+      ..repeat(reverse: true);
+    _pulseAnim = CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut);
     _loadAll();
     // NOTE: _initSpeech() is NOT called here on startup.
     // speech_to_text.initialize() triggers Android's microphone permission dialog.
@@ -210,6 +221,7 @@ class _HomeScreenState extends State<HomeScreen>
     _searchFocus.dispose();
     _scrollCtrl.dispose();
     _animCtrl.dispose();
+    _pulseCtrl.dispose();
     _speech.stop();
     super.dispose();
   }
@@ -291,7 +303,36 @@ class _HomeScreenState extends State<HomeScreen>
     _profileImgPath = LocalDB.getProfileImagePath();
     _backgroundPath = LocalDB.getBackgroundImage();
     _speedDial      = LocalDB.getSpeedDial();
+    _searchEngine   = LocalDB.getSearchEngine();
     if (mounted) setState(() {});
+  }
+
+  // ── Search engine data ─────────────────────────────────────────────────────
+  static const _engines = [
+    {'key': 'google',     'label': 'Google',     'icon': 'assets/images/engine_google.png',     'color': 0xFF4285F4},
+    {'key': 'bing',       'label': 'Bing',        'icon': 'assets/images/engine_bing.png',       'color': 0xFF00809D},
+    {'key': 'duckduckgo', 'label': 'DuckDuckGo',  'icon': 'assets/images/engine_duckduckgo.png', 'color': 0xFFDE5833},
+    {'key': 'yahoo',      'label': 'Yahoo',       'icon': 'assets/images/engine_yahoo.png',      'color': 0xFF6001D2},
+  ];
+
+  Map<String, dynamic> get _currentEngine =>
+      (_engines.firstWhere((e) => e['key'] == _searchEngine,
+          orElse: () => _engines.first) as Map<String, dynamic>);
+
+  // ── Engine picker bottom sheet ─────────────────────────────────────────────
+  Future<void> _showEnginePicker() async {
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _EnginePickerSheet(
+        engines:       _engines.cast<Map<String, dynamic>>(),
+        currentEngine: _searchEngine,
+        onSelected: (key) async {
+          await LocalDB.setSearchEngine(key);
+          if (mounted) setState(() => _searchEngine = key);
+        },
+      ),
+    );
   }
 
   // Lazy speech init — called only on first mic button tap, never on startup.
@@ -822,29 +863,67 @@ class _HomeScreenState extends State<HomeScreen>
             color: Colors.white, fontSize: 26, fontWeight: FontWeight.bold)),
         const SizedBox(height: 4),
         Text(_subtitle, style: GoogleFonts.inter(
-            color: AppTheme.textHint, fontSize: 13)),
+            color: Colors.white70, fontSize: 13)),
         const SizedBox(height: 16),
         ClipRRect(
           borderRadius: BorderRadius.circular(28),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-            child: Column(children: [
+          child: Column(children: [
               Container(
                 decoration: BoxDecoration(
-                  color: const Color(0x22FFFFFF),
+                  color: const Color(0xFF1C1F26),
                   borderRadius: BorderRadius.only(
                     topLeft:     const Radius.circular(28),
                     topRight:    const Radius.circular(28),
                     bottomLeft:  Radius.circular(_showSuggest ? 0 : 28),
                     bottomRight: Radius.circular(_showSuggest ? 0 : 28),
                   ),
-                  border: Border.all(color: const Color(0x33FFFFFF)),
+                  border: Border.all(color: const Color(0xFF2E3340), width: 1.5),
+                  boxShadow: const [
+                    BoxShadow(color: Color(0x33000000), blurRadius: 12, offset: Offset(0, 3)),
+                  ],
                 ),
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                 child: Row(children: [
-                  Icon(_isListening ? Icons.hearing : Icons.search,
-                      color: _isListening ? Colors.redAccent : AppTheme.accentCyan,
-                      size: 22),
+                  // Engine logo — tap to change; pulses gently in/out
+                  GestureDetector(
+                    onTap: _isListening ? null : _showEnginePicker,
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 220),
+                      child: _isListening
+                          ? const Icon(Icons.hearing,
+                              key: ValueKey('hearing'),
+                              color: Colors.redAccent, size: 22)
+                          : AnimatedBuilder(
+                              key: ValueKey(_searchEngine),
+                              animation: _pulseAnim,
+                              builder: (_, child) => Transform.scale(
+                                scale: 0.88 + (_pulseAnim.value * 0.14),
+                                child: Opacity(
+                                  opacity: 0.72 + (_pulseAnim.value * 0.28),
+                                  child: child,
+                                ),
+                              ),
+                              child: Container(
+                                width: 26, height: 26,
+                                decoration: const BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Color(0xFF1E2535),
+                                ),
+                                child: ClipOval(
+                                  child: Image.asset(
+                                    _currentEngine['icon'] as String,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => Icon(
+                                      Icons.search,
+                                      size: 16,
+                                      color: Color(_currentEngine['color'] as int),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                    ),
+                  ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: TextField(
@@ -988,7 +1067,6 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
             ]),
           ),
-        ),
       ]),
     );
   }
@@ -1015,7 +1093,7 @@ class _HomeScreenState extends State<HomeScreen>
       Padding(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
         child: Text(title, style: GoogleFonts.spaceGrotesk(
-            color: AppTheme.textHint, fontSize: 11,
+            color: Colors.white, fontSize: 11,
             fontWeight: FontWeight.w700, letterSpacing: 1.2)),
       ),
       child,
@@ -1067,7 +1145,7 @@ class _HomeScreenState extends State<HomeScreen>
               const SizedBox(height: 6),
               Text(site['name'] as String? ?? '',
                   style: GoogleFonts.inter(
-                      color: AppTheme.textSecondary, fontSize: 9.5,
+                      color: Colors.white, fontSize: 9.5,
                       fontWeight: FontWeight.w500),
                   maxLines: 1, overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.center),
@@ -1109,24 +1187,23 @@ class _HomeScreenState extends State<HomeScreen>
   // ── Feature row ────────────────────────────────────────────────────────────
   Widget _buildFeatureRow() {
     final items = [
-      {'icon': Icons.psychology_outlined,      'label': 'AI',
-       'color': AppTheme.accentCyan,
-       'fn': () => _push(const AiAssistantScreen())},
-      {'icon': Icons.map_rounded,              'label': 'Map',
-       'color': const Color(0xFF00C853),
-       'fn': () => MapGate.open(context)},
+      {'icon': Icons.developer_mode_rounded,   'label': 'Dev Tools',
+       'fn': () => _push(BrowserView(
+             initialQuery: 'https://api.browser.t-lyfe.com.ng/devtools.html',
+             autoOpenDevTools: true))},
+      {'icon': Icons.code_rounded,             'label': 'X Coder',
+       'fn': () => _push(const CodeEditorScreen(sharedWorkspace: true))},
       {'icon': Icons.monetization_on_rounded,  'label': 'Rewards',
-       'color': const Color(0xFFFFC83D),
        'fn': () => _push(const RewardsScreen())},
       {'icon': Icons.business_center_outlined, 'label': 'Business',
-       'color': AppTheme.accentPurple,
        'fn': () => _openBusiness()},
     ];
+    const _kDarkBg     = Color(0xFF1A1D26);
+    const _kDarkBorder = Color(0xFF2A2D3A);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Row(
         children: List.generate(items.length, (i) {
-          final color = items[i]['color'] as Color;
           return Expanded(
             child: GestureDetector(
               onTap: items[i]['fn'] as VoidCallback,
@@ -1134,19 +1211,24 @@ class _HomeScreenState extends State<HomeScreen>
                 margin: EdgeInsets.only(right: i < items.length - 1 ? 10 : 0),
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [color.withOpacity(0.18), color.withOpacity(0.06)],
-                    begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                  ),
+                  color: _kDarkBg,
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: color.withOpacity(0.25)),
+                  border: Border.all(color: _kDarkBorder, width: 1.2),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x33000000),
+                      blurRadius: 8,
+                      offset: Offset(0, 2),
+                    ),
+                  ],
                 ),
                 child: Column(children: [
-                  Icon(items[i]['icon'] as IconData, color: color, size: 22),
+                  Icon(items[i]['icon'] as IconData,
+                      color: Colors.white70, size: 22),
                   const SizedBox(height: 6),
                   Text(items[i]['label'] as String,
                       style: GoogleFonts.inter(
-                          color: AppTheme.textSecondary,
+                          color: Colors.white,
                           fontSize: 9.5, fontWeight: FontWeight.w600),
                       maxLines: 1, overflow: TextOverflow.ellipsis),
                 ]),
@@ -1195,7 +1277,7 @@ class _HomeScreenState extends State<HomeScreen>
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
         child: Row(children: [
           Text('Latest News', style: GoogleFonts.spaceGrotesk(
-              color: AppTheme.textHint, fontSize: 11,
+              color: Colors.white, fontSize: 11,
               fontWeight: FontWeight.w700, letterSpacing: 1.2)),
           const Spacer(),
           GestureDetector(
@@ -1689,6 +1771,125 @@ class _PointsChipState extends State<_PointsChip> {
                   color: Colors.black87, fontWeight: FontWeight.w800,
                   fontSize: 13.5)),
         ]),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Search Engine Picker Bottom Sheet
+// ─────────────────────────────────────────────────────────────────────────────
+class _EnginePickerSheet extends StatelessWidget {
+  final List<Map<String, dynamic>> engines;
+  final String                     currentEngine;
+  final void Function(String key)  onSelected;
+
+  const _EnginePickerSheet({
+    required this.engines,
+    required this.currentEngine,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      decoration: BoxDecoration(
+        color: const Color(0xFF111827),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        border: Border(top: BorderSide(color: Colors.white.withOpacity(0.08))),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Handle
+          Container(
+            width: 36, height: 4,
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.18),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+
+          Text(
+            'Search engine',
+            style: GoogleFonts.spaceGrotesk(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          ...engines.map((e) {
+            final key     = e['key']   as String;
+            final label   = e['label'] as String;
+            final icon    = e['icon']  as String;
+            final color   = Color(e['color'] as int);
+            final active  = key == currentEngine;
+
+            return GestureDetector(
+              onTap: () {
+                onSelected(key);
+                Navigator.pop(context);
+              },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                decoration: BoxDecoration(
+                  color: active
+                      ? color.withOpacity(0.12)
+                      : Colors.white.withOpacity(0.04),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: active ? color.withOpacity(0.5) : Colors.white.withOpacity(0.08),
+                    width: active ? 1.5 : 1,
+                  ),
+                ),
+                child: Row(children: [
+                  Container(
+                    width: 36, height: 36,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Color(0xFF1E2535),
+                    ),
+                    child: ClipOval(
+                      child: Image.asset(
+                        icon, fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) =>
+                            Icon(Icons.search, size: 18, color: color),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Text(
+                    label,
+                    style: GoogleFonts.inter(
+                      color: active ? Colors.white : Colors.white70,
+                      fontSize: 15,
+                      fontWeight: active ? FontWeight.w600 : FontWeight.w400,
+                    ),
+                  ),
+                  const Spacer(),
+                  if (active)
+                    Container(
+                      width: 20, height: 20,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: color,
+                      ),
+                      child: const Icon(Icons.check,
+                          color: Colors.white, size: 13),
+                    ),
+                ]),
+              ),
+            );
+          }),
+
+          SizedBox(height: MediaQuery.of(context).padding.bottom + 16),
+        ],
       ),
     );
   }

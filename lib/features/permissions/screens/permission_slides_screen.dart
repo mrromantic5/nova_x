@@ -80,7 +80,7 @@ class PermissionSlidesScreen extends StatefulWidget {
 }
 
 class _PermissionSlidesScreenState extends State<PermissionSlidesScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
 
   final PageController _pageCtrl = PageController();
   int  _currentIndex  = 0;
@@ -119,12 +119,16 @@ class _PermissionSlidesScreenState extends State<PermissionSlidesScreen>
 
     _animCtrl[0].forward();
 
+    // Register for lifecycle events (needed for didChangeAppLifecycleState)
+    WidgetsBinding.instance.addObserver(this);
+
     // Listen for the Android 10+ role-dialog result
     DefaultBrowserService.onRoleResult = _onRoleResult;
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     // Clear the callback so it isn't called after this screen is gone
     DefaultBrowserService.onRoleResult = null;
     _pageCtrl.dispose();
@@ -259,7 +263,6 @@ class _PermissionSlidesScreenState extends State<PermissionSlidesScreen>
   //   Android 9-: opens Default Apps settings → result checked in didChangeAppLifecycleState
   Future<void> _handleDefaultBrowser() async {
     if (_isDefaultBrowser) {
-      // Already set (unlikely here but guard anyway)
       _advance();
       return;
     }
@@ -267,11 +270,20 @@ class _PermissionSlidesScreenState extends State<PermissionSlidesScreen>
       _loading             = true;
       _browserDialogOpened = true;
     });
+
     await DefaultBrowserService.request();
-    // Do NOT set _loading = false here.
-    // • Android 10+: loading stays true until _onRoleResult fires.
-    // • Android 9-: loading stays true until _checkBrowserStatus resolves.
-    // Both will reset _loading if the user dismisses without granting.
+
+    // Safety timeout: if neither onRoleResult nor a resume check fires within
+    // 8 seconds (e.g. the manifest fix isn't deployed yet so the dialog never
+    // shows), stop the spinner so the user isn't stuck forever.
+    Future.delayed(const Duration(seconds: 8), () {
+      if (mounted && _loading && !_isDefaultBrowser) {
+        setState(() {
+          _loading             = false;
+          _browserDialogOpened = false;
+        });
+      }
+    });
   }
 
   // ── Build ──────────────────────────────────────────────────────────────────

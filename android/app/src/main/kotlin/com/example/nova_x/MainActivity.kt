@@ -146,13 +146,17 @@ class MainActivity : FlutterFragmentActivity() {
     /**
      * On Android 10+ (Q): shows the system role-request dialog.
      * Result arrives in onActivityResult(REQ_BROWSER, ...).
-     * On Android 9 and below: opens Default Apps settings (no result callback).
+     * On Android 9 and below, or when the role isn't available yet (manifest
+     * not deployed / app not recognised as a browser candidate): opens Default
+     * Apps settings so the user can set it manually, and sends onRoleResult(false)
+     * immediately so Flutter doesn't spin forever waiting for a callback.
      */
     private fun requestDefaultBrowser() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val rm = getSystemService(Context.ROLE_SERVICE) as RoleManager
             if (rm.isRoleAvailable(RoleManager.ROLE_BROWSER)) {
-                // Request even if already held — OS will either show dialog or no-op
+                // Role is available — show the proper system dialog.
+                // Result arrives in onActivityResult(REQ_BROWSER, ...).
                 @Suppress("DEPRECATION")
                 startActivityForResult(
                     rm.createRequestRoleIntent(RoleManager.ROLE_BROWSER),
@@ -160,6 +164,10 @@ class MainActivity : FlutterFragmentActivity() {
                 )
                 return
             }
+            // Role not available = app isn't recognised as a browser candidate yet.
+            // Fall through to settings and notify Flutter immediately so the
+            // spinner stops; the user can set it manually in Default Apps.
+            channel?.invokeMethod("onRoleResult", false)
         }
         openDefaultAppsSettings()
     }

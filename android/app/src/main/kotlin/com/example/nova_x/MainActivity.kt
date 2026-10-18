@@ -1,5 +1,6 @@
 package com.tlyfe.nova_x
 
+import android.app.Activity
 import android.app.role.RoleManager
 import android.content.Context
 import android.content.Intent
@@ -12,34 +13,69 @@ import io.flutter.plugin.common.MethodChannel
 
 /**
  * FlutterFragmentActivity is required by the local_auth (biometric) plugin.
- * Also hosts the default-browser MethodChannel and handles incoming http(s)
- * VIEW intents so links from other apps open inside NOVA X.
+ *
+ * Hosts two MethodChannels:
+ *   1. com.tlyfe.nova_x/default_browser  — default-browser request/check + incoming URL relay
+ *   2. com.tlyfe.nova_x/permissions      — microphone permission request
+ *
+ * Default-browser flow (Android 10+):
+ *   Flutter calls "request"
+ *     → MainActivity calls startActivityForResult(RoleManager intent, REQ_BROWSER)
+ *     → onActivityResult fires when user dismisses the dialog
+ *     → result is sent back to Flutter via the "onRoleResult" method
+ *
+ * Default-browser flow (Android 9 and below):
+ *   Opens ACTION_MANAGE_DEFAULT_APPS_SETTINGS; no result callback (OS limitation).
+ *
+ * Incoming URL relay:
+ *   • Cold-start: url is stored in pendingUrl; Flutter reads it via "getInitialUrl"
+ *   • Warm/hot (singleTop onNewIntent): url is sent via "onNewUrl" when channel is ready
+ *     If the channel isn't ready yet the URL is queued in pendingUrl so getInitialUrl
+ *     still returns it.
  */
 class MainActivity : FlutterFragmentActivity() {
 
     private val channelName = "com.tlyfe.nova_x/default_browser"
     private var channel: MethodChannel? = null
+
+    /** URL waiting to be delivered to Flutter (cold-start or pre-channel onNewIntent). */
     private var pendingUrl: String? = null
 
+    /** Request code for RoleManager.createRequestRoleIntent(ROLE_BROWSER). */
+    private val REQ_BROWSER = 4242
+
+    // ── Engine configuration ──────────────────────────────────────────────────
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        // ── Default browser channel ────────────────────────────────────────────
+        // Capture URL from the intent that started the Activity (cold start or
+        // singleTop re-launch before the channel was set up).
+        if (pendingUrl == null) pendingUrl = extractUrl(intent)
+
+        // ── Default-browser channel ───────────────────────────────────────────
         channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
         channel?.setMethodCallHandler { call, result ->
             when (call.method) {
-                "isDefault"      -> result.success(isDefaultBrowser())
-                "request"        -> { requestDefaultBrowser(); result.success(true) }
-                "getInitialUrl"  -> { result.success(pendingUrl); pendingUrl = null }
-                else             -> result.notImplemented()
+
+                "isDefault" ->
+                    result.success(isDefaultBrowser())
+
+                "request" -> {
+                    requestDefaultBrowser()
+                    result.success(true)
+                }
+
+                "getInitialUrl" -> {
+                    val url = pendingUrl
+                    pendingUrl = null
+                    result.success(url)
+                }
+
+                else -> result.notImplemented()
             }
         }
-        pendingUrl = extractUrl(intent)
 
-        // ── Microphone permission channel ──────────────────────────────────────
-        // Flutter PermissionSlidesScreen calls requestMicrophone() on slide 2.
-        // We call requestPermissions() here so the system dialog appears exactly
-        // when the user taps "Allow microphone" — not at app launch.
+        // ── Microphone permission channel ─────────────────────────────────────
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "com.tlyfe.nova_x/permissions"
@@ -59,42 +95,69 @@ class MainActivity : FlutterFragmentActivity() {
         }
     }
 
+    // ── New intent (singleTop warm/hot launch from another app) ───────────────
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        val url = extractUrl(intent)
-        if (url != null) channel?.invokeMethod("onNewUrl", url)
-    }
-
-    private fun extractUrl(intent: Intent?): String? {
-        if (intent?.action == Intent.ACTION_VIEW) {
-            val data: Uri? = intent.data
-            val scheme = data?.scheme?.lowercase()
-            if (data != null && (scheme == "http" || scheme == "https")) {
-                return data.toString()
-            }
+        val url = extractUrl(intent) ?: return
+        val ch  = channel
+        if (ch != null) {
+            // Flutter is running — deliver immediately.
+            ch.invokeMethod("onNewUrl", url)
+        } else {
+            // Flutter not ready yet — queue it so getInitialUrl returns it.
+            pendingUrl = url
         }
-        return null
     }
 
+    // ── RoleManager result (Android 10+ default-browser dialog) ──────────────
+    @Suppress("DEPRECATION")          // startActivityForResult is fine inside an Activity
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_BROWSER) {
+            // resultCode == RESULT_OK means the user granted the role.
+            val granted = (resultCode == Activity.RESULT_OK)
+            channel?.invokeMethod("onRoleResult", granted)
+        }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /** Extract an http/https URL from a VIEW intent, or return null. */
+    private fun extractUrl(intent: Intent?): String? {
+        if (intent?.action != Intent.ACTION_VIEW) return null
+        val data: Uri = intent.data ?: return null
+        val scheme = data.scheme?.lowercase() ?: return null
+        return if (scheme == "http" || scheme == "https") data.toString() else null
+    }
+
+    /** True if NOVA X is the current default browser. */
     private fun isDefaultBrowser(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val rm = getSystemService(Context.ROLE_SERVICE) as RoleManager
             rm.isRoleHeld(RoleManager.ROLE_BROWSER)
         } else {
             val probe = Intent(Intent.ACTION_VIEW, Uri.parse("http://example.com"))
-            val res = packageManager.resolveActivity(probe, 0)
+            val res   = packageManager.resolveActivity(probe, 0)
             res?.activityInfo?.packageName == packageName
         }
     }
 
+    /**
+     * On Android 10+ (Q): shows the system role-request dialog.
+     * Result arrives in onActivityResult(REQ_BROWSER, ...).
+     * On Android 9 and below: opens Default Apps settings (no result callback).
+     */
     private fun requestDefaultBrowser() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val rm = getSystemService(Context.ROLE_SERVICE) as RoleManager
-            if (rm.isRoleAvailable(RoleManager.ROLE_BROWSER) &&
-                !rm.isRoleHeld(RoleManager.ROLE_BROWSER)) {
+            if (rm.isRoleAvailable(RoleManager.ROLE_BROWSER)) {
+                // Request even if already held — OS will either show dialog or no-op
+                @Suppress("DEPRECATION")
                 startActivityForResult(
-                    rm.createRequestRoleIntent(RoleManager.ROLE_BROWSER), 4242)
+                    rm.createRequestRoleIntent(RoleManager.ROLE_BROWSER),
+                    REQ_BROWSER
+                )
                 return
             }
         }
@@ -103,10 +166,11 @@ class MainActivity : FlutterFragmentActivity() {
 
     private fun openDefaultAppsSettings() {
         try {
-            val i = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N)
+            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N)
                 Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS)
-            else Intent(Settings.ACTION_SETTINGS)
-            startActivity(i)
+            else
+                Intent(Settings.ACTION_SETTINGS)
+            startActivity(intent)
         } catch (e: Exception) {
             startActivity(Intent(Settings.ACTION_SETTINGS))
         }

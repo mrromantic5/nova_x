@@ -180,6 +180,9 @@ class _HomeScreenState extends State<HomeScreen>
     SubscriptionService.fetchStatus();   // reconcile premium / expiry on launch
     BrowseHeartbeat.start();
     WidgetsBinding.instance.addObserver(this);
+    // Register the native handler and the link callback BEFORE asking for the
+    // launch link, so a link arriving at any moment is never dropped.
+    DefaultBrowserService.init();
     DefaultBrowserService.onIncomingUrl = _openIncomingUrl;
     _handleDefaultBrowser();
     _subtitle = _buildSubtitle();
@@ -213,6 +216,11 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    // Stop receiving links; new ones are queued natively until a home screen
+    // mounts again and calls initialUrl().
+    if (DefaultBrowserService.onIncomingUrl == _openIncomingUrl) {
+      DefaultBrowserService.onIncomingUrl = null;
+    }
     BrowseHeartbeat.stop();
     _scrollCtrl.removeListener(_onScroll);
     _searchCtrl.removeListener(_onSearchChanged);
@@ -231,7 +239,14 @@ class _HomeScreenState extends State<HomeScreen>
     // When the user returns (e.g. after setting NOVA X as default), award once.
     if (state == AppLifecycleState.resumed) {
       DefaultBrowserService.checkAndAward();
+      _openQueuedUrl();
     }
+  }
+
+  /// Opens a link the native side queued while no callback was set.
+  Future<void> _openQueuedUrl() async {
+    final url = await DefaultBrowserService.initialUrl();
+    if (url != null && mounted) _openIncomingUrl(url);
   }
 
   // ── Default browser: open incoming links, first-run prompt, award ─────────
@@ -285,15 +300,10 @@ class _HomeScreenState extends State<HomeScreen>
                 style: GoogleFonts.inter(color: AppTheme.textHint)),
           ),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(context);
-              // Register callback so we get the role-dialog result.
-              DefaultBrowserService.onRoleResult = (granted) {
-                if (granted && mounted) {
-                  DefaultBrowserService.checkAndAward();
-                }
-              };
-              DefaultBrowserService.request();
+              // Awaits the system dialog and awards points if accepted.
+              await DefaultBrowserService.request();
             },
             style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFFFC83D),

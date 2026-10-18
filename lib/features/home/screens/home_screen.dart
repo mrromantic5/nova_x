@@ -285,7 +285,16 @@ class _HomeScreenState extends State<HomeScreen>
                 style: GoogleFonts.inter(color: AppTheme.textHint)),
           ),
           ElevatedButton(
-            onPressed: () { Navigator.pop(context); DefaultBrowserService.request(); },
+            onPressed: () {
+              Navigator.pop(context);
+              // Register callback so we get the role-dialog result.
+              DefaultBrowserService.onRoleResult = (granted) {
+                if (granted && mounted) {
+                  DefaultBrowserService.checkAndAward();
+                }
+              };
+              DefaultBrowserService.request();
+            },
             style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFFFC83D),
                 foregroundColor: Colors.black87),

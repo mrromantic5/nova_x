@@ -1,68 +1,47 @@
 // lib/core/services/default_browser_service.dart
 //
-// Bridges to the native default-browser APIs (RoleManager on Android 10+,
-// Default-apps settings on older). Also surfaces incoming http(s) links that
-// launched the app, and awards the one-time 5-point reward when NOVA X
-// actually becomes the default browser.
+// Bridge to MainActivity's default-browser channel:
+//   • isDefault()   — is NOVA X the system default browser right now?
+//   • request()     — shows the system "Set as default" dialog (Android 10+)
+//                     or opens Default apps settings (Android 7–9). On 10+ the
+//                     Future completes only after the user answers the dialog.
+//   • initialUrl()  — one-shot link that launched / was waiting for the app.
+//   • onIncomingUrl — callback for links that arrive while the app is open.
 //
-// Native side: MainActivity.kt (com.tlyfe.nova_x/default_browser channel)
-//
-// Method calls Flutter → Native:
-//   "isDefault"      → bool
-//   "request"        → void  (opens system dialog; result arrives via onRoleResult)
-//   "getInitialUrl"  → String?
-//
-// Method calls Native → Flutter:
-//   "onNewUrl"    (String url) — link opened while app is running
-//   "onRoleResult" (bool granted) — user dismissed the Android role dialog
+// Also awards the one-time 5-point reward when NOVA X becomes the default.
 
+import 'dart:async';
 import 'package:flutter/services.dart';
 import 'rewards_service.dart';
 
 class DefaultBrowserService {
   static const _ch = MethodChannel('com.tlyfe.nova_x/default_browser');
 
-  // ── Callbacks ──────────────────────────────────────────────────────────────
-
-  /// Called when another app opens a URL and NOVA X handles it while running.
+  /// Set by the home screen while it is mounted. Links that arrive while this
+  /// is null are kept natively and returned by [initialUrl] later.
   static void Function(String url)? onIncomingUrl;
 
-  /// Called after the Android role-request dialog closes (Android 10+ only).
-  /// `granted` is true if the user chose NOVA X.
-  static void Function(bool granted)? onRoleResult;
-
   static bool _handlerSet = false;
+  static Future<bool>? _requestInFlight;
 
-  // ── Internal ───────────────────────────────────────────────────────────────
-
-  static void _ensureHandler() {
+  /// Registers the native → Dart handler. Safe to call more than once.
+  static void init() {
     if (_handlerSet) return;
     _handlerSet = true;
-    _ch.setMethodCallHandler((call) async {
-      switch (call.method) {
-        case 'onNewUrl':
-          if (call.arguments is String) {
-            onIncomingUrl?.call(call.arguments as String);
-          }
-          break;
-        case 'onRoleResult':
-          final granted = call.arguments == true;
-          onRoleResult?.call(granted);
-          if (granted) {
-            // User just granted the role — claim the one-time reward.
-            await RewardsService.earn(RewardTaskKey.defaultBrowser);
-          }
-          break;
-      }
-      return null;
-    });
+    _ch.setMethodCallHandler(_onNativeCall);
   }
 
-  // ── Public API ─────────────────────────────────────────────────────────────
+  static Future<dynamic> _onNativeCall(MethodCall call) async {
+    if (call.method == 'onNewUrl' && call.arguments is String) {
+      final cb = onIncomingUrl;
+      if (cb == null) return false; // native side keeps it for initialUrl()
+      cb(call.arguments as String);
+      return true;
+    }
+    return false;
+  }
 
-  /// Returns true if NOVA X is currently the default browser.
   static Future<bool> isDefault() async {
-    _ensureHandler();
     try {
       return (await _ch.invokeMethod<bool>('isDefault')) ?? false;
     } catch (_) {
@@ -70,19 +49,49 @@ class DefaultBrowserService {
     }
   }
 
-  /// Opens the system dialog (Android 10+) or Default Apps settings (older)
-  /// to set NOVA X as the default browser.
-  /// On Android 10+, the result arrives via the [onRoleResult] callback.
-  static Future<void> request() async {
-    _ensureHandler();
-    try {
-      await _ch.invokeMethod('request');
-    } catch (_) {/* settings unavailable */}
+  /// Asks the system to make NOVA X the default browser.
+  /// Returns true if NOVA X is the default afterwards.
+  /// Concurrent taps share a single request (no stacked dialogs).
+  static Future<bool> request() {
+    return _requestInFlight ??=
+        _doRequest().whenComplete(() => _requestInFlight = null);
   }
 
-  /// URL that launched the app from another app (one-shot), or null.
+  static Future<bool> _doRequest() async {
+    init();
+    bool granted;
+    try {
+      granted = (await _ch
+              .invokeMethod<bool>('request')
+              // Safety net: never leave a spinner hanging if the dialog
+              // result is lost (e.g. "Don't keep activities" dev option).
+              .timeout(const Duration(minutes: 3))) ??
+          false;
+    } on TimeoutException {
+      granted = await isDefault();
+    } catch (_) {
+      granted = false;
+    }
+    if (granted) {
+      // Server enforces once-ever; safe to call repeatedly.
+      RewardsService.earn(RewardTaskKey.defaultBrowser);
+    }
+    return granted;
+  }
+
+  /// Opens the system Default apps screen directly.
+  static Future<bool> openSettings() async {
+    try {
+      return (await _ch.invokeMethod<bool>('openSettings')) ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Link that launched the app, or arrived before the home screen was ready.
+  /// One-shot: returns null on subsequent calls.
   static Future<String?> initialUrl() async {
-    _ensureHandler();
+    init();
     try {
       return await _ch.invokeMethod<String>('getInitialUrl');
     } catch (_) {
@@ -94,8 +103,7 @@ class DefaultBrowserService {
   static Future<bool> checkAndAward() async {
     final def = await isDefault();
     if (def) {
-      // Server enforces once-ever; safe to call repeatedly.
-      await RewardsService.earn(RewardTaskKey.defaultBrowser);
+      RewardsService.earn(RewardTaskKey.defaultBrowser);
     }
     return def;
   }

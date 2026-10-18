@@ -50,6 +50,13 @@ jobs:
           cp android/app/build.gradle /tmp/build_gradle_backup 2>/dev/null || true
           cp android/app/build.gradle.kts /tmp/build_gradle_kts_backup 2>/dev/null || true
 
+          # Backup our real MainActivity + themes. They are the source of truth
+          # for default-browser, links, shortcuts and biometrics — never replace them.
+          cp android/app/src/main/kotlin/com/tlyfe/nova_x/MainActivity.kt /tmp/MainActivity.kt.bak
+          mkdir -p /tmp/res_backup/values /tmp/res_backup/values-night
+          cp android/app/src/main/res/values/styles.xml       /tmp/res_backup/values/styles.xml
+          cp android/app/src/main/res/values-night/styles.xml /tmp/res_backup/values-night/styles.xml
+
           # Run flutter create to ensure all platform files are up to date.
           # --org com.tlyfe ensures it generates com/tlyfe/nova_x package.
           flutter create --platforms android --org com.tlyfe --project-name nova_x .
@@ -64,6 +71,14 @@ jobs:
           # Delete the wrong one entirely — only com/tlyfe/ should exist.
           rm -rf android/app/src/main/kotlin/com/example
           echo "✓ Deleted com/example/ (duplicate MainActivity removed)"
+
+          # Restore our MainActivity + themes (flutter create must not alter them)
+          mkdir -p android/app/src/main/kotlin/com/tlyfe/nova_x
+          cp /tmp/MainActivity.kt.bak android/app/src/main/kotlin/com/tlyfe/nova_x/MainActivity.kt
+          cp /tmp/res_backup/values/styles.xml       android/app/src/main/res/values/styles.xml
+          mkdir -p android/app/src/main/res/values-night
+          cp /tmp/res_backup/values-night/styles.xml android/app/src/main/res/values-night/styles.xml
+          echo "✓ Restored repo MainActivity.kt and styles.xml"
 
           # Verify only the correct package directory remains
           echo "=== Kotlin source dirs after cleanup ==="
@@ -339,6 +354,17 @@ jobs:
           echo "✓ compileSdk=36, targetSdk=36, minSdk=24, ndkVersion=27.0.12077973 applied"
           grep -E "compileSdk|targetSdk|minSdk|ndkVersion" "$F"
 
+      # ── AppCompat — required by the AppCompat themes (local_auth) ─────────
+      - name: Ensure AppCompat dependency
+        run: |
+          if ! grep -q "androidx.appcompat:appcompat" "$APP"; then
+            printf '\ndependencies {\n    implementation("androidx.appcompat:appcompat:1.7.0")\n}\n' >> "$APP"
+            echo "✓ appcompat added to $APP"
+          else
+            echo "appcompat already declared in $APP"
+          fi
+          grep -n "appcompat" "$APP"
+
       # ── Manifest patch ───────────────────────────────────────────────────
       # DO NOT add android:launchMode here — Flutter 3.27.4 already generates
       # it in the activity tag. Adding it again creates a duplicate XML
@@ -411,21 +437,34 @@ jobs:
           echo "✓ colors.xml created"
 
 
-      # ── App Shortcuts — long-press home screen icon ───────────────────────────
-      - name: Write MainActivity.kt with shortcut support
+      # ── MainActivity.kt — repo file is the source of truth ───────────────────
+      # This step used to OVERWRITE MainActivity.kt with a stub that only had
+      # the shortcuts channel. That stub removed the default-browser channel,
+      # the incoming-link handling and FlutterFragmentActivity, so every
+      # "Set as default" button silently did nothing, links opened only the
+      # home page, and biometric unlock failed. Now we only verify it.
+      - name: Verify MainActivity.kt (default browser + links + shortcuts)
         run: |
-          # Safety: nuke any leftover com/example/ directory that would cause
-          # "Redeclaration: class MainActivity" Kotlin compile error
           rm -rf android/app/src/main/kotlin/com/example
-          echo "✓ Ensured com/example/ is gone"
-
-          # Write our real MainActivity — base64 encoded to avoid YAML heredoc
-          # issues with unindented Kotlin code (which broke YAML parsing at L404)
-          mkdir -p android/app/src/main/kotlin/com/tlyfe/nova_x
-          echo "cGFja2FnZSBjb20udGx5ZmUubm92YV94CgppbXBvcnQgaW8uZmx1dHRlci5lbWJlZGRpbmcuYW5kcm9pZC5GbHV0dGVyQWN0aXZpdHkKaW1wb3J0IGlvLmZsdXR0ZXIuZW1iZWRkaW5nLmVuZ2luZS5GbHV0dGVyRW5naW5lCmltcG9ydCBpby5mbHV0dGVyLnBsdWdpbi5jb21tb24uTWV0aG9kQ2hhbm5lbAppbXBvcnQgYW5kcm9pZC5jb250ZW50LkludGVudAoKY2xhc3MgTWFpbkFjdGl2aXR5IDogRmx1dHRlckFjdGl2aXR5KCkgewogICAgY29tcGFuaW9uIG9iamVjdCB7IHByaXZhdGUgY29uc3QgdmFsIENIID0gImNvbS50bHlmZS5ub3ZhX3gvc2hvcnRjdXRzIiB9CiAgICBwcml2YXRlIHZhciBwZW5kaW5nID0gIiIKCiAgICBvdmVycmlkZSBmdW4gY29uZmlndXJlRmx1dHRlckVuZ2luZShmbHV0dGVyRW5naW5lOiBGbHV0dGVyRW5naW5lKSB7CiAgICAgICAgc3VwZXIuY29uZmlndXJlRmx1dHRlckVuZ2luZShmbHV0dGVyRW5naW5lKQogICAgICAgIHBlbmRpbmcgPSBpbnRlbnQ/LmFjdGlvbj8udGFrZUlmIHsgaXQuY29udGFpbnMoIm5vdmFfeC4iKSB9ID86ICIiCiAgICAgICAgTWV0aG9kQ2hhbm5lbChmbHV0dGVyRW5naW5lLmRhcnRFeGVjdXRvci5iaW5hcnlNZXNzZW5nZXIsIENIKQogICAgICAgICAgICAuc2V0TWV0aG9kQ2FsbEhhbmRsZXIgeyBjYWxsLCByZXN1bHQgLT4KICAgICAgICAgICAgICAgIGlmIChjYWxsLm1ldGhvZCA9PSAiZ2V0U2hvcnRjdXQiKSB7CiAgICAgICAgICAgICAgICAgICAgcmVzdWx0LnN1Y2Nlc3MocGVuZGluZyk7IHBlbmRpbmcgPSAiIgogICAgICAgICAgICAgICAgfSBlbHNlIHJlc3VsdC5ub3RJbXBsZW1lbnRlZCgpCiAgICAgICAgICAgIH0KICAgIH0KCiAgICBvdmVycmlkZSBmdW4gb25OZXdJbnRlbnQoaW50ZW50OiBJbnRlbnQpIHsKICAgICAgICBzdXBlci5vbk5ld0ludGVudChpbnRlbnQpCiAgICAgICAgc2V0SW50ZW50KGludGVudCkKICAgICAgICBwZW5kaW5nID0gaW50ZW50LmFjdGlvbj8udGFrZUlmIHsgaXQuY29udGFpbnMoIm5vdmFfeC4iKSB9ID86ICIiCiAgICB9Cn0K" | base64 -d > android/app/src/main/kotlin/com/tlyfe/nova_x/MainActivity.kt
-          echo "✓ MainActivity.kt written (package com.tlyfe.nova_x)"
-          echo "=== Only these .kt files should exist ==="
-          find android/app/src/main/kotlin -name "*.kt" | sort
+          F="android/app/src/main/kotlin/com/tlyfe/nova_x/MainActivity.kt"
+          test -f "$F" || { echo "::error::$F missing"; exit 1; }
+          for needle in \
+              "package com.tlyfe.nova_x" \
+              "FlutterFragmentActivity" \
+              "com.tlyfe.nova_x/default_browser" \
+              "com.tlyfe.nova_x/permissions" \
+              "com.tlyfe.nova_x/shortcuts" \
+              "createRequestRoleIntent" \
+              "onNewIntent"; do
+            grep -q "$needle" "$F" || { echo "::error::MainActivity.kt is missing: $needle"; exit 1; }
+          done
+          COUNT=$(find android/app/src/main/kotlin -name "MainActivity.kt" | wc -l)
+          [ "$COUNT" -eq 1 ] || { echo "::error::Expected 1 MainActivity.kt, found $COUNT"; exit 1; }
+          grep -q 'android:launchMode="singleTask"' android/app/src/main/AndroidManifest.xml \
+            || { echo "::error::MainActivity must use launchMode singleTask"; exit 1; }
+          grep -A1 'flutter_deeplinking_enabled' android/app/src/main/AndroidManifest.xml | grep -q 'android:value="false"' \
+            || { echo "::error::flutter_deeplinking_enabled must be false (browser links)"; exit 1; }
+          echo "✓ MainActivity.kt verified"
 
       - name: Create shortcut resources
         run: |

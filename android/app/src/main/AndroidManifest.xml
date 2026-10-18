@@ -52,25 +52,35 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Declares NOVA X as a web browser (default-browser eligible) -->
+            <!-- ══ Default-browser eligibility ════════════════════════════════
+                 Android requires ALL of these filters together for RoleManager
+                 ROLE_BROWSER to recognise an app as a browser candidate.
+                 The android:host="*" wildcard lets the filter match any URL,
+                 not just URLs whose host is literally empty.
+                 ═══════════════════════════════════════════════════════════ -->
+
+            <!-- Primary VIEW filter: every http/https URL with any host -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="http" />
-                <data android:scheme="https" />
+                <data android:scheme="http"  android:host="*" />
+                <data android:scheme="https" android:host="*" />
             </intent-filter>
+
+            <!-- APP_BROWSER category — required to appear in RoleManager list -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.APP_BROWSER" />
             </intent-filter>
+
+            <!-- MIME-type VIEW filter (for HTML files opened from file manager, etc.) -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="http" />
-                <data android:scheme="https" />
-                <data android:mimeType="text/html" />
+                <data android:scheme="http"  android:host="*" android:mimeType="text/html" />
+                <data android:scheme="https" android:host="*" android:mimeType="text/html" />
                 <data android:mimeType="text/plain" />
                 <data android:mimeType="application/xhtml+xml" />
             </intent-filter>

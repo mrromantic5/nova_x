@@ -5,23 +5,8 @@
 //
 // NO external permission_handler dependency — uses only:
 //   • firebase_messaging (already in pubspec) for notifications
-//   • MethodChannel 'com.tlyfe.nova_x/default_browser' (already in MainActivity) for browser
-//   • MethodChannel 'com.tlyfe.nova_x/permissions' (add to MainActivity — see below) for mic
-//
-// ─── Add to MainActivity.kt inside configureFlutterEngine() ──────────────────
-//   MethodChannel(flutterEngine.dartExecutor.binaryMessenger,
-//       "com.tlyfe.nova_x/permissions").setMethodCallHandler { call, result ->
-//     when (call.method) {
-//       "requestMicrophone" -> {
-//         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-//           requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 9001)
-//         }
-//         result.success(true)
-//       }
-//       else -> result.notImplemented()
-//     }
-//   }
-// ─────────────────────────────────────────────────────────────────────────────
+//   • MethodChannel 'com.tlyfe.nova_x/default_browser' (MainActivity) for browser
+//   • MethodChannel 'com.tlyfe.nova_x/permissions'    (MainActivity) for mic
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -30,13 +15,13 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:nova_x/core/theme/app_theme.dart';
+import 'package:nova_x/core/services/default_browser_service.dart';
 import 'package:nova_x/features/home/screens/home_screen.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Channels (match exactly what MainActivity already uses)
+// Permission channel (mic)
 // ─────────────────────────────────────────────────────────────────────────────
-const _browserChannel = MethodChannel('com.tlyfe.nova_x/default_browser');
-const _permChannel    = MethodChannel('com.tlyfe.nova_x/permissions');
+const _permChannel = MethodChannel('com.tlyfe.nova_x/permissions');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Slide data
@@ -81,6 +66,9 @@ const _slides = [
   ),
 ];
 
+// Index of the default-browser slide
+const _kBrowserSlide = 2;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Screen
 // ─────────────────────────────────────────────────────────────────────────────
@@ -95,8 +83,14 @@ class _PermissionSlidesScreenState extends State<PermissionSlidesScreen>
     with TickerProviderStateMixin {
 
   final PageController _pageCtrl = PageController();
-  int  _currentIndex = 0;
-  bool _loading      = false;
+  int  _currentIndex  = 0;
+  bool _loading       = false;
+
+  // Browser-slide state
+  // true  → system dialog was opened; waiting for onRoleResult OR app-resume check
+  bool _browserDialogOpened = false;
+  // true  → NOVA X is confirmed default (show "Continue" instead of "Set as default")
+  bool _isDefaultBrowser    = false;
 
   late final List<AnimationController> _animCtrl;
   late final List<Animation<double>>   _fadeAnim;
@@ -124,13 +118,66 @@ class _PermissionSlidesScreenState extends State<PermissionSlidesScreen>
     ).toList();
 
     _animCtrl[0].forward();
+
+    // Listen for the Android 10+ role-dialog result
+    DefaultBrowserService.onRoleResult = _onRoleResult;
   }
 
   @override
   void dispose() {
+    // Clear the callback so it isn't called after this screen is gone
+    DefaultBrowserService.onRoleResult = null;
     _pageCtrl.dispose();
     for (final c in _animCtrl) c.dispose();
     super.dispose();
+  }
+
+  // ── Called by DefaultBrowserService when the Android role dialog closes ────
+  void _onRoleResult(bool granted) {
+    if (!mounted) return;
+    if (granted) {
+      setState(() => _isDefaultBrowser = true);
+      // Small delay so the user sees the "✓ Set!" state, then advance
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (mounted) _advance();
+      });
+    } else {
+      // User dismissed without granting — allow them to try again or skip
+      setState(() {
+        _loading             = false;
+        _browserDialogOpened = false;
+      });
+    }
+  }
+
+  // ── Called when the app comes back to foreground (older Android flow) ───────
+  // On Android 9 and below we open Default Apps settings; there is no callback.
+  // We check the actual status when the user returns to the app.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        _currentIndex == _kBrowserSlide &&
+        _browserDialogOpened &&
+        !_isDefaultBrowser) {
+      _checkBrowserStatus();
+    }
+  }
+
+  Future<void> _checkBrowserStatus() async {
+    final isDef = await DefaultBrowserService.isDefault();
+    if (!mounted) return;
+    if (isDef) {
+      setState(() => _isDefaultBrowser = true);
+      Future.delayed(const Duration(milliseconds: 600), () {
+        if (mounted) _advance();
+      });
+    } else {
+      // Still not default — let user retry or skip
+      setState(() {
+        _loading             = false;
+        _browserDialogOpened = false;
+      });
+    }
   }
 
   // ── Navigation ─────────────────────────────────────────────────────────────
@@ -162,24 +209,30 @@ class _PermissionSlidesScreenState extends State<PermissionSlidesScreen>
     );
   }
 
-  // ── Permission handlers — zero external packages ───────────────────────────
+  // ── Permission handlers ────────────────────────────────────────────────────
   Future<void> _handlePrimary(int index) async {
+    if (index == _kBrowserSlide) {
+      await _handleDefaultBrowser();
+      // Do NOT call _advance() here — the browser slide advances via _onRoleResult
+      // or _checkBrowserStatus when the user returns from system settings.
+      return;
+    }
+
     setState(() => _loading = true);
     try {
       switch (index) {
         case 0: await _requestNotifications(); break;
         case 1: await _requestMicrophone();    break;
-        case 2: await _openDefaultBrowser();   break;
       }
     } catch (_) {
-      // Never block the user — if permission call fails just advance
+      // Never block the user — if the permission call fails, advance anyway
     } finally {
       if (mounted) setState(() => _loading = false);
       _advance();
     }
   }
 
-  // Slide 1 — Notifications via firebase_messaging (already in pubspec)
+  // Slide 1 — Notifications via firebase_messaging
   Future<void> _requestNotifications() async {
     await FirebaseMessaging.instance.requestPermission(
       alert:         true,
@@ -192,23 +245,33 @@ class _PermissionSlidesScreenState extends State<PermissionSlidesScreen>
     );
   }
 
-  // Slide 2 — Microphone via native MethodChannel (no permission_handler needed)
-  // Add the handler to MainActivity.kt — snippet is in the file header above.
+  // Slide 2 — Microphone via native MethodChannel
   Future<void> _requestMicrophone() async {
     try {
       await _permChannel.invokeMethod('requestMicrophone');
     } on MissingPluginException {
-      // Channel not yet wired in MainActivity — safe to ignore, advance anyway
+      // Channel not yet wired in MainActivity — safe to ignore
     }
   }
 
-  // Slide 3 — Default browser via existing MainActivity channel
-  Future<void> _openDefaultBrowser() async {
-    try {
-      await _browserChannel.invokeMethod('request');
-    } on MissingPluginException {
-      // Fallback — ignore
+  // Slide 3 — Default browser
+  //   Android 10+: opens the role dialog → result arrives in _onRoleResult
+  //   Android 9-: opens Default Apps settings → result checked in didChangeAppLifecycleState
+  Future<void> _handleDefaultBrowser() async {
+    if (_isDefaultBrowser) {
+      // Already set (unlikely here but guard anyway)
+      _advance();
+      return;
     }
+    setState(() {
+      _loading             = true;
+      _browserDialogOpened = true;
+    });
+    await DefaultBrowserService.request();
+    // Do NOT set _loading = false here.
+    // • Android 10+: loading stays true until _onRoleResult fires.
+    // • Android 9-: loading stays true until _checkBrowserStatus resolves.
+    // Both will reset _loading if the user dismisses without granting.
   }
 
   // ── Build ──────────────────────────────────────────────────────────────────
@@ -223,7 +286,13 @@ class _PermissionSlidesScreenState extends State<PermissionSlidesScreen>
             physics: const NeverScrollableScrollPhysics(),
             itemCount: _slides.length,
             onPageChanged: (i) {
-              setState(() => _currentIndex = i);
+              setState(() {
+                _currentIndex = i;
+                // Reset browser slide state if user somehow jumps back
+                if (i != _kBrowserSlide) {
+                  _browserDialogOpened = false;
+                }
+              });
               _animCtrl[i].forward(from: 0);
             },
             itemBuilder: (_, i) => _SlidePage(
@@ -259,12 +328,13 @@ class _PermissionSlidesScreenState extends State<PermissionSlidesScreen>
             left:   0,
             right:  0,
             bottom: 0,
-            child:  _BottomBar(
-              slides:       _slides,
-              currentIndex: _currentIndex,
-              loading:      _loading,
-              onPrimary:    () => _handlePrimary(_currentIndex),
-              onSkip:       _advance,
+            child: _BottomBar(
+              slides:           _slides,
+              currentIndex:     _currentIndex,
+              loading:          _loading,
+              isDefaultBrowser: _isDefaultBrowser,
+              onPrimary:        () => _handlePrimary(_currentIndex),
+              onSkip:           _advance,
             ),
           ),
         ],
@@ -360,6 +430,7 @@ class _BottomBar extends StatelessWidget {
   final List<_PermSlide> slides;
   final int              currentIndex;
   final bool             loading;
+  final bool             isDefaultBrowser;
   final VoidCallback     onPrimary;
   final VoidCallback     onSkip;
 
@@ -367,15 +438,24 @@ class _BottomBar extends StatelessWidget {
     required this.slides,
     required this.currentIndex,
     required this.loading,
+    required this.isDefaultBrowser,
     required this.onPrimary,
     required this.onSkip,
   });
 
   @override
   Widget build(BuildContext context) {
-    final accent = slides[currentIndex].accentColor;
-    final label  = slides[currentIndex].primaryLabel;
-    final isLast = currentIndex == slides.length - 1;
+    final accent  = slides[currentIndex].accentColor;
+    final isLast  = currentIndex == slides.length - 1;
+
+    // On the browser slide: show "✓ NOVA X is your default browser" if set,
+    // otherwise show the normal label.
+    final String label;
+    if (currentIndex == _kBrowserSlide && isDefaultBrowser) {
+      label = '✓ NOVA X is your default browser';
+    } else {
+      label = slides[currentIndex].primaryLabel;
+    }
 
     return Container(
       padding: EdgeInsets.only(
@@ -449,7 +529,7 @@ class _BottomBar extends StatelessWidget {
                   borderRadius: BorderRadius.circular(16),
                   onTap: loading ? null : onPrimary,
                   child: Center(
-                    child: loading
+                    child: loading && !isDefaultBrowser
                         ? const SizedBox(
                             width:  22,
                             height: 22,

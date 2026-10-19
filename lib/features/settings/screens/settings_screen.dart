@@ -15,6 +15,7 @@ import 'package:nova_x/core/theme/app_theme.dart';
 import '../../profile/screens/profile_screen.dart';
 import '../../customization/screens/customization_screen.dart';
 import '../../customization/screens/speed_dial_editor_screen.dart';
+import '../../nova/screens/nova_settings_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -237,6 +238,14 @@ class _SettingsScreenState extends State<SettingsScreen>
           ]),
 
           // ── Privacy ────────────────────────────────────────────────────
+          // ── NOVA Assistant ────────────────────────────────────────────────────
+          _sectionHeader('NOVA Assistant'),
+          _card([
+            _navTile(Icons.auto_awesome_rounded, 'NOVA Assistant',
+                'Voice, digital assistant & permissions', AppTheme.accentCyan,
+                () => _push(const NovaSettingsScreen())),
+          ]),
+
           // ── NOVA Shield ───────────────────────────────────────────────────────
           _sectionHeader('NOVA Shield'),
           GestureDetector(

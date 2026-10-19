@@ -14,6 +14,8 @@ import 'features/business/screens/business_screen.dart';
 import 'features/notifications/screens/notifications_screen.dart';
 import 'package:nova_x/core/services/advert_service.dart';
 import 'features/browser/screens/browser_view.dart';
+import 'features/nova/nova_overlay.dart';
+import 'features/nova/services/nova_prefs.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -37,6 +39,19 @@ void main() async {
   await Firebase.initializeApp();
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   runApp(const ProviderScope(child: NovaXApp()));
+}
+
+/// Entrypoint of NOVA's floating assistant window (NovaAssistActivity, via
+/// the manifest meta-data io.flutter.Entrypoint = novaAssistantMain).
+/// Runs in its own engine. It must NOT call setPreferredOrientations: the
+/// window is translucent and Android 8.0 rejects orientation requests from
+/// translucent activities.
+@pragma('vm:entry-point')
+Future<void> novaAssistantMain() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await LocalDB.initialize(); // search engine preference for web searches
+  final settings = await NovaPrefs.load();
+  runApp(NovaAssistantApp(settings: settings));
 }
 
 class NovaXApp extends StatefulWidget {

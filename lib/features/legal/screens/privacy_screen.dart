@@ -252,10 +252,24 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                     'We use Firebase Cloud Messaging (FCM) for push notifications. '
                     'Firebase may collect device tokens and notification delivery '
                     'data. Google\'s Privacy Policy applies.'),
-                _sub('BRAINS JET AI',
-                    'The AI assistant feature sends your queries to external AI '
-                    'APIs (including OpenRouter). Do not share sensitive personal '
+                _sub('NOVA AI',
+                    'NOVA sends your messages, the recent turns of the current '
+                    'conversation and, when you use voice, a short recording to the '
+                    'NOVA AI service run by Tech Lyfe, which uses third-party AI '
+                    'processing to produce replies and transcripts. Recordings are '
+                    'deleted from your phone after they are sent and conversations are '
+                    'not saved on your phone. Contacts used for "call" requests are '
+                    'searched on your phone only. Do not share sensitive personal '
                     'information in AI conversations.'),
+                _sub('NOVA Voice and "Hey NOVA"',
+                    'Spoken replies are created by the Brains Jet voice service: the '
+                    'text of the reply is sent to it and an audio file is played back. '
+                    'If that service is unavailable, your phone\'s own voice is used. '
+                    '"Hey NOVA" is off until you turn it on. While it is on, NOVA '
+                    'checks microphone sound on your phone for the wake phrase; this '
+                    'sound is analysed in memory and is not recorded, stored or sent. '
+                    'A notification is shown the whole time, and you can turn it off '
+                    'from that notification or in NOVA settings.'),
                 _sub('Image Generation',
                     'The /image command sends prompts to Pollinations.ai for '
                     'image generation. Pollinations.ai\'s privacy policy applies '

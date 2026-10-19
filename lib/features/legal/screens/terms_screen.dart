@@ -177,7 +177,7 @@ class _TermsScreenState extends State<TermsScreen> {
                   '• Secure web browsing with privacy controls\n'
                   '• Incognito/private browsing mode\n'
                   '• Business directory listing and discovery\n'
-                  '• AI-powered assistant (BRAINS JET AI)\n'
+                  '• AI-powered assistant (NOVA AI)\n'
                   '• Cloud bookmark and history sync\n'
                   '• Push notifications and alerts\n'
                   '• Password management (encrypted local storage)\n'
@@ -260,7 +260,7 @@ class _TermsScreenState extends State<TermsScreen> {
               _section('6.  Intellectual Property', Icons.copyright_rounded,
                   AppTheme.accentPurple,
                   'All content within NOVA X — including the app design, graphics, '
-                  'logo, name, branding, source code, and BRAINS JET AI — is the '
+                  'logo, name, branding, source code, and NOVA AI — is the '
                   'exclusive property of Tech Lyfe Team and is protected by '
                   'applicable copyright, trademark, and intellectual property laws.\n\n'
                   'You are granted a limited, non-exclusive, non-transferable, '

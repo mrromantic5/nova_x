@@ -47,6 +47,17 @@ android {
             shrinkResources false
         }
     }
+
+    // "Hey NOVA" (sherpa-onnx): only the JNI library and ONNX Runtime for ARM
+    // phones are needed; the rest of the AAR's native libraries are left out.
+    packaging {
+        jniLibs.excludes.add("**/libsherpa-onnx-c-api.so")
+        jniLibs.excludes.add("**/libsherpa-onnx-cxx-api.so")
+        jniLibs.excludes.add("lib/x86/libsherpa-onnx-jni.so")
+        jniLibs.excludes.add("lib/x86/libonnxruntime.so")
+        jniLibs.excludes.add("lib/x86_64/libsherpa-onnx-jni.so")
+        jniLibs.excludes.add("lib/x86_64/libonnxruntime.so")
+    }
 }
 
 flutter {
@@ -57,4 +68,8 @@ dependencies {
     // Required by the AppCompat themes in res/values/styles.xml
     // (local_auth on FlutterFragmentActivity needs an AppCompat theme).
     implementation("androidx.appcompat:appcompat:1.7.0")
+
+    // "Hey NOVA" on-device wake word engine (sherpa-onnx 1.13.8, Apache-2.0).
+    // CI downloads it (SHA-256 checked). Local builds: see NOVA_DEPLOYMENT_GUIDE.md.
+    implementation(files("libs/sherpa-onnx-1.13.8.aar"))
 }

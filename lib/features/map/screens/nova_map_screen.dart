@@ -14,6 +14,7 @@ import 'package:nova_x/core/theme/app_theme.dart';
 import 'package:nova_x/core/services/rewards_entitlements.dart';
 import 'package:nova_x/features/premium/screens/subscription_screen.dart';
 import 'package:nova_x/features/map/map_premium_gate.dart';
+import 'package:nova_x/features/nova/services/nova_wake.dart';
 
 // ── Map styles ────────────────────────────────────────────────────────────────
 const String _kDarkStyle = '''[
@@ -133,16 +134,22 @@ class _NovaMapScreenState extends State<NovaMapScreen>
   Future<void> _toggleVoice() async {
     if (_listening) {
       await _speech.stop();
+      NovaWake.resumeAfterOtherMic('stt_map');
       setState(() => _listening = false);
       return;
     }
     if (!_speechReady) { _snack('Microphone not available'); return; }
     setState(() => _listening = true);
+    // "Hey NOVA" steps aside (released after 12 s at the latest).
+    await NovaWake.pauseForOtherMic('stt_map', max: const Duration(seconds: 12));
     await _speech.listen(
       onResult: (r) {
         _searchCtrl.text = r.recognizedWords;
         _onSearchChanged(r.recognizedWords);
-        if (r.finalResult) setState(() => _listening = false);
+        if (r.finalResult) {
+          NovaWake.resumeAfterOtherMic('stt_map');
+          setState(() => _listening = false);
+        }
       },
       listenFor: const Duration(seconds: 10),
       localeId: 'en_US',

@@ -12,6 +12,22 @@
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.USE_FINGERPRINT" />
 
+    <!-- NOVA: read contacts only when the user asks NOVA to call someone by
+         name (runtime-requested at that moment; searched on-device only). -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+
+    <!-- NOVA "Hey NOVA" wake word (off until the user turns it on in NOVA
+         settings): an on-device detector in a microphone foreground service
+         with a visible notification. Audio is analysed in memory only. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Optional, user-granted in system settings: lets "Hey NOVA" open the
+         NOVA panel directly over other apps (otherwise NOVA shows a
+         notification to tap). -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
     <!-- See installed browsers / be eligible as default browser (Android 11+ visibility) -->
     <queries>
         <intent>
@@ -23,6 +39,15 @@
             <action android:name="android.intent.action.VIEW" />
             <category android:name="android.intent.category.BROWSABLE" />
             <data android:scheme="https" />
+        </intent>
+        <!-- NOVA: on-device text-to-speech engine (required on Android 11+). -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <!-- NOVA: "open <app>" — resolve the spoken app name locally. -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
         </intent>
     </queries>
 
@@ -86,6 +111,46 @@
                 <data android:mimeType="application/xhtml+xml" />
             </intent-filter>
         </activity>
+
+        <!-- NOVA floating assistant. Shown when the user invokes the system
+             digital assistant (long-press Home / hold power / assistant
+             gesture) with NOVA X selected as "Digital assistant app".
+             Runs the Dart entrypoint novaAssistantMain on a transparent
+             window. Declared AFTER MainActivity on purpose: the CI inserts
+             the FCM and shortcut filters at the first closing intent-filter
+             and activity tags, which must stay MainActivity's. -->
+        <activity
+            android:name=".NovaAssistActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:taskAffinity="com.tlyfe.nova_x.assistant"
+            android:excludeFromRecents="true"
+            android:theme="@style/NovaAssistTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+
+            <meta-data
+                android:name="io.flutter.Entrypoint"
+                android:value="novaAssistantMain" />
+            <meta-data
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NovaAssistTheme" />
+            <meta-data
+                android:name="flutter_deeplinking_enabled"
+                android:value="false" />
+
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- NOVA wake word listener (started only while NOVA X is visible). -->
+        <service
+            android:name=".nova.NovaWakeService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <!-- Flutter embedding v2 -->
         <meta-data

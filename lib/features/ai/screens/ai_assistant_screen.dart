@@ -1,12 +1,16 @@
 // lib/features/ai/screens/ai_assistant_screen.dart
 //
-// NOVA X — BRAINS JET AI Screen
+// NOVA X — NOVA AI chat screen
+// v3.0.0 — Brains Jet AI replaced by the NOVA AI API (Tech Lyfe Cloudflare
+// Worker, lib/features/nova/services/nova_api.dart). No AI keys live in the
+// app any more. Image (/image) and video (/video) generation are unchanged.
+// Voice: the mic records a short clip that NOVA transcribes; replies are read
+// aloud with the Brains Jet voice ("libby"), or the phone's own voice when the
+// voice service is unavailable.
 // v2.1.0 — AI content flag/report added for Google Play policy compliance.
-// Verified clean: all string literals, imports, and null-safety checked.
 
+import 'dart:async';
 import 'dart:io';
-import 'dart:math';
-import 'package:audioplayers/audioplayers.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -15,8 +19,13 @@ import 'package:nova_x/core/services/rewards_service.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
 import 'package:nova_x/features/ai/widgets/ai_flag_sheet.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:nova_x/features/nova/controller/nova_controller.dart';
+import 'package:nova_x/features/nova/nova_config.dart';
+import 'package:nova_x/features/nova/services/nova_api.dart';
+import 'package:nova_x/features/nova/services/nova_native.dart';
+import 'package:nova_x/features/nova/services/nova_voice.dart';
+import 'package:nova_x/features/nova/services/nova_wake.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:speech_to_text/speech_to_text.dart';
 
 class AiAssistantScreen extends StatefulWidget {
   const AiAssistantScreen({super.key});
@@ -31,32 +40,32 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
   final TextEditingController     _ctrl   = TextEditingController();
   final ScrollController          _scroll = ScrollController();
 
-  bool    _loading     = false;
-  bool    _isSpeaking  = false;
-  bool    _isListening = false;
+  bool    _loading      = false;
+  bool    _isSpeaking   = false;
+  bool    _isListening  = false;
+  bool    _transcribing = false;
   String? _speakingId;
+  String? _utteranceId;
 
-  final Dio         _dio    = Dio(BaseOptions(
+  // Used only by image / video generation (unchanged).
+  final Dio _dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 15),
     receiveTimeout: const Duration(seconds: 30),
   ));
-  final AudioPlayer  _player = AudioPlayer();
-  final SpeechToText _speech = SpeechToText();
-  bool _speechAvail = false;
 
-  // ── API endpoints ──────────────────────────────────────────────────────────
-  static const String _textApi  =
-      'https://brains-jet-ai.brainsjetai.workers.dev/?model=openai/gpt-oss-20b&q=';
-  static const String _ttsApi   =
-      'https://brains-tts.brainsjetai.workers.dev/';
+  // NOVA AI (chat + transcription) and the on-device voice.
+  final NovaApiClient _nova   = NovaApiClient();
+  final NovaNativeApi _native = NovaNative.instance;
+  StreamSubscription<NovaNativeEvent>? _nativeSub;
+  final NovaBrainsVoice _voice = NovaBrainsVoice(native: NovaNative.instance);
+  StreamSubscription<String>? _voiceSub;
+  CancelToken? _chatCancel;
+
+  // ── API endpoints (image & video generation — unchanged) ───────────────────
   static const String _imageApi =
       'https://ab-text-toimgfast.abrahamdw882.workers.dev/?text=';
   static const String _videoApi =
       'https://eliteprotech-apis.zone.id/aivideo?q=';
-  static const String _orUrl    =
-      'https://openrouter.ai/api/v1/chat/completions';
-  static const String _orKey    =
-      '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';
 
   static const List<String> _suggestions = [
     'Summarise a news article',
@@ -68,92 +77,142 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
 
   // ── Welcome message ────────────────────────────────────────────────────────
   static const String _welcome =
-      '\u{1F44B} Hi! I\'m BRAINS JET AI.\n\n'
+      '\u{1F44B} Hi! I\'m NOVA AI, your assistant in NOVA X.\n\n'
       '\u2022 Ask me anything\n'
       '\u2022 Type /image [description] to generate an image\n'
       '\u2022 Type /video [description] to generate a video\n'
-      '\u2022 Tap \u{1F50A} on any reply to hear it read aloud\n'
+      '\u2022 Tap \u{1F3A4} to talk, or \u{1F50A} on any reply to hear it\n'
       '\u2022 Tap \u{1F6A9} to report any content that seems inappropriate';
 
   @override
   void initState() {
     super.initState();
-    _initSpeech();
-    _player.onPlayerComplete.listen((_) {
-      if (mounted) setState(() { _isSpeaking = false; _speakingId = null; });
+    _nativeSub = _native.events.listen(_onNativeEvent);
+    // "Hey NOVA" pauses while the chat is open (it has its own mic button).
+    NovaWake.hold('chat', true);
+    _voiceSub = _voice.completed.listen((id) {
+      if (mounted && id == _utteranceId) {
+        setState(() { _isSpeaking = false; _speakingId = null; _utteranceId = null; });
+      }
     });
     _msgs.add({'id': 'welcome', 'role': 'assistant', 'content': _welcome});
   }
 
   @override
   void dispose() {
+    _nativeSub?.cancel();
+    _chatCancel?.cancel();
+    if (_isListening) _native.cancelRecording();
+    _voiceSub?.cancel();
+    if (_isSpeaking) _voice.stop();
+    _voice.dispose();
+    NovaWake.hold('chat', false);
     _ctrl.dispose();
     _scroll.dispose();
-    _player.dispose();
     _dio.close(force: false);
-    _speech.stop();
+    _nova.dispose();
     super.dispose();
   }
 
-  // ── Speech ─────────────────────────────────────────────────────────────────
-  Future<void> _initSpeech() async {
-    _speechAvail = await _speech.initialize(
-      onError: (_) { if (mounted) setState(() => _isListening = false); },
-    );
-  }
-
-  Future<void> _toggleListen() async {
-    if (!_speechAvail) { _snack('Microphone unavailable'); return; }
-    HapticFeedback.mediumImpact();
-    if (_isListening) {
-      await _speech.stop();
-      if (mounted) setState(() => _isListening = false);
-    } else {
-      setState(() => _isListening = true);
-      await _speech.listen(
-        onResult: (r) {
-          if (r.finalResult && r.recognizedWords.isNotEmpty) {
-            if (mounted) setState(() => _isListening = false);
-            _ctrl.text = r.recognizedWords;
-            _send(r.recognizedWords);
-          }
-        },
-        localeId:       'en_US',
-        cancelOnError:  true,
-        partialResults: false,
-      );
+  void _onNativeEvent(NovaNativeEvent e) {
+    if (!mounted) return;
+    if (e is NovaTtsEvent) {
+      if (e.kind != 'start' && e.utteranceId == _utteranceId) {
+        setState(() { _isSpeaking = false; _speakingId = null; _utteranceId = null; });
+      }
+    } else if (e is NovaRecordingStoppedEvent) {
+      if (_isListening) _stopAndTranscribe(e.reason);
     }
   }
 
-  // ── TTS ────────────────────────────────────────────────────────────────────
+  // ── Voice input (NOVA records → NOVA AI transcribes) ──────────────────────
+  Future<void> _toggleListen() async {
+    HapticFeedback.mediumImpact();
+    if (_transcribing) return;
+    if (_isListening) {
+      await _stopAndTranscribe('manual');
+      return;
+    }
+    if (_isSpeaking) await _stopSpeaking();
+
+    var start = await _native.startRecording(
+        maxSeconds: NovaConfig.maxRecordingSeconds, autoStop: true);
+    if (start.status == 'permission_required') {
+      final granted = await _native.requestPermission('microphone');
+      if (!granted) {
+        _snack('Microphone permission is needed for voice input');
+        return;
+      }
+      start = await _native.startRecording(
+          maxSeconds: NovaConfig.maxRecordingSeconds, autoStop: true);
+    }
+    if (start.status != 'recording') {
+      if (start.status != 'busy') _snack(start.message ?? 'Microphone unavailable');
+      return;
+    }
+    if (mounted) setState(() => _isListening = true);
+  }
+
+  Future<void> _stopAndTranscribe(String reason) async {
+    if (!_isListening) return;
+    setState(() { _isListening = false; _transcribing = true; });
+    final rec  = await _native.stopRecording();
+    final path = rec.path;
+    try {
+      final silent = !rec.hadSpeech && reason != 'manual';
+      if (reason == 'interrupted' || !rec.usable || path == null || silent ||
+          rec.durationMs < NovaConfig.minRecordingMs) {
+        if (reason != 'interrupted') {
+          _snack('I didn\'t catch that. Tap the mic and try again.');
+        }
+        return;
+      }
+      final text = await _nova.transcribe(path);
+      if (!mounted) return;
+      if (text.isEmpty) {
+        _snack('I didn\'t catch that. Tap the mic and try again.');
+        return;
+      }
+      _ctrl.text = text;
+      await _send(text);
+    } on NovaApiException catch (e) {
+      if (e.kind != NovaApiErrorKind.cancelled) _snack(e.userMessage);
+    } finally {
+      if (path != null) {
+        try {
+          final f = File(path);
+          if (f.existsSync()) f.deleteSync(); // recordings are never kept
+        } catch (_) {}
+      }
+      if (mounted) setState(() => _transcribing = false);
+    }
+  }
+
+  // ── TTS (Brains Jet voice, phone voice as fallback) ──────────────────────────────────────────────────
   Future<void> _speakMessage(String id, String text) async {
     HapticFeedback.lightImpact();
     if (_isSpeaking && _speakingId == id) {
-      await _player.stop();
-      if (mounted) setState(() { _isSpeaking = false; _speakingId = null; });
+      await _stopSpeaking();
       return;
     }
-    await _player.stop();
-    if (mounted) setState(() { _isSpeaking = true; _speakingId = id; });
-    try {
-      final clean = text
-          .replaceAll(RegExp(r'\*+'), '')
-          .replaceAll('#', '')
-          .replaceAll(RegExp(r'\n+'), ' ')
-          .trim();
-      final snippet = clean.substring(0, min(clean.length, 400));
-      final res = await _dio.get(
-        _ttsApi,
-        queryParameters: {'q': snippet, 'voicename': 'libby'},
-      );
-      final audioUrl = res.data?['url'] as String?;
-      if (audioUrl != null && audioUrl.isNotEmpty) {
-        await _player.play(UrlSource(audioUrl));
-      } else {
-        throw Exception('No audio URL returned');
-      }
-    } catch (_) {
-      if (mounted) setState(() { _isSpeaking = false; _speakingId = null; });
+    await _voice.stop();
+    final utterance = 'chat_${id}_${DateTime.now().millisecondsSinceEpoch}';
+    if (mounted) {
+      setState(() { _isSpeaking = true; _speakingId = id; _utteranceId = utterance; });
+    }
+    final ok = await _voice.speak(
+        NovaController.speakable(text, maxChars: 3500), utterance);
+    // Not started — unless the user stopped it or picked another reply meanwhile.
+    if (!ok && mounted && _utteranceId == utterance) {
+      setState(() { _isSpeaking = false; _speakingId = null; _utteranceId = null; });
+      _snack('No voice is available right now');
+    }
+  }
+
+  Future<void> _stopSpeaking() async {
+    await _voice.stop();
+    if (mounted) {
+      setState(() { _isSpeaking = false; _speakingId = null; _utteranceId = null; });
     }
   }
 
@@ -163,25 +222,46 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
     showAiFlagSheet(context, contentType: contentType, contentRef: contentRef);
   }
 
-  // ── Identity guard ─────────────────────────────────────────────────────────
-  String _sanitize(String reply, String query) {
-    final q = query.toLowerCase();
-    if (RegExp(r'\b(who|what).*(creat|made|develop|owner|built)\b')
-        .hasMatch(q)) {
-      return 'I am BRAINS JET AI, created and developed by Kobby '
-          '(Mr. Romantic), CEO of Tech Lyfe Team. How can I help you?';
+  // ── Conversation history for NOVA AI (bounded, text turns only) ───────────
+  List<Map<String, String>> _history() {
+    final out = <Map<String, String>>[];
+    for (final m in _msgs) {
+      final id      = m['id'] ?? '';
+      final role    = m['role'] ?? '';
+      final content = (m['content'] ?? '').trim();
+      if (id == 'welcome' || id == 'cleared' || content.isEmpty) continue;
+      if (role != 'user' && role != 'assistant') continue;
+      if (m['error'] == 'true') continue;
+      if (content.startsWith('[IMAGE]') || content.startsWith('[VIDEO]') ||
+          content.startsWith('[LOADING_VIDEO]')) {
+        continue;
+      }
+      final lower = content.toLowerCase();
+      if (role == 'user' &&
+          (lower.startsWith('/image ') || lower.startsWith('/video '))) {
+        continue;
+      }
+      out.add({
+        'role':    role,
+        'content': content.length > NovaConfig.maxHistoryChars
+            ? content.substring(0, NovaConfig.maxHistoryChars)
+            : content,
+      });
     }
-    return reply.isEmpty ? 'No response received. Please try again.' : reply;
+    return out.length > NovaConfig.maxHistoryMessages
+        ? out.sublist(out.length - NovaConfig.maxHistoryMessages)
+        : out;
   }
 
   // ── Send message ────────────────────────────────────────────────────────────
   Future<void> _send(String text) async {
     final t = text.trim();
-    if (t.isEmpty) return;
+    if (t.isEmpty || _loading) return;
 
     // Fire-and-forget earn call — result not needed
     RewardsService.earn(RewardTaskKey.useAi);
 
+    final history = _history(); // previous turns only
     _ctrl.clear();
     HapticFeedback.lightImpact();
 
@@ -194,7 +274,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
     }
     _scrollEnd();
 
-    // Image generation
+    // Image generation (unchanged)
     if (t.toLowerCase().startsWith('/image ')) {
       final prompt =
           t.replaceFirst(RegExp(r'^/image\s+', caseSensitive: false), '');
@@ -211,7 +291,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
       return;
     }
 
-    // Video generation
+    // Video generation (unchanged)
     if (t.toLowerCase().startsWith('/video ')) {
       final prompt =
           t.replaceFirst(RegExp(r'^/video\s+', caseSensitive: false), '');
@@ -229,11 +309,12 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
       return;
     }
 
-    // Text AI
+    // Text — NOVA AI
+    _chatCancel?.cancel();
+    final cancel = CancelToken();
+    _chatCancel = cancel;
     try {
-      final res =
-          await _dio.get('$_textApi${Uri.encodeComponent(t)}');
-      final reply = _sanitize((res.data ?? '').toString().trim(), t);
+      final reply = await _nova.chat(t, history, cancel: cancel);
       if (mounted) setState(() {
         _msgs.add({
           'id':      DateTime.now().millisecondsSinceEpoch.toString(),
@@ -242,8 +323,21 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
         });
         _loading = false;
       });
-    } catch (_) {
-      await _fallback(t);
+    } on NovaApiException catch (e) {
+      if (!mounted) return;
+      if (e.kind == NovaApiErrorKind.cancelled) {
+        setState(() => _loading = false);
+        return;
+      }
+      setState(() {
+        _msgs.add({
+          'id':      DateTime.now().millisecondsSinceEpoch.toString(),
+          'role':    'assistant',
+          'content': '\u26A0\uFE0F ${e.userMessage}',
+          'error':   'true',
+        });
+        _loading = false;
+      });
     }
     _scrollEnd();
   }
@@ -271,54 +365,6 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
     }
   }
 
-  Future<void> _fallback(String text) async {
-    try {
-      final res = await _dio.post(
-        _orUrl,
-        options: Options(headers: {
-          'Authorization': 'Bearer $_orKey',
-          'Content-Type':  'application/json',
-        }),
-        data: {
-          'model': 'openai/gpt-4o',
-          'messages': [
-            {
-              'role':    'system',
-              'content': 'You are BRAINS JET AI by Kobby / Tech Lyfe Team. '
-                  'Never mention OpenAI, GPT, Claude, or any third-party AI.',
-            },
-            {'role': 'user', 'content': text},
-          ],
-        },
-      );
-      final choices = res.data?['choices'];
-      String reply = 'AI is temporarily unavailable. Please try again.';
-      if (choices is List && choices.isNotEmpty) {
-        reply = _sanitize(
-          (choices[0]?['message']?['content'] ?? '').toString().trim(),
-          text,
-        );
-      }
-      if (mounted) setState(() {
-        _msgs.add({
-          'id':      DateTime.now().millisecondsSinceEpoch.toString(),
-          'role':    'assistant',
-          'content': reply,
-        });
-        _loading = false;
-      });
-    } catch (_) {
-      if (mounted) setState(() {
-        _msgs.add({
-          'id':      DateTime.now().millisecondsSinceEpoch.toString(),
-          'role':    'assistant',
-          'content': 'Network error. Check your connection and retry.',
-        });
-        _loading = false;
-      });
-    }
-  }
-
   void _scrollEnd() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scroll.hasClients) {
@@ -332,6 +378,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
   }
 
   void _snack(String msg) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content:          Text(msg,
           style: GoogleFonts.inter(color: Colors.white)),
@@ -386,7 +433,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
         ),
         const SizedBox(width: 10),
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('BRAINS JET AI',
+          Text('NOVA AI',
               style: GoogleFonts.spaceGrotesk(
                   color: AppTheme.textPrimary,
                   fontSize: 14,
@@ -424,16 +471,15 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
             size: 16,
           ),
           tooltip: 'Stop speaking',
-          onPressed: () async {
-            await _player.stop();
-            if (mounted) setState(() { _isSpeaking = false; _speakingId = null; });
-          },
+          onPressed: _stopSpeaking,
         ),
         // Clear chat
         IconButton(
           icon: const Icon(Icons.delete_outline_rounded,
               color: AppTheme.textHint, size: 20),
           onPressed: () => setState(() {
+            _chatCancel?.cancel();
+            if (_isSpeaking) _stopSpeaking();
             _msgs.clear();
             _msgs.add({
               'id':      'cleared',
@@ -768,11 +814,17 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
               border:       Border.all(
                   color: _isListening ? Colors.redAccent : AppTheme.divider),
             ),
-            child: Icon(
-              _isListening ? Icons.mic : Icons.mic_none_rounded,
-              color: _isListening ? Colors.redAccent : AppTheme.textHint,
-              size: 20,
-            ),
+            child: _transcribing
+                ? const Padding(
+                    padding: EdgeInsets.all(11),
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: AppTheme.accentCyan),
+                  )
+                : Icon(
+                    _isListening ? Icons.stop_rounded : Icons.mic_none_rounded,
+                    color: _isListening ? Colors.redAccent : AppTheme.textHint,
+                    size: 20,
+                  ),
           ),
         ),
         const SizedBox(width: 8),
@@ -796,8 +848,10 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
               decoration:      InputDecoration(
                 border:         InputBorder.none,
                 hintText:       _isListening
-                    ? 'Listening\u2026'
-                    : 'Ask AI, /image or /video\u2026',
+                    ? 'Listening\u2026 tap \u25A0 to stop'
+                    : _transcribing
+                        ? 'Transcribing\u2026'
+                        : 'Ask NOVA, /image or /video\u2026',
                 hintStyle: GoogleFonts.inter(
                     color: _isListening
                         ? Colors.redAccent
@@ -990,11 +1044,11 @@ class _ImagePreviewScreenState extends State<_ImagePreviewScreen> {
         final base    = ext!.path.split('/Android/')[0];
         final dir     = Directory('$base/Pictures/NOVA X');
         if (!await dir.exists()) await dir.create(recursive: true);
-        savePath = '${dir.path}/brains_ai_'
+        savePath = '${dir.path}/nova_ai_'
             '${DateTime.now().millisecondsSinceEpoch}.jpg';
       } else {
         final dir = await getApplicationDocumentsDirectory();
-        savePath  = '${dir.path}/brains_ai_'
+        savePath  = '${dir.path}/nova_ai_'
             '${DateTime.now().millisecondsSinceEpoch}.jpg';
       }
 
@@ -1069,7 +1123,7 @@ class _ImagePreviewScreenState extends State<_ImagePreviewScreen> {
                 onTap: () => Navigator.pop(context),
               ),
               const Spacer(),
-              Text('BRAINS JET AI',
+              Text('NOVA AI',
                   style: GoogleFonts.spaceGrotesk(
                       color: Colors.white,
                       fontSize: 13,

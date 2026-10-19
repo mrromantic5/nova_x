@@ -49,6 +49,8 @@ import 'package:nova_x/core/services/business_badge_service.dart';
 import 'package:nova_x/features/notifications/screens/notifications_screen.dart';
 import 'package:nova_x/features/devtools/screens/code_editor_screen.dart';
 import 'package:nova_x/core/services/update_service.dart';
+import 'package:nova_x/features/nova/nova_launcher.dart';
+import 'package:nova_x/features/nova/services/nova_wake.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -231,6 +233,7 @@ class _HomeScreenState extends State<HomeScreen>
     _animCtrl.dispose();
     _pulseCtrl.dispose();
     _speech.stop();
+    NovaWake.resumeAfterOtherMic('stt_home');
     super.dispose();
   }
 
@@ -371,11 +374,14 @@ class _HomeScreenState extends State<HomeScreen>
     HapticFeedback.mediumImpact();
     if (_isListening) {
       _speech.stop(); setState(() => _isListening = false);
+      NovaWake.resumeAfterOtherMic('stt_home');
     } else {
       setState(() { _isListening = true; _showSuggest = false; });
       _searchFocus.unfocus();
+      await NovaWake.pauseForOtherMic('stt_home'); // "Hey NOVA" steps aside
       await _speech.listen(
         onResult: (r) {
+          if (r.finalResult) NovaWake.resumeAfterOtherMic('stt_home');
           if (r.finalResult && r.recognizedWords.isNotEmpty) {
             setState(() => _isListening = false);
             _go(r.recognizedWords);
@@ -825,8 +831,8 @@ class _HomeScreenState extends State<HomeScreen>
         const Spacer(),
         const _PointsChip(),
         const SizedBox(width: 8),
-        // AI
-        _hBtn(Icons.psychology_outlined, () => _push(const AiAssistantScreen())),
+        // NOVA assistant (voice panel). Full NOVA AI chat: Menu → NOVA AI.
+        _hBtn(Icons.auto_awesome_rounded, () => showNovaAssistant(context)),
         const SizedBox(width: 8),
         // Profile (replaces the old incognito slot)
         GestureDetector(
@@ -1657,7 +1663,7 @@ class _MenuSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final items = [
-      {'icon': Icons.psychology_outlined,      'label': 'AI Chat',     'color': AppTheme.accentCyan,
+      {'icon': Icons.psychology_outlined,      'label': 'NOVA AI',     'color': AppTheme.accentCyan,
        'fn': () { Navigator.pop(context); onPush(const AiAssistantScreen()); }},
       {'icon': Icons.bookmark_border_rounded,  'label': 'Bookmarks',   'color': const Color(0xFFFFAB00),
        'fn': () { Navigator.pop(context); onPush(const BookmarksScreen()); }},

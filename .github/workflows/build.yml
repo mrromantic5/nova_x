@@ -29,6 +29,27 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
+      # ── NOVA quality gates (before any Android work) ─────────────────────
+      # Analyzer errors in NOVA or the files it touches fail the build.
+      # (Warnings/infos are reported but not fatal. Scoped to these paths so
+      # unrelated, unreachable legacy files can't block a release.)
+      - name: Analyze NOVA and changed sources
+        run: |
+          flutter analyze --no-fatal-infos --no-fatal-warnings \
+            lib/main.dart \
+            lib/features/nova \
+            lib/features/ai/screens/ai_assistant_screen.dart \
+            lib/features/home/screens/home_screen.dart \
+            lib/features/map/screens/nova_map_screen.dart \
+            lib/features/settings/screens/settings_screen.dart \
+            lib/features/browser/screens/browser_view.dart \
+            lib/features/legal/screens/privacy_screen.dart \
+            lib/features/legal/screens/terms_screen.dart \
+            test/nova
+
+      - name: NOVA unit tests
+        run: flutter test test/nova
+
       - name: Patch flutter_inappwebview ProGuard
         run: |
           CACHE="${PUB_CACHE:-$HOME/.pub-cache}"
@@ -365,6 +386,54 @@ jobs:
           fi
           grep -n "appcompat" "$APP"
 
+      # ── "Hey NOVA" wake word engine (sherpa-onnx, Apache-2.0) ─────────────
+      # The engine AAR (~50 MB) is downloaded here and checked against a pinned
+      # SHA-256, so it never has to be committed. The small model files live in
+      # the repo (android/app/src/main/assets/nova_kws/). Only the JNI library
+      # and ONNX Runtime for ARM phones are packaged.
+      - name: Ensure Hey NOVA wake-word engine
+        run: |
+          set -e
+          VER=1.13.8
+          SHA=633c24321e06b1fe79feafa03ea16cbc0f8a286641e2da3559bac91bdb13bd96
+          mkdir -p android/app/libs
+          AAR="android/app/libs/sherpa-onnx-$VER.aar"
+          if [ ! -f "$AAR" ] || ! echo "$SHA  $AAR" | sha256sum -c --status; then
+            curl -fsSL --retry 3 -o "$AAR" "https://github.com/k2-fsa/sherpa-onnx/releases/download/v$VER/sherpa-onnx-$VER.aar"
+          fi
+          echo "$SHA  $AAR" | sha256sum -c -
+          if ! grep -q "sherpa-onnx-$VER.aar" "$APP"; then
+            cat >> "$APP" <<'GRADLE'
+
+          // NOVA "Hey NOVA" wake word (sherpa-onnx) — added by CI
+          android {
+              packaging {
+                  jniLibs.excludes.add("**/libsherpa-onnx-c-api.so")
+                  jniLibs.excludes.add("**/libsherpa-onnx-cxx-api.so")
+                  jniLibs.excludes.add("lib/x86/libsherpa-onnx-jni.so")
+                  jniLibs.excludes.add("lib/x86/libonnxruntime.so")
+                  jniLibs.excludes.add("lib/x86_64/libsherpa-onnx-jni.so")
+                  jniLibs.excludes.add("lib/x86_64/libonnxruntime.so")
+              }
+          }
+          dependencies {
+              implementation(files("libs/sherpa-onnx-1.13.8.aar"))
+          }
+          GRADLE
+            echo "✓ sherpa-onnx added to $APP"
+          else
+            echo "sherpa-onnx already declared in $APP"
+          fi
+          for f in encoder.int8.onnx decoder.int8.onnx joiner.int8.onnx tokens.txt keywords.txt; do
+            test -s "android/app/src/main/assets/nova_kws/$f" \
+              || { echo "::error::Missing Hey NOVA model file assets/nova_kws/$f"; exit 1; }
+          done
+          test -f android/app/proguard-rules.pro && grep -q "com.k2fsa.sherpa.onnx" android/app/proguard-rules.pro \
+            || { echo "::error::proguard-rules.pro must keep com.k2fsa.sherpa.onnx (JNI)"; exit 1; }
+          grep -q 'NovaWakeService' android/app/src/main/AndroidManifest.xml \
+            || { echo "::error::NovaWakeService missing from AndroidManifest.xml"; exit 1; }
+          echo "✓ Hey NOVA engine ready"
+
       # ── Manifest patch ───────────────────────────────────────────────────
       # DO NOT add android:launchMode here — Flutter 3.27.4 already generates
       # it in the activity tag. Adding it again creates a duplicate XML
@@ -464,6 +533,17 @@ jobs:
             || { echo "::error::MainActivity must use launchMode singleTask"; exit 1; }
           grep -A1 'flutter_deeplinking_enabled' android/app/src/main/AndroidManifest.xml | grep -q 'android:value="false"' \
             || { echo "::error::flutter_deeplinking_enabled must be false (browser links)"; exit 1; }
+          # NOVA assistant native layer
+          grep -q 'NovaBridge' "$F" || { echo "::error::MainActivity must register NovaBridge"; exit 1; }
+          for f in NovaAssistActivity.kt nova/NovaBridge.kt nova/NovaRecorder.kt nova/NovaSpeaker.kt \
+                   nova/NovaDeviceActions.kt nova/NovaAssistantRole.kt; do
+            test -f "android/app/src/main/kotlin/com/tlyfe/nova_x/$f" \
+              || { echo "::error::Missing NOVA native file $f"; exit 1; }
+          done
+          grep -q 'android.intent.action.ASSIST' android/app/src/main/AndroidManifest.xml \
+            || { echo "::error::NOVA assistant activity (ACTION_ASSIST) missing from manifest"; exit 1; }
+          grep -q 'NovaAssistTheme' android/app/src/main/res/values/styles.xml \
+            || { echo "::error::NovaAssistTheme missing from styles.xml"; exit 1; }
           echo "✓ MainActivity.kt verified"
 
       - name: Create shortcut resources

@@ -10,6 +10,9 @@ import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
+import com.tlyfe.nova_x.nova.NovaBridge
+import com.tlyfe.nova_x.nova.NovaMicArbiter
+import com.tlyfe.nova_x.nova.NovaWakeService
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -69,6 +72,9 @@ class MainActivity : FlutterFragmentActivity() {
     /** True when Android recreated this Activity from saved state. */
     private var isRestoredInstance = false
 
+    /** NOVA assistant native boundary (channel com.tlyfe.nova_x/nova). */
+    private var nova: NovaBridge? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // Must be set before super.onCreate(): the Flutter engine may be
         // configured during it, and a restored instance must not re-open the
@@ -116,6 +122,10 @@ class MainActivity : FlutterFragmentActivity() {
             }
         }
 
+        // ── NOVA assistant (recording, speech, device actions) ─────────────
+        nova?.dispose()
+        nova = NovaBridge(this, messenger)
+
         // ── Launcher shortcuts (main.dart → getShortcut) ───────────────────
         // Same behaviour as the shortcut handler the CI used to generate.
         MethodChannel(messenger, SHORTCUT_CHANNEL).setMethodCallHandler { call, result ->
@@ -126,6 +136,43 @@ class MainActivity : FlutterFragmentActivity() {
                 result.notImplemented()
             }
         }
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        // super first: plugins (speech_to_text, image_picker…) rely on it.
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        nova?.onRequestPermissionsResult(requestCode, grantResults)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        NovaMicArbiter.activityStarted()
+        nova?.onHostStart()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // "Hey NOVA": Android only lets a microphone service start while the
+        // app is in front, so (re)start it here when the user turned it on.
+        NovaWakeService.startIfEnabled(this)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        NovaMicArbiter.activityStopped()
+        // Never keep NOVA's microphone open while NOVA X is in the background.
+        nova?.onHostStop()
+    }
+
+    override fun onDestroy() {
+        nova?.dispose()
+        nova = null
+        super.onDestroy()
     }
 
     // ── A link / shortcut arrives while NOVA X is already running ──────────

@@ -1,0 +1,13 @@
+NOVA X "Hey NOVA" wake word — third-party components
+
+Keyword-spotting model: sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01
+(int8 encoder/decoder/joiner, tokens.txt) by k2-fsa / Next-gen Kaldi.
+Licence: Apache License 2.0.
+Source: https://github.com/k2-fsa/sherpa-onnx/releases/tag/kws-models
+
+Inference engine: sherpa-onnx 1.13.8 (Apache License 2.0),
+which bundles ONNX Runtime (MIT License).
+Source: https://github.com/k2-fsa/sherpa-onnx
+
+keywords.txt lists NOVA's wake phrases in the model's token units
+(generated from the model's own BPE vocabulary).

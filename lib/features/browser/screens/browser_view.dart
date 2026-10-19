@@ -29,6 +29,9 @@ import 'package:nova_x/core/services/tabs_service.dart';
 import 'package:nova_x/features/browser/screens/tabs_screen.dart';
 import '../widgets/devtools_panel.dart';
 import 'package:url_launcher/url_launcher.dart' as ul;
+import 'package:nova_x/features/nova/models/nova_models.dart';
+import 'package:nova_x/features/nova/nova_launcher.dart';
+import 'package:nova_x/features/nova/services/nova_wake.dart';
 
 class BrowserView extends StatefulWidget {
   final String initialQuery;
@@ -306,6 +309,8 @@ class _BrowserViewState extends State<BrowserView>
     }
     _urlCtrl.dispose();
     try { _speech.stop(); } catch (_) {}
+    NovaWake.resumeAfterOtherMic('stt_page');
+    NovaWake.resumeAfterOtherMic('web_mic');
     _wvc = null;
     super.dispose();
   }
@@ -616,6 +621,11 @@ class _BrowserViewState extends State<BrowserView>
       // Grant in-page media permissions (microphone / camera) so getUserMedia
       // and voice features work inside the WebView.
       onPermissionRequest: (controller, request) async {
+        // A page using the microphone (calls, voice notes): "Hey NOVA" steps
+        // aside so the page gets the mic.
+        if (request.resources.contains(PermissionResourceType.MICROPHONE)) {
+          await NovaWake.pauseForOtherMic('web_mic', max: const Duration(minutes: 10));
+        }
         return PermissionResponse(
           resources: request.resources,
           action: PermissionResponseAction.GRANT,
@@ -714,6 +724,7 @@ class _BrowserViewState extends State<BrowserView>
                   },
                   onStatus: (s) {
                     if (s == 'done' || s == 'notListening') {
+                      NovaWake.resumeAfterOtherMic('stt_page');
                       _wvc?.evaluateJavascript(
                           source: 'window.__nxSpeechEnd && window.__nxSpeechEnd()');
                     }
@@ -725,6 +736,7 @@ class _BrowserViewState extends State<BrowserView>
                     source: "window.__nxSpeechError && window.__nxSpeechError('not-allowed')");
                 return null;
               }
+              await NovaWake.pauseForOtherMic('stt_page');
               await _speech.listen(
                 localeId: locale,
                 partialResults: true,
@@ -746,6 +758,7 @@ class _BrowserViewState extends State<BrowserView>
           handlerName: 'nxSpeechStop',
           callback: (args) async {
             try { await _speech.stop(); } catch (_) {}
+            NovaWake.resumeAfterOtherMic('stt_page');
             _wvc?.evaluateJavascript(source: 'window.__nxSpeechEnd && window.__nxSpeechEnd()');
             return null;
           },
@@ -1345,6 +1358,11 @@ class _BrowserViewState extends State<BrowserView>
             () { Navigator.pop(context); _toggleReaderMode(); },
             color: _readerMode ? AppTheme.warning : AppTheme.textSecondary),
 
+          // ── SUMMARISE WITH NOVA ────────────────────────────────────────────
+          _menuTile(Icons.auto_awesome_rounded, 'Summarise with NOVA',
+            () { Navigator.pop(context); _summariseWithNova(); },
+            color: AppTheme.accentCyan),
+
           // ── AD BLOCKER ──────────────────────────────────────────────────────
           ListTile(
             contentPadding: EdgeInsets.zero, dense: true,
@@ -1396,6 +1414,20 @@ class _BrowserViewState extends State<BrowserView>
         ),   // Container (DraggableScrollable builder)
       ),
     );
+  }
+
+  /// Reads the page's visible text (bounded) and asks NOVA to summarise it.
+  /// The text is treated as untrusted content and can never trigger actions.
+  Future<void> _summariseWithNova() async {
+    String text = '';
+    try {
+      final r = await _wvc?.evaluateJavascript(source:
+          "(function(){try{return (document.body&&document.body.innerText||'').slice(0,12000);}catch(e){return '';}})()");
+      if (r is String) text = r;
+    } catch (_) {}
+    if (!mounted) return;
+    await showNovaAssistant(context,
+        summarise: NovaPageContent(title: _pageTitle, url: _currentUrl, text: text));
   }
 
   Widget _menuTile(IconData icon, String label, VoidCallback onTap,

@@ -32,6 +32,7 @@ import io.flutter.plugin.common.MethodChannel
  *   runAction{action,args}   — action ∈ ALLOWED_ACTIONS only
  *   assistantStatus · openAssistantSettings · closeAssistant · launchReason
  *   wakeStatus · setWakeEnabled{enabled} · setWakeHold{reason,held} · openOverlaySettings
+ *   saveImageToGallery{path}  — a NOVA AI photo → Pictures/NOVA X (Android 10+)
  *   setWakeScreenOff{enabled} · openBatterySettings  — "Listen when the screen is off"
  *   (over the lock screen, runAction asks for the PIN first, except music)
  *   playVoiceFile{path,id} · stopVoiceFile          — NOVA's cloud voice (MP3 in the app cache)
@@ -217,6 +218,14 @@ class NovaBridge(
                     result.success(true)
                 }
                 "openBatterySettings" -> result.success(openBatterySettings())
+                "saveImageToGallery" -> {
+                    val path = call.argument<String>("path") ?: ""
+                    val ctx = activity.applicationContext
+                    Thread {
+                        val ok = saveImageToGallery(ctx, path)
+                        main.post { if (!disposed) result.success(ok) }
+                    }.start()
+                }
                 else -> result.notImplemented()
             }
         } catch (e: Exception) {
@@ -386,6 +395,49 @@ class NovaBridge(
             )
             main.post { if (!disposed) result.success(status) }
         }.start()
+    }
+
+    /**
+     * Copies one of NOVA AI's saved photos to Pictures/NOVA X (Android 10+,
+     * no storage permission needed). Only files inside NOVA X's own
+     * nova_media folder are accepted.
+     */
+    private fun saveImageToGallery(ctx: Context, path: String): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+        return try {
+            val root = java.io.File(ctx.getDir("flutter", Context.MODE_PRIVATE), "nova_media").canonicalPath + "/"
+            val file = java.io.File(path).canonicalFile
+            if (!file.path.startsWith(root) || !file.isFile || file.length() > 20L * 1024 * 1024) return false
+            val name = file.name.lowercase()
+            val mime = when {
+                name.endsWith(".png") -> "image/png"
+                name.endsWith(".webp") -> "image/webp"
+                name.endsWith(".jpg") -> "image/jpeg"
+                else -> return false
+            }
+            val values = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, "nova_${System.currentTimeMillis()}_${file.name}")
+                put(android.provider.MediaStore.Images.Media.MIME_TYPE, mime)
+                put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/NOVA X")
+                put(android.provider.MediaStore.Images.Media.IS_PENDING, 1)
+            }
+            val resolver = ctx.contentResolver
+            val uri = resolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                ?: return false
+            try {
+                resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } }
+                    ?: throw IllegalStateException("no stream")
+                values.clear()
+                values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0)
+                resolver.update(uri, values, null, null)
+                true
+            } catch (e: Exception) {
+                resolver.delete(uri, null, null)
+                false
+            }
+        } catch (e: Exception) {
+            false
+        }
     }
 
     private fun batteryUnrestricted(ctx: Context): Boolean {

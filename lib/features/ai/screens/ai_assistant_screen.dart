@@ -1,12 +1,17 @@
 // lib/features/ai/screens/ai_assistant_screen.dart
 //
 // NOVA X — NOVA AI chat screen
+// v3.2.0 — Chat history: every chat is saved on the phone and, for signed-in
+// users, on the NOVA X server (☰ opens the history; long-press a chat to
+// rename or delete it). Replies are read aloud with the NOVA Voice chosen in
+// NOVA settings → Voice. The welcome message is folded (tap ▾ to see more).
+// The 🎙 button opens the NOVA voice assistant.
 // v3.0.0 — Brains Jet AI replaced by the NOVA AI API (Tech Lyfe Cloudflare
 // Worker, lib/features/nova/services/nova_api.dart). No AI keys live in the
 // app any more. Image (/image) and video (/video) generation are unchanged.
 // Voice: the mic records a short clip that NOVA transcribes; replies are read
-// aloud with the Brains Jet voice ("libby"), or the phone's own voice when the
-// voice service is unavailable.
+// aloud with NOVA Voice, or the phone's own voice when the voice service is
+// unavailable.
 // v2.1.0 — AI content flag/report added for Google Play policy compliance.
 
 import 'dart:async';
@@ -17,12 +22,16 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:nova_x/core/services/rewards_service.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
+import 'package:nova_x/features/ai/services/nova_chat_repository.dart';
 import 'package:nova_x/features/ai/widgets/ai_flag_sheet.dart';
+import 'package:nova_x/features/ai/widgets/nova_chat_drawer.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:nova_x/features/nova/controller/nova_controller.dart';
 import 'package:nova_x/features/nova/nova_config.dart';
+import 'package:nova_x/features/nova/nova_launcher.dart';
 import 'package:nova_x/features/nova/services/nova_api.dart';
 import 'package:nova_x/features/nova/services/nova_native.dart';
+import 'package:nova_x/features/nova/services/nova_prefs.dart';
 import 'package:nova_x/features/nova/services/nova_voice.dart';
 import 'package:nova_x/features/nova/services/nova_wake.dart';
 import 'package:path_provider/path_provider.dart';
@@ -35,10 +44,11 @@ class AiAssistantScreen extends StatefulWidget {
 }
 
 class _AiAssistantScreenState extends State<AiAssistantScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final List<Map<String, String>> _msgs   = [];
   final TextEditingController     _ctrl   = TextEditingController();
   final ScrollController          _scroll = ScrollController();
+  final GlobalKey<ScaffoldState>  _scaffoldKey = GlobalKey<ScaffoldState>();
 
   bool    _loading      = false;
   bool    _isSpeaking   = false;
@@ -47,17 +57,24 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
   String? _speakingId;
   String? _utteranceId;
 
+  // Chat history (null until opened, or if the phone's storage can't be used).
+  NovaChatRepository? _chats;
+  String _chatId          = NovaChatRepository.newChatId();
+  bool   _openingChat     = false;
+  int    _openToken       = 0;
+  bool   _welcomeExpanded = false;
+
   // Used only by image / video generation (unchanged).
   final Dio _dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 15),
     receiveTimeout: const Duration(seconds: 30),
   ));
 
-  // NOVA AI (chat + transcription) and the on-device voice.
+  // NOVA AI (chat + transcription) and NOVA Voice (phone voice as backup).
   final NovaApiClient _nova   = NovaApiClient();
   final NovaNativeApi _native = NovaNative.instance;
   StreamSubscription<NovaNativeEvent>? _nativeSub;
-  final NovaBrainsVoice _voice = NovaBrainsVoice(native: NovaNative.instance);
+  final NovaCloudVoice _voice = NovaCloudVoice(native: NovaNative.instance);
   StreamSubscription<String>? _voiceSub;
   CancelToken? _chatCancel;
 
@@ -75,18 +92,26 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
     '/video waves on a beach',
   ];
 
-  // ── Welcome message ────────────────────────────────────────────────────────
-  static const String _welcome =
-      '\u{1F44B} Hi! I\'m NOVA AI, your assistant in NOVA X.\n\n'
-      '\u2022 Ask me anything\n'
-      '\u2022 Type /image [description] to generate an image\n'
-      '\u2022 Type /video [description] to generate a video\n'
-      '\u2022 Tap \u{1F3A4} to talk, or \u{1F50A} on any reply to hear it\n'
-      '\u2022 Tap \u{1F6A9} to report any content that seems inappropriate';
+  // ── Welcome message (only the first line shows until ▾ is tapped) ─────────
+  static const String _welcomeTitle =
+      '\u{1F44B} Hi! I\'m NOVA AI, your assistant in NOVA X.';
+  static const String _welcomeMore =
+      '• Ask me anything — including how to use NOVA X\n'
+      '• Type /image [description] to generate an image\n'
+      '• Type /video [description] to generate a video\n'
+      '• Tap \u{1F3A4} to talk, or \u{1F50A} on any reply to hear it\n'
+      '• Tap \u{1F5E3}️ at the top for the NOVA voice assistant\n'
+      '• Tap ☰ to see your chats — long-press one to rename or delete it\n'
+      '• Tap \u{1F6A9} Report under a reply if anything seems inappropriate';
+  static const String _welcome = '$_welcomeTitle\n\n$_welcomeMore';
+
+  static Map<String, String> _welcomeMessage() =>
+      {'id': 'welcome', 'role': 'assistant', 'content': _welcome};
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _nativeSub = _native.events.listen(_onNativeEvent);
     // "Hey NOVA" pauses while the chat is open (it has its own mic button).
     NovaWake.hold('chat', true);
@@ -95,11 +120,15 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
         setState(() { _isSpeaking = false; _speakingId = null; _utteranceId = null; });
       }
     });
-    _msgs.add({'id': 'welcome', 'role': 'assistant', 'content': _welcome});
+    _msgs.add(_welcomeMessage());
+    // Loads the voice chosen in NOVA settings → Voice.
+    _loadVoice();
+    _openHistory();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _nativeSub?.cancel();
     _chatCancel?.cancel();
     if (_isListening) _native.cancelRecording();
@@ -112,6 +141,154 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
     _dio.close(force: false);
     _nova.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // The voice may have been changed in the floating assistant, and chats
+      // on another phone.
+      _loadVoice();
+      _chats?.sync();
+    }
+  }
+
+  Future<void> _loadVoice() async {
+    try {
+      await NovaPrefs.load();
+    } catch (_) {
+      // keep the current voice
+    }
+  }
+
+  // ── Chat history ───────────────────────────────────────────────────────────
+  Future<void> _openHistory() async {
+    try {
+      final repo = await NovaChatRepository.open();
+      if (!mounted) return;
+      setState(() => _chats = repo);
+      // A message sent before the history was ready is saved now.
+      if (_savableMessages().isNotEmpty) _persist();
+      unawaited(repo.sync());
+    } catch (_) {
+      // No history on this phone right now; chatting still works.
+    }
+  }
+
+  /// The messages worth keeping (no welcome, errors or unfinished videos).
+  List<Map<String, String>> _savableMessages() {
+    final out = <Map<String, String>>[];
+    for (final m in _msgs) {
+      final id      = m['id'] ?? '';
+      final role    = m['role'] ?? '';
+      final content = m['content'] ?? '';
+      if (id == 'welcome' || id == 'cleared' || content.trim().isEmpty) continue;
+      if (role != 'user' && role != 'assistant') continue;
+      if (m['error'] == 'true') continue;
+      if (content.startsWith('[LOADING_VIDEO]')) continue;
+      out.add({'id': id, 'role': role, 'content': content});
+    }
+    return out;
+  }
+
+  /// Saves the open chat (on the phone, and on the server when signed in).
+  void _persist() {
+    final repo = _chats;
+    if (repo == null) return;
+    final messages = _savableMessages();
+    if (messages.isEmpty) return;
+    final first = messages.firstWhere((m) => m['role'] == 'user',
+        orElse: () => messages.first);
+    repo
+        .save(_chatId, messages,
+            titleIfNew: NovaChatRepository.titleFrom(first['content'] ?? ''))
+        .catchError((Object _) {
+      // Storage full or unavailable: this chat simply isn't kept.
+    });
+  }
+
+  /// Stops voice, recording and any reply in progress (when switching chats).
+  void _stopActivity() {
+    _chatCancel?.cancel();
+    _chatCancel = null;
+    if (_isSpeaking) _stopSpeaking();
+    if (_isListening) {
+      _native.cancelRecording();
+      _isListening = false;
+    }
+    _loading = false;
+  }
+
+  void _closeDrawer() {
+    final scaffold = _scaffoldKey.currentState;
+    if (scaffold != null && scaffold.isEndDrawerOpen) scaffold.closeEndDrawer();
+  }
+
+  void _openDrawer() {
+    HapticFeedback.lightImpact();
+    FocusScope.of(context).unfocus();
+    _scaffoldKey.currentState?.openEndDrawer();
+  }
+
+  /// Starts a new, empty chat (the current one stays in the history).
+  void _newChat({bool closeDrawer = true}) {
+    HapticFeedback.lightImpact();
+    if (closeDrawer) _closeDrawer();
+    _openToken++;
+    setState(() {
+      _stopActivity();
+      _chatId = NovaChatRepository.newChatId();
+      _msgs
+        ..clear()
+        ..add(_welcomeMessage());
+      _openingChat     = false;
+      _welcomeExpanded = false;
+    });
+  }
+
+  Future<void> _openChat(String id) async {
+    _closeDrawer();
+    final repo = _chats;
+    if (repo == null || (id == _chatId && !_openingChat)) return;
+    final token = ++_openToken;
+    setState(() {
+      _stopActivity();
+      _openingChat = true;
+    });
+    final messages = await repo.load(id);
+    if (!mounted || token != _openToken) return;
+    if (messages == null || messages.isEmpty) {
+      setState(() => _openingChat = false);
+      _snack(repo.find(id) == null
+          ? 'That chat was deleted.'
+          : 'That chat couldn\'t be opened. Check your connection and try again.');
+      return;
+    }
+    setState(() {
+      _chatId = id;
+      _msgs
+        ..clear()
+        ..addAll(messages);
+      _openingChat     = false;
+      _welcomeExpanded = false;
+    });
+    _scrollEnd();
+  }
+
+  void _onChatDeleted(String id) {
+    if (id == _chatId) _newChat(closeDrawer: false);
+  }
+
+  // ── NOVA voice assistant ───────────────────────────────────────────────────
+  Future<void> _openVoiceAssistant() async {
+    HapticFeedback.mediumImpact();
+    if (_isSpeaking) await _stopSpeaking();
+    if (_isListening) {
+      await _native.cancelRecording();
+      if (mounted) setState(() => _isListening = false);
+    }
+    if (!mounted) return;
+    await showNovaAssistant(context);
   }
 
   void _onNativeEvent(NovaNativeEvent e) {
@@ -188,7 +365,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
     }
   }
 
-  // ── TTS (Brains Jet voice, phone voice as fallback) ──────────────────────────────────────────────────
+  // ── TTS (NOVA Voice chosen in NOVA settings; phone voice as fallback) ────────────
   Future<void> _speakMessage(String id, String text) async {
     HapticFeedback.lightImpact();
     if (_isSpeaking && _speakingId == id) {
@@ -201,7 +378,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
       setState(() { _isSpeaking = true; _speakingId = id; _utteranceId = utterance; });
     }
     final ok = await _voice.speak(
-        NovaController.speakable(text, maxChars: 3500), utterance);
+        NovaController.speakable(text, maxChars: 4500), utterance);
     // Not started — unless the user stopped it or picked another reply meanwhile.
     if (!ok && mounted && _utteranceId == utterance) {
       setState(() { _isSpeaking = false; _speakingId = null; _utteranceId = null; });
@@ -254,9 +431,13 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
   }
 
   // ── Send message ────────────────────────────────────────────────────────────
+  /// Unique message ids (two messages can be created in the same millisecond).
+  String _newId() => '${DateTime.now().millisecondsSinceEpoch}_${_idSeq++}';
+  int _idSeq = 0;
+
   Future<void> _send(String text) async {
     final t = text.trim();
-    if (t.isEmpty || _loading) return;
+    if (t.isEmpty || _loading || _openingChat) return;
 
     // Fire-and-forget earn call — result not needed
     RewardsService.earn(RewardTaskKey.useAi);
@@ -265,13 +446,14 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
     _ctrl.clear();
     HapticFeedback.lightImpact();
 
-    final msgId = DateTime.now().millisecondsSinceEpoch.toString();
+    final msgId = _newId();
     if (mounted) {
       setState(() {
         _msgs.add({'id': msgId, 'role': 'user', 'content': t});
         _loading = true;
       });
     }
+    _persist();
     _scrollEnd();
 
     // Image generation (unchanged)
@@ -281,12 +463,13 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
       final url = '$_imageApi${Uri.encodeComponent(prompt)}';
       if (mounted) setState(() {
         _msgs.add({
-          'id':      DateTime.now().millisecondsSinceEpoch.toString(),
+          'id':      _newId(),
           'role':    'assistant',
           'content': '[IMAGE]$url',
         });
         _loading = false;
       });
+      _persist();
       _scrollEnd();
       return;
     }
@@ -295,12 +478,12 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
     if (t.toLowerCase().startsWith('/video ')) {
       final prompt =
           t.replaceFirst(RegExp(r'^/video\s+', caseSensitive: false), '');
-      final loadId = DateTime.now().millisecondsSinceEpoch.toString();
+      final loadId = _newId();
       if (mounted) setState(() {
         _msgs.add({
           'id':      loadId,
           'role':    'assistant',
-          'content': '[LOADING_VIDEO]Generating video for: "$prompt"\u2026',
+          'content': '[LOADING_VIDEO]Generating video for: "$prompt"…',
         });
         _loading = false;
       });
@@ -315,29 +498,34 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
     _chatCancel = cancel;
     try {
       final reply = await _nova.chat(t, history, cancel: cancel);
-      if (mounted) setState(() {
+      // Dropped if another chat was opened (or a new request started) meanwhile.
+      if (!mounted || !identical(_chatCancel, cancel)) return;
+      setState(() {
         _msgs.add({
-          'id':      DateTime.now().millisecondsSinceEpoch.toString(),
+          'id':      _newId(),
           'role':    'assistant',
           'content': reply,
         });
         _loading = false;
       });
+      _persist();
     } on NovaApiException catch (e) {
-      if (!mounted) return;
+      if (!mounted || !identical(_chatCancel, cancel)) return;
       if (e.kind == NovaApiErrorKind.cancelled) {
         setState(() => _loading = false);
         return;
       }
       setState(() {
         _msgs.add({
-          'id':      DateTime.now().millisecondsSinceEpoch.toString(),
+          'id':      _newId(),
           'role':    'assistant',
-          'content': '\u26A0\uFE0F ${e.userMessage}',
+          'content': '⚠️ ${e.userMessage}',
           'error':   'true',
         });
         _loading = false;
       });
+    } finally {
+      if (identical(_chatCancel, cancel)) _chatCancel = null;
     }
     _scrollEnd();
   }
@@ -349,20 +537,27 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
       final url = res.data?['result']?['url'] as String? ??
                   res.data?['url']            as String?;
       if (url == null || url.isEmpty) throw Exception('No video URL');
-      _updateMsg(loadId, '[VIDEO]$url');
+      if (_updateMsg(loadId, '[VIDEO]$url')) _persist();
     } catch (_) {
       _updateMsg(
         loadId,
-        '\u26A0\uFE0F Video generation failed. Please try again later.',
+        '⚠️ Video generation failed. Please try again later.',
+        error: true,
       );
     }
   }
 
-  void _updateMsg(String id, String newContent) {
+  /// Replaces a message's content. False when it is no longer on screen
+  /// (e.g. another chat was opened meanwhile).
+  bool _updateMsg(String id, String newContent, {bool error = false}) {
     final idx = _msgs.indexWhere((m) => m['id'] == id);
-    if (idx >= 0 && mounted) {
-      setState(() => _msgs[idx] = {..._msgs[idx], 'content': newContent});
-    }
+    if (idx < 0 || !mounted) return false;
+    setState(() => _msgs[idx] = {
+          ..._msgs[idx],
+          'content': newContent,
+          if (error) 'error': 'true',
+        });
+    return true;
   }
 
   void _scrollEnd() {
@@ -393,10 +588,31 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      key: _scaffoldKey,
       backgroundColor: AppTheme.bgDark,
       appBar: _buildAppBar(),
+      // ☰ Chat history (also opens with a swipe from the right edge).
+      endDrawer: NovaChatDrawer(
+        repository:    _chats,
+        currentChatId: _chatId,
+        onOpen:        _openChat,
+        onNewChat:     _newChat,
+        onDeleted:     _onChatDeleted,
+        onReport: () {
+          _closeDrawer();
+          _reportContent(contentType: 'text');
+        },
+      ),
+      onEndDrawerChanged: (open) {
+        if (open) _chats?.sync();
+      },
       body: Column(children: [
-        if (_msgs.length <= 1) _buildSuggestions(),
+        if (_openingChat)
+          const LinearProgressIndicator(
+              minHeight: 2,
+              color: AppTheme.accentCyan,
+              backgroundColor: Colors.transparent),
+        if (_msgs.length <= 1 && !_openingChat) _buildSuggestions(),
         Expanded(
           child: ListView.builder(
             controller: _scroll,
@@ -424,69 +640,70 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
       ),
       title: Row(children: [
         Container(
-          width: 34, height: 34,
+          width: 32, height: 32,
           decoration: BoxDecoration(
             gradient:     AppTheme.primaryGradient,
             borderRadius: BorderRadius.circular(10),
           ),
-          child: const Icon(Icons.psychology, color: Colors.white, size: 19),
+          child: const Icon(Icons.psychology, color: Colors.white, size: 18),
         ),
-        const SizedBox(width: 10),
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('NOVA AI',
-              style: GoogleFonts.spaceGrotesk(
-                  color: AppTheme.textPrimary,
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold)),
-          Row(children: [
-            Container(
-              width: 6, height: 6,
-              decoration: const BoxDecoration(
-                  color: AppTheme.success, shape: BoxShape.circle),
-            ),
-            const SizedBox(width: 4),
-            Text('Online',
-                style: GoogleFonts.inter(
-                    color: AppTheme.success, fontSize: 10)),
+        const SizedBox(width: 9),
+        Flexible(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('NOVA AI',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.spaceGrotesk(
+                    color: AppTheme.textPrimary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold)),
+            Row(children: [
+              Container(
+                width: 6, height: 6,
+                decoration: const BoxDecoration(
+                    color: AppTheme.success, shape: BoxShape.circle),
+              ),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text('Online',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.inter(
+                        color: AppTheme.success, fontSize: 10)),
+              ),
+            ]),
           ]),
-        ]),
+        ),
       ]),
       actions: [
-        // Global report shortcut
-        Tooltip(
-          message: 'Report AI Content',
-          child: IconButton(
-            icon: const FaIcon(FontAwesomeIcons.flag,
-                color: AppTheme.textHint, size: 16),
-            onPressed: () => _reportContent(contentType: 'text'),
+        // Stop TTS (only while a reply is being read aloud)
+        if (_isSpeaking)
+          IconButton(
+            icon: const FaIcon(FontAwesomeIcons.volumeHigh,
+                color: AppTheme.accentCyan, size: 16),
+            tooltip: 'Stop speaking',
+            onPressed: _stopSpeaking,
           ),
-        ),
-        // Stop TTS
+        // NOVA voice assistant
         IconButton(
-          icon: FaIcon(
-            _isSpeaking
-                ? FontAwesomeIcons.volumeHigh
-                : FontAwesomeIcons.volumeXmark,
-            color: _isSpeaking ? AppTheme.accentCyan : AppTheme.textHint,
-            size: 16,
-          ),
-          tooltip: 'Stop speaking',
-          onPressed: _stopSpeaking,
+          icon: const Icon(Icons.record_voice_over_rounded,
+              color: AppTheme.accentCyan, size: 21),
+          tooltip: 'NOVA voice assistant',
+          onPressed: _openVoiceAssistant,
         ),
-        // Clear chat
+        // New chat (the current chat stays in the history)
         IconButton(
-          icon: const Icon(Icons.delete_outline_rounded,
-              color: AppTheme.textHint, size: 20),
-          onPressed: () => setState(() {
-            _chatCancel?.cancel();
-            if (_isSpeaking) _stopSpeaking();
-            _msgs.clear();
-            _msgs.add({
-              'id':      'cleared',
-              'role':    'assistant',
-              'content': '\u2713 Chat cleared. How can I help?',
-            });
-          }),
+          icon: const Icon(Icons.add_comment_outlined,
+              color: AppTheme.textSecondary, size: 21),
+          tooltip: 'New chat',
+          onPressed: () => _newChat(),
+        ),
+        // Chat history
+        IconButton(
+          icon: const Icon(Icons.menu_rounded,
+              color: AppTheme.textSecondary, size: 22),
+          tooltip: 'Chat history',
+          onPressed: _openDrawer,
         ),
       ],
     );
@@ -523,6 +740,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
     final content = msg['content'] ?? '';
     final id      = msg['id']     ?? '';
 
+    if (id == 'welcome') return _buildWelcome();
     if (content.startsWith('[IMAGE]')) {
       return _buildImageWidget(content.replaceFirst('[IMAGE]', ''));
     }
@@ -594,6 +812,81 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
 
           // NOTE: No report button on user messages — only AI responses are flaggable.
         ],
+      ),
+    );
+  }
+
+  // ── Welcome (first line only; ▾ shows the rest) ───────────────────────────
+  Widget _buildWelcome() {
+    const radius = BorderRadius.only(
+      topLeft:     Radius.circular(18),
+      topRight:    Radius.circular(18),
+      bottomLeft:  Radius.circular(4),
+      bottomRight: Radius.circular(18),
+    );
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.78),
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        decoration: BoxDecoration(
+          color:        AppTheme.bgCard,
+          borderRadius: radius,
+          boxShadow:    AppTheme.cardShadow,
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: radius,
+            onTap: () {
+              HapticFeedback.selectionClick();
+              setState(() => _welcomeExpanded = !_welcomeExpanded);
+            },
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(13, 11, 6, 11),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    Expanded(
+                      child: Text(_welcomeTitle,
+                          style: GoogleFonts.inter(
+                              color: Colors.white, fontSize: 14, height: 1.5)),
+                    ),
+                    const SizedBox(width: 4),
+                    Semantics(
+                      button: true,
+                      label: _welcomeExpanded ? 'Show less' : 'Show more',
+                      child: AnimatedRotation(
+                        turns:    _welcomeExpanded ? 0.5 : 0,
+                        duration: const Duration(milliseconds: 200),
+                        child: const Icon(Icons.keyboard_arrow_down_rounded,
+                            color: AppTheme.accentCyan, size: 24),
+                      ),
+                    ),
+                  ]),
+                  AnimatedSize(
+                    duration:  const Duration(milliseconds: 220),
+                    curve:     Curves.easeOut,
+                    alignment: Alignment.topLeft,
+                    child: _welcomeExpanded
+                        ? Padding(
+                            padding: const EdgeInsets.only(top: 8, right: 8),
+                            child: Text(_welcomeMore,
+                                style: GoogleFonts.inter(
+                                    color: AppTheme.textSecondary,
+                                    fontSize: 13,
+                                    height: 1.55)),
+                          )
+                        : const SizedBox.shrink(),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

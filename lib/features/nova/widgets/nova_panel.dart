@@ -2,8 +2,12 @@
 //
 // NOVA's floating bottom assistant panel (used inside NOVA X as a bottom
 // sheet, and by the floating assistant window over other apps).
+// 3.4.0: answers are formatted (Markdown, code blocks); 📷 adds photos or
+// screenshots, and over other apps "Read my screen" lets NOVA see the app
+// in front (one screenshot, after Android's consent dialog).
 
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -11,6 +15,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../core/theme/app_theme.dart';
+import '../../ai/widgets/nova_markdown_view.dart';
 import '../controller/nova_controller.dart';
 import '../models/nova_models.dart';
 import 'nova_orb.dart';
@@ -22,11 +27,19 @@ class NovaPanel extends StatefulWidget {
     required this.onClose,
     required this.onToggleVoice,
     this.onExpand,
+    this.onAddPhoto,
+    this.onReadScreen,
   });
 
   final NovaController controller;
   final VoidCallback onClose;
   final ValueChanged<bool> onToggleVoice;
+
+  /// 📷 — add photos or screenshots from the camera or gallery.
+  final VoidCallback? onAddPhoto;
+
+  /// "Read my screen" (floating assistant over other apps only).
+  final VoidCallback? onReadScreen;
 
   /// Opens the full NOVA AI chat (in-app only).
   final VoidCallback? onExpand;
@@ -85,7 +98,10 @@ class _NovaPanelState extends State<NovaPanel> {
 
   void _send() {
     final t = _text.text.trim();
-    if (t.isEmpty) return;
+    if (t.isEmpty) {
+      if (c.pendingImages.isNotEmpty) c.askAboutImages();
+      return;
+    }
     _text.clear();
     c.submitText(t);
   }
@@ -97,8 +113,8 @@ class _NovaPanelState extends State<NovaPanel> {
     // With the keyboard open there is far less room: shrink the orb and reply.
     final keyboardOpen = media.viewInsets.bottom > 0;
     final maxReplyHeight = keyboardOpen
-        ? math.min(120.0, media.size.height * 0.16)
-        : math.min(220.0, media.size.height * 0.28);
+        ? math.min(140.0, media.size.height * 0.18)
+        : math.min(320.0, media.size.height * 0.36);
     final orbSize = keyboardOpen ? 64.0 : 116.0;
 
     return AnimatedBuilder(
@@ -178,22 +194,22 @@ class _NovaPanelState extends State<NovaPanel> {
                             child: SingleChildScrollView(
                               child: AnimatedSwitcher(
                                 duration: const Duration(milliseconds: 250),
-                                child: SelectableText(
-                                  c.reply,
+                                child: NovaMarkdownView(
                                   key: ValueKey(c.reply),
-                                  textAlign: c.reply.length > 140 ? TextAlign.start : TextAlign.center,
-                                  style: GoogleFonts.inter(
-                                    color: AppTheme.textPrimary,
-                                    fontSize: 15,
-                                    height: 1.5,
-                                    fontWeight: FontWeight.w500,
-                                  ),
+                                  text: c.reply,
+                                  fontSize: 14.5,
+                                  centerShort: true,
+                                  onLink: c.openLink,
                                 ),
                               ),
                             ),
                           ),
                         ],
                         ..._contextualActions(state, accent),
+                        if (c.pendingImages.isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          _pendingImages(accent),
+                        ],
                         const SizedBox(height: 14),
                         if (_typing) _inputRow(accent) else _controls(state, accent),
                       ],
@@ -320,6 +336,11 @@ class _NovaPanelState extends State<NovaPanel> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
+        if (widget.onAddPhoto != null)
+          _iconButton(Icons.add_photo_alternate_outlined, 'Add a photo or screenshot', () {
+            if (listening) c.cancel();
+            widget.onAddPhoto!();
+          }),
         _iconButton(Icons.keyboard_alt_outlined, 'Type to NOVA', () {
           setState(() => _typing = true);
           if (listening) c.cancel();
@@ -350,9 +371,80 @@ class _NovaPanelState extends State<NovaPanel> {
           c.settings.speakReplies ? 'Mute NOVA voice' : 'Turn on NOVA voice',
           () => widget.onToggleVoice(!c.settings.speakReplies),
         ),
+        if (widget.onReadScreen != null)
+          _iconButton(Icons.screenshot_monitor_outlined, 'Read my screen', () {
+            if (listening) c.cancel();
+            widget.onReadScreen!();
+          }),
       ],
     );
   }
+
+  /// Photos / screenshot waiting for the question (tap × to remove).
+  Widget _pendingImages(Color accent) {
+    final images = c.pendingImages;
+    final screen = c.pendingIsScreen;
+    return Column(
+      children: [
+        Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 8,
+          children: [
+            for (var i = 0; i < images.length; i++)
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.memory(
+                      _bytes(images[i].bytes),
+                      width: screen ? 46 : 58,
+                      height: screen ? 82 : 58,
+                      fit: BoxFit.cover,
+                      cacheWidth: 160,
+                      gaplessPlayback: true,
+                    ),
+                  ),
+                  Positioned(
+                    top: -6,
+                    right: -6,
+                    child: Semantics(
+                      button: true,
+                      label: screen ? 'Remove the screenshot' : 'Remove photo',
+                      child: GestureDetector(
+                        onTap: () => c.removeImage(i),
+                        child: Container(
+                          width: 22,
+                          height: 22,
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.75),
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white24),
+                          ),
+                          child: const Icon(Icons.close_rounded, size: 14, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          screen ? 'Ask about your screen — speak, type, or tap send.' : 'Ask about this — speak, type, or tap send.',
+          textAlign: TextAlign.center,
+          style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 12),
+        ),
+        if (!_typing) ...[
+          const SizedBox(height: 8),
+          _pill(screen ? 'What’s on my screen?' : 'What’s in this?', accent, filled: true, onTap: () => c.askAboutImages()),
+        ],
+      ],
+    );
+  }
+
+  static Uint8List _bytes(List<int> b) => b is Uint8List ? b : Uint8List.fromList(b);
 
   Widget _inputRow(Color accent) {
     return Row(
@@ -362,6 +454,10 @@ class _NovaPanelState extends State<NovaPanel> {
           _focus.unfocus();
           c.startListening();
         }),
+        if (widget.onAddPhoto != null) ...[
+          const SizedBox(width: 6),
+          _iconButton(Icons.add_photo_alternate_outlined, 'Add a photo or screenshot', widget.onAddPhoto!),
+        ],
         const SizedBox(width: 6),
         Expanded(
           child: Container(
@@ -381,7 +477,9 @@ class _NovaPanelState extends State<NovaPanel> {
               decoration: InputDecoration(
                 border: InputBorder.none,
                 counterText: '',
-                hintText: 'Ask NOVA or give a command…',
+                hintText: c.pendingImages.isEmpty
+                    ? 'Ask NOVA or give a command…'
+                    : (c.pendingIsScreen ? 'Ask about your screen…' : 'Ask about this photo…'),
                 hintStyle: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 14),
                 isDense: true,
                 contentPadding: const EdgeInsets.symmetric(vertical: 12),

@@ -348,6 +348,9 @@ class _NovaSettingsScreenState extends State<NovaSettingsScreen> with WidgetsBin
                       'NOVA X account when you are signed in) until you delete them.\n'
                       '• Photos you show NOVA AI are sent to the NOVA AI service to be read, '
                       'not stored there; they stay saved on this phone only.\n'
+                      '• "Read my screen" in the assistant panel takes one screenshot only after '
+                      'Android asks you, and only when you tap it. It is sent only with your '
+                      'question and is not saved. Never over the lock screen.\n'
                       '• NOVA Music plays songs from this phone, even offline. '
                       'Your music list never leaves your phone.\n'
                       '• Contacts never leave your phone.',

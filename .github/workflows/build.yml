@@ -38,7 +38,9 @@ jobs:
           flutter analyze --no-fatal-infos --no-fatal-warnings \
             lib/main.dart \
             lib/features/nova \
-            lib/features/ai/screens/ai_assistant_screen.dart \
+            lib/features/ai \
+            lib/features/music \
+            lib/core/services/lens_service.dart \
             lib/features/home/screens/home_screen.dart \
             lib/features/map/screens/nova_map_screen.dart \
             lib/features/settings/screens/settings_screen.dart \
@@ -544,6 +546,17 @@ jobs:
             || { echo "::error::NOVA assistant activity (ACTION_ASSIST) missing from manifest"; exit 1; }
           grep -q 'NovaAssistTheme' android/app/src/main/res/values/styles.xml \
             || { echo "::error::NovaAssistTheme missing from styles.xml"; exit 1; }
+          # NOVA Music (offline player) and NOVA Voice playback
+          for f in music/NovaMusicBridge.kt music/NovaMusicPlayer.kt music/NovaMusicService.kt \
+                   music/NovaMusicLibrary.kt music/NovaMusicMatcher.kt music/NovaMusicCommands.kt \
+                   music/NovaSong.kt nova/NovaVoicePlayer.kt nova/NovaDeviceSpeech.kt; do
+            test -f "android/app/src/main/kotlin/com/tlyfe/nova_x/$f" \
+              || { echo "::error::Missing NOVA native file $f"; exit 1; }
+          done
+          grep -q 'music.NovaMusicService' android/app/src/main/AndroidManifest.xml \
+            || { echo "::error::NovaMusicService missing from AndroidManifest.xml"; exit 1; }
+          grep -q 'android.permission.READ_MEDIA_AUDIO' android/app/src/main/AndroidManifest.xml \
+            || { echo "::error::READ_MEDIA_AUDIO missing from AndroidManifest.xml"; exit 1; }
           echo "✓ MainActivity.kt verified"
 
       - name: Create shortcut resources

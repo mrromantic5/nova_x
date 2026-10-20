@@ -1,7 +1,8 @@
 // lib/features/nova/screens/nova_settings_screen.dart
 //
-// NOVA assistant settings: digital-assistant role, voice options,
-// permissions, "Hey NOVA" wake word and privacy information.
+// NOVA assistant settings: digital-assistant role, voice options (including
+// the NOVA voice picker), permissions, "Hey NOVA" wake word and privacy
+// information.
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -11,8 +12,10 @@ import '../models/nova_models.dart';
 import '../nova_launcher.dart';
 import '../services/nova_native.dart';
 import '../services/nova_prefs.dart';
+import '../services/nova_voice.dart';
 import '../services/nova_wake.dart';
 import '../widgets/nova_orb.dart';
+import '../widgets/nova_voice_picker.dart';
 
 class NovaSettingsScreen extends StatefulWidget {
   const NovaSettingsScreen({super.key});
@@ -29,6 +32,7 @@ class _NovaSettingsScreenState extends State<NovaSettingsScreen> with WidgetsBin
   NovaAssistantStatus? _assistant;
   bool _mic = false;
   bool _contacts = false;
+  bool _audio = false;
   bool _loading = true;
   NovaWakeStatus _wake = const NovaWakeStatus();
   bool _wakeBusy = false;
@@ -58,6 +62,7 @@ class _NovaSettingsScreenState extends State<NovaSettingsScreen> with WidgetsBin
     final assistant = await _native.assistantStatus();
     final mic = await _native.isPermissionGranted('microphone');
     final contacts = await _native.isPermissionGranted('contacts');
+    final audio = await _native.isPermissionGranted('audio');
     final wake = await NovaWake.status();
     if (!mounted) return;
     setState(() {
@@ -65,6 +70,7 @@ class _NovaSettingsScreenState extends State<NovaSettingsScreen> with WidgetsBin
       _assistant = assistant;
       _mic = mic;
       _contacts = contacts;
+      _audio = audio;
       _wake = wake;
       _loading = false;
     });
@@ -122,6 +128,30 @@ class _NovaSettingsScreenState extends State<NovaSettingsScreen> with WidgetsBin
   Future<void> _save(NovaSettings s) async {
     setState(() => _settings = s);
     await NovaPrefs.save(s);
+  }
+
+  Future<void> _pickVoice() async {
+    await showNovaVoicePicker(
+      context,
+      current: _settings.voice,
+      onSelected: (key) => _save(_settings.copyWith(voice: key)),
+    );
+  }
+
+  Widget _voiceTile() {
+    final voice = NovaVoiceCatalog.byKey(_settings.voice);
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      leading: _leading(Icons.graphic_eq_rounded, AppTheme.accentCyan),
+      title: Text('NOVA voice',
+          style: GoogleFonts.inter(
+              color: AppTheme.textPrimary, fontSize: 14, fontWeight: FontWeight.w500)),
+      subtitle: Text(
+          voice == null ? 'Choose how NOVA sounds' : '${voice.label} \u2014 ${voice.description}',
+          style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11.5)),
+      trailing: const Icon(Icons.chevron_right_rounded, color: AppTheme.textHint),
+      onTap: _pickVoice,
+    );
   }
 
   Future<void> _setAsAssistant() async {
@@ -193,10 +223,11 @@ class _NovaSettingsScreenState extends State<NovaSettingsScreen> with WidgetsBin
                 _assistantCard(),
                 _section('Voice'),
                 _card([
+                  _voiceTile(),
                   _switch(
                     Icons.record_voice_over_rounded,
                     'Speak replies aloud',
-                    'NOVA reads answers in the Brains Jet voice (your phone\'s voice if it is unavailable)',
+                    'NOVA reads answers in your NOVA voice (your phone\'s own voice when offline)',
                     _settings.speakReplies,
                     (v) => _save(_settings.copyWith(speakReplies: v)),
                   ),
@@ -225,6 +256,14 @@ class _NovaSettingsScreenState extends State<NovaSettingsScreen> with WidgetsBin
                     _contacts,
                     () => _requestPermission('contacts'),
                   ),
+                  _permissionTile(
+                    Icons.library_music_rounded,
+                    'Music and audio',
+                    'Used only so NOVA Music can find and play the songs saved on this phone. '
+                        'Your music list never leaves your phone',
+                    _audio,
+                    () => _requestPermission('audio'),
+                  ),
                 ]),
                 _section('Hands-free "Hey NOVA"'),
                 ..._wakeSection(),
@@ -237,11 +276,16 @@ class _NovaSettingsScreenState extends State<NovaSettingsScreen> with WidgetsBin
                       'then deleted from your phone.\n'
                       '• Your message and the last few messages of the current conversation '
                       'are sent so NOVA can answer.\n'
-                      '• Spoken replies: the reply text is sent to the Brains Jet voice service '
-                      'to create the audio.\n'
+                      '• Spoken replies: the reply text is sent to the NOVA Voice service '
+                      '(Tech Lyfe, using Microsoft\'s online voices) to create the audio. '
+                      'The audio is played, then deleted from your phone.\n'
                       '• "Hey NOVA" listens on your phone only: sound is checked in memory and '
                       'never recorded, kept or sent until NOVA opens.\n'
-                      '• Conversations are not saved on your phone after you close NOVA.\n'
+                      '• Voice-assistant conversations are not saved after you close NOVA. '
+                      'NOVA AI chats are kept in your chat history (on this phone, and in your '
+                      'NOVA X account when you are signed in) until you delete them.\n'
+                      '• NOVA Music plays songs from this phone, even offline. '
+                      'Your music list never leaves your phone.\n'
                       '• Contacts never leave your phone.',
                 ),
                 const SizedBox(height: 20),

@@ -159,4 +159,48 @@ void main() {
       expect(adapter.requests, isEmpty);
     });
   });
+
+  group('/vision', () {
+    final jpeg = [0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3, 4];
+
+    test('sends the question, history and base64 images; returns the reply', () async {
+      final (api, adapter) = _client((o, _) => _json(200, {'success': true, 'reply': ' It says Accra. '}));
+      final reply = await api.vision('Read the sign', [
+        {'role': 'user', 'content': 'hi'},
+      ], [
+        NovaVisionImage(jpeg, 'image/jpeg'),
+      ]);
+      expect(reply, 'It says Accra.');
+      final req = adapter.requests.single;
+      expect(req.path, '/vision');
+      final body = req.data as Map;
+      expect(body['message'], 'Read the sign');
+      expect(body['history'], [
+        {'role': 'user', 'content': 'hi'},
+      ]);
+      expect(body['images'], [
+        {'mime': 'image/jpeg', 'data': base64Encode(jpeg)},
+      ]);
+    });
+
+    test('older server without /vision and oversized photos get clear messages', () async {
+      final (old, _) = _client((o, _) => _json(404, {'success': false, 'error': 'Endpoint not found', 'code': 404}));
+      await expectLater(
+          old.vision('x', const [], [NovaVisionImage(jpeg, 'image/jpeg')]),
+          throwsA(isA<NovaApiException>()
+              .having((e) => e.statusCode, 'statusCode', 404)
+              .having((e) => e.userMessage, 'userMessage', contains('3.3.0'))));
+
+      final (big, _) = _client((o, _) => _json(413, {'success': false, 'error': 'Image too large.', 'code': 413}));
+      await expectLater(
+          big.vision('x', const [], [NovaVisionImage(jpeg, 'image/jpeg')]),
+          throwsA(isA<NovaApiException>().having((e) => e.userMessage, 'userMessage', contains('too large'))));
+    });
+
+    test('no photos: nothing is sent', () async {
+      final (api, adapter) = _client((o, _) => _json(200, {'success': true, 'reply': 'x'}));
+      await expectLater(api.vision('x', const [], const []), throwsA(isA<NovaApiException>()));
+      expect(adapter.requests, isEmpty);
+    });
+  });
 }

@@ -14,6 +14,7 @@ import '../browser/screens/browser_view.dart';
 import '../downloads/screens/downloads_screen.dart';
 import '../history/screens/history_screen.dart';
 import '../map/screens/nova_map_screen.dart';
+import '../music/screens/nova_music_screen.dart';
 import '../rewards/screens/rewards_screen.dart';
 import '../settings/screens/settings_screen.dart';
 import '../shield/screens/nova_shield_screen.dart';
@@ -92,6 +93,7 @@ class NovaInAppHost implements NovaHost {
       'nova_ai' => const AiAssistantScreen(),
       'nova_settings' => const NovaSettingsScreen(),
       'browser_settings' => const SettingsScreen(),
+      'nova_music' => const NovaMusicScreen(),
       _ => null,
     };
     if (screen == null) return false;
@@ -126,7 +128,7 @@ class _NovaSheet extends StatefulWidget {
 
 class _NovaSheetState extends State<_NovaSheet> {
   final NovaApiClient _api = NovaApiClient();
-  final NovaBrainsVoice _voice = NovaBrainsVoice(native: NovaNative.instance);
+  final NovaCloudVoice _voice = NovaCloudVoice(native: NovaNative.instance);
   late final NovaController _controller = NovaController(
     api: _api,
     native: NovaNative.instance,

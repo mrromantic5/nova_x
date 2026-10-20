@@ -91,7 +91,7 @@ class NovaOverlayScreen extends StatefulWidget {
 
 class _NovaOverlayScreenState extends State<NovaOverlayScreen> {
   final NovaApiClient _api = NovaApiClient();
-  final NovaBrainsVoice _voice = NovaBrainsVoice(native: NovaNative.instance);
+  final NovaCloudVoice _voice = NovaCloudVoice(native: NovaNative.instance);
   late final NovaController _controller = NovaController(
     api: _api,
     native: NovaNative.instance,

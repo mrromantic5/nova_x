@@ -14,6 +14,13 @@ class NovaConfig {
     defaultValue: 'https://ama-ai.techlyfeteam.workers.dev',
   );
 
+  /// NOVA Voice (Edge TTS Worker) — NOVA's spoken voice. No key needed.
+  ///   flutter build apk --dart-define=NOVA_VOICE_BASE=https://your-voice-worker.example
+  static const String voiceApiBaseUrl = String.fromEnvironment(
+    'NOVA_VOICE_BASE',
+    defaultValue: 'https://nova-voice.techlyfeteam.workers.dev',
+  );
+
   // Network timeouts (bounded; retries are limited in NovaApiClient).
   static const Duration connectTimeout = Duration(seconds: 12);
   static const Duration chatTimeout = Duration(seconds: 45);

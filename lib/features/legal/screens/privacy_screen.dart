@@ -283,7 +283,10 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                     'checks microphone sound on your phone for the wake phrase; this '
                     'sound is analysed in memory and is not recorded, stored or sent. '
                     'A notification is shown the whole time, and you can turn it off '
-                    'from that notification or in NOVA settings.'),
+                    'from that notification or in NOVA settings. By default NOVA pauses '
+                    'while the screen is off; if you turn on "Listen when the screen is '
+                    'off", it keeps listening the same way and can open over the lock '
+                    'screen, where anything personal asks you to unlock first.'),
                 _sub('Image and Video Generation',
                     'The /image and /video commands in NOVA AI send your prompt to '
                     'third-party generation services (ab-text-toimgfast.abrahamdw882.'

@@ -3,6 +3,7 @@
 // NOVA's assistant state machine. Pipeline for every request:
 //
 //   capture (tap-to-talk, auto-stops on silence) → /transcribe
+//     (offline: the phone's own speech recogniser instead)
 //   → on-device parser (clear commands)        ┐
 //   → /plan (if the Worker supports it)        ├→ validated actions → executor
 //   → /chat (conversation)                     ┘    → real result → speak/show
@@ -59,7 +60,7 @@ class NovaController extends ChangeNotifier {
   final NovaExecutor _executor;
   late final StreamSubscription<NovaNativeEvent> _sub;
 
-  /// Spoken replies (Brains Jet voice in the app, phone voice as fallback).
+  /// Spoken replies (the NOVA voice chosen in settings; phone voice as fallback).
   /// Owned by whoever passed it in.
   final NovaVoiceOutput _voice;
   late final StreamSubscription<String> _voiceSub;
@@ -85,7 +86,8 @@ class NovaController extends ChangeNotifier {
   List<NovaChoice> _choices = const [];
   List<NovaChoice> get choices => _choices;
 
-  /// 'microphone' or 'contacts' while waiting for the user to allow access.
+  /// 'microphone', 'contacts' or 'audio' (NOVA Music) while waiting for the
+  /// user to allow access.
   String? _permissionKind;
   String? get permissionKind => _permissionKind;
 
@@ -101,6 +103,13 @@ class NovaController extends ChangeNotifier {
   Completer<void>? _speechDone;
   String? _speechId;
   DateTime? _lastActivation;
+
+  /// Listening through the phone's offline recogniser (no internet).
+  bool _deviceSpeech = false;
+
+  /// "Hey NOVA" heard twice (wake word + "Hey NOVA" again): listen once more
+  /// instead of stopping.
+  bool _relistened = false;
   String? _lastSubmitted;
   DateTime? _lastSubmittedAt;
   bool _disposed = false;
@@ -124,6 +133,7 @@ class NovaController extends ChangeNotifier {
 
     final s = _newSession();
     _choices = const [];
+    _relistened = false;
     _setState(NovaState.activating, reply: '', transcript: '');
     if (greet ?? _settings.greetOnActivate) {
       _setState(NovaState.activating, reply: NovaConfig.greeting);
@@ -137,12 +147,19 @@ class NovaController extends ChangeNotifier {
   Future<void> startListening() async {
     if (_state == NovaState.listening) return;
     final s = _newSession();
+    _relistened = false;
     await _listen(s);
   }
 
   /// Mic button while listening: stop and process what was said.
   Future<void> stopListening() async {
     if (_state != NovaState.listening) return;
+    if (_deviceSpeech) {
+      // The recogniser delivers the final words as an event.
+      _setState(NovaState.processingSpeech);
+      await _native.stopDeviceSpeech();
+      return;
+    }
     await _finishRecording(_session, 'manual');
   }
 
@@ -239,9 +256,11 @@ class NovaController extends ChangeNotifier {
     _offerPermissionSettings = true;
     await _respond(
       s,
-      kind == 'microphone'
-          ? 'Okay. Without microphone access you can still type to NOVA.'
-          : 'Okay. Without contacts access I can still dial a number if you say it.',
+      switch (kind) {
+        'microphone' => 'Okay. Without microphone access you can still type to NOVA.',
+        'audio' => "Okay. Without access to your music I can still search YouTube or Spotify for songs.",
+        _ => 'Okay. Without contacts access I can still dial a number if you say it.',
+      },
       addToHistory: false,
     );
   }
@@ -290,6 +309,11 @@ class NovaController extends ChangeNotifier {
 
   Future<void> _listen(int s) async {
     await _voice.stop();
+    if (!await _native.isOnline()) {
+      if (_alive(s)) await _listenOnDevice(s);
+      return;
+    }
+    if (!_alive(s)) return;
     final start = await _native.startRecording(
         maxSeconds: NovaConfig.maxRecordingSeconds, autoStop: true);
     if (!_alive(s)) {
@@ -315,6 +339,78 @@ class NovaController extends ChangeNotifier {
         break;
       default:
         await _fail(s, start.message ?? 'The microphone is unavailable right now.');
+    }
+  }
+
+  /// No internet: the phone's own (offline) speech recogniser hears the
+  /// command, so on-device commands such as "play <song>" still work.
+  Future<void> _listenOnDevice(int s) async {
+    final status = await _native.startDeviceSpeech();
+    if (!_alive(s)) {
+      if (status == 'listening') await _native.cancelDeviceSpeech();
+      return;
+    }
+    switch (status) {
+      case 'listening':
+        _deviceSpeech = true;
+        _choices = const [];
+        _setState(NovaState.listening, reply: '', transcript: '');
+        break;
+      case 'permission_required':
+        _permissionKind = 'microphone';
+        _pendingAction = null;
+        _setState(NovaState.permissionRequired,
+            reply: 'NOVA needs microphone access to hear you. '
+                'Audio is only recorded after you tap the mic or call NOVA.');
+        break;
+      case 'busy':
+        _setState(NovaState.idle,
+            reply: 'The microphone is busy right now. Try again in a moment.');
+        break;
+      default:
+        await _fail(s, offlineNoSpeech);
+    }
+  }
+
+  static const String offlineNoSpeech =
+      "You're offline, and this phone can't recognise speech without internet. "
+      'Type your request instead — music, apps and settings still work offline.';
+
+  void _onDeviceSpeech(NovaDeviceSpeechEvent e) {
+    if (!_deviceSpeech) return;
+    final s = _session;
+    if (e.kind == 'partial') {
+      if (_state == NovaState.listening) _setState(NovaState.listening, transcript: e.text);
+      return;
+    }
+    _deviceSpeech = false;
+    if (e.kind == 'result') {
+      final text = e.text.trim();
+      if (text.isEmpty) {
+        _setState(NovaState.idle, reply: "I didn't catch that. Tap the mic and try again.");
+        return;
+      }
+      _handle(text, s, fromVoice: true);
+      return;
+    }
+    switch (e.code) {
+      case 'interrupted':
+        _setState(NovaState.idle, reply: '');
+        break;
+      case 'no_speech':
+        _setState(NovaState.idle, reply: "I didn't catch that. Tap the mic and try again.");
+        break;
+      case 'permission':
+        _permissionKind = 'microphone';
+        _setState(NovaState.permissionRequired,
+            reply: 'NOVA needs microphone access to hear you.');
+        break;
+      case 'busy':
+        _setState(NovaState.idle,
+            reply: 'The microphone is busy right now. Try again in a moment.');
+        break;
+      default:
+        _fail(s, offlineNoSpeech);
     }
   }
 
@@ -353,16 +449,23 @@ class NovaController extends ChangeNotifier {
       _setState(NovaState.idle, reply: "I didn't catch that. Tap the mic and try again.");
       return;
     }
-    await _handle(transcript, s);
+    await _handle(transcript, s, fromVoice: true);
   }
 
-  Future<void> _handle(String text, int s) async {
+  Future<void> _handle(String text, int s, {bool fromVoice = false}) async {
     _transcript = text;
     _choices = const [];
     _permissionKind = null;
     _pendingAction = null;
 
     if (NovaCommandParser.isWakeOnly(text)) {
+      if (fromVoice && !_relistened) {
+        // "Hey NOVA" said again right after waking NOVA: keep listening.
+        _relistened = true;
+        await _respond(s, "I'm listening.", addToHistory: false);
+        if (_alive(s)) await _listen(s);
+        return;
+      }
       await _respond(s, NovaConfig.greeting, addToHistory: false);
       return;
     }
@@ -436,8 +539,10 @@ class NovaController extends ChangeNotifier {
         continue;
       }
       if (r.status == NovaActionStatus.permissionRequired) {
-        _permissionKind = 'contacts';
-        _pendingAction = action;
+        // r.action: the executor may have switched actions ("resume" with
+        // nothing queued → play all music).
+        _permissionKind = r.action.type == NovaActionType.playMusic ? 'audio' : 'contacts';
+        _pendingAction = r.action;
         history.addAssistant(r.message);
         _setState(NovaState.permissionRequired, reply: r.message);
         await _speak(r.message, s);
@@ -552,6 +657,8 @@ class NovaController extends ChangeNotifier {
       if (_state == NovaState.listening) _finishRecording(_session, e.reason);
     } else if (e is NovaTtsEvent) {
       if (e.kind != 'start' && e.utteranceId == _speechId) _completeSpeech();
+    } else if (e is NovaDeviceSpeechEvent) {
+      _onDeviceSpeech(e);
     }
   }
 
@@ -561,7 +668,12 @@ class NovaController extends ChangeNotifier {
     _session++;
     _cancel?.cancel();
     _cancel = null;
-    if (_state == NovaState.listening) _native.cancelRecording();
+    if (_deviceSpeech) {
+      _deviceSpeech = false;
+      _native.cancelDeviceSpeech();
+    } else if (_state == NovaState.listening) {
+      _native.cancelRecording();
+    }
     if (_speechDone != null) {
       _completeSpeech();
       _voice.stop();
@@ -606,7 +718,11 @@ class NovaController extends ChangeNotifier {
     _sub.cancel();
     _voiceSub.cancel();
     // The recorder is shared with other screens: only stop our own recording.
-    if (_state == NovaState.listening) _native.cancelRecording();
+    if (_deviceSpeech) {
+      _native.cancelDeviceSpeech();
+    } else if (_state == NovaState.listening) {
+      _native.cancelRecording();
+    }
     if (_speechDone != null || _state == NovaState.speaking) _voice.stop();
     _completeSpeech();
     level.dispose();

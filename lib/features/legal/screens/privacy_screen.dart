@@ -188,6 +188,14 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                     'to. Without an account, chats are kept only on your device. You can '
                     'rename or delete any chat from the chat history in NOVA AI; deleting '
                     'your account deletes all of your chats.'),
+                _sub('Photos You Show NOVA AI',
+                    'When you add a photo or screenshot in NOVA AI, or use "Ask NOVA about '
+                    'this page" in the browser, the image (and, for a page, its visible '
+                    'text) is sent to the NOVA AI service run by Tech Lyfe, which uses a '
+                    'third-party AI provider to read it and answer. It is not stored by the '
+                    'service. The photo is saved on your device with the chat and is never '
+                    'uploaded with your chat history; deleting the chat deletes it. Pages '
+                    'in private (incognito) tabs are never captured.'),
                 _sub('Music on Your Device',
                     'With your permission, NOVA Music reads the list of songs saved on '
                     'your device so it can play them, including offline. Your songs and '

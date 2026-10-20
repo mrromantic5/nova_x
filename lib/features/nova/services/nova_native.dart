@@ -37,6 +37,18 @@ class NovaAssistInvokedEvent extends NovaNativeEvent {
   final String reason;
 }
 
+/// Offline speech recognition (used when the phone has no internet).
+class NovaDeviceSpeechEvent extends NovaNativeEvent {
+  const NovaDeviceSpeechEvent(this.kind, {this.text = '', this.code = ''});
+
+  /// partial · result · error
+  final String kind;
+  final String text;
+
+  /// For errors: no_speech · offline_unavailable · permission · busy · interrupted · error
+  final String code;
+}
+
 class NovaRecordStart {
   const NovaRecordStart(this.status, [this.message]);
 
@@ -107,6 +119,15 @@ abstract class NovaNativeApi {
   Future<NovaAssistantStatus> assistantStatus();
   Future<bool> openAssistantSettings();
   Future<void> closeAssistant();
+
+  /// True when the phone has a working internet connection.
+  Future<bool> isOnline();
+
+  /// Offline voice input through the phone's own speech recogniser.
+  /// Returns listening · permission_required · busy · unavailable.
+  Future<String> startDeviceSpeech();
+  Future<void> stopDeviceSpeech();
+  Future<void> cancelDeviceSpeech();
 }
 
 class NovaNative implements NovaNativeApi {
@@ -143,6 +164,18 @@ class NovaNative implements NovaNativeApi {
         break;
       case 'onAssistInvoked':
         _events.add(NovaAssistInvokedEvent(arg == 'wake' ? 'wake' : 'assist'));
+        break;
+      case 'onDeviceSpeech':
+        if (arg is Map) {
+          final kind = arg['kind'];
+          final text = arg['text'];
+          final code = arg['code'];
+          _events.add(NovaDeviceSpeechEvent(
+            kind is String ? kind : 'error',
+            text: text is String ? text : '',
+            code: code is String ? code : '',
+          ));
+        }
         break;
     }
     return null;
@@ -252,6 +285,25 @@ class NovaNative implements NovaNativeApi {
 
   @override
   Future<void> closeAssistant() => _call('closeAssistant');
+
+  @override
+  Future<bool> isOnline() async {
+    final m = await _map('networkStatus');
+    return m['online'] != false; // unknown → assume online
+  }
+
+  @override
+  Future<String> startDeviceSpeech() async {
+    final m = await _map('startDeviceSpeech');
+    final status = m['status'];
+    return status is String ? status : 'unavailable';
+  }
+
+  @override
+  Future<void> stopDeviceSpeech() => _call('stopDeviceSpeech');
+
+  @override
+  Future<void> cancelDeviceSpeech() => _call('cancelDeviceSpeech');
 
   Future<void> _call(String method) async {
     try {

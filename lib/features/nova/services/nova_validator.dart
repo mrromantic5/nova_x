@@ -17,6 +17,12 @@ class NovaActionValidator {
     'date', 'data', 'nfc', 'default_apps', 'assistant',
   };
 
+  /// NOVA Music controls (music_control "command"), including media volume.
+  static const Set<String> musicCommands = {
+    'pause', 'resume', 'next', 'previous', 'stop', 'now_playing',
+    'volume_up', 'volume_down', 'mute', 'unmute',
+  };
+
   /// Apps that support "search inside the app" through a validated deep link.
   static const Set<String> searchableApps = {
     'youtube', 'spotify', 'maps', 'play_store', 'x',
@@ -101,6 +107,28 @@ class NovaActionValidator {
       case NovaActionType.navigate:
         final d = cleanText(args['destination'], 200);
         return d == null ? null : NovaAction(type, {'destination': d});
+      case NovaActionType.playMusic:
+        // Empty query = "play some music". A song id comes only from NOVA's
+        // own choice list (digits only).
+        final rawQuery = (args['query'] ?? '').trim();
+        final query = rawQuery.isEmpty ? '' : cleanText(rawQuery, 200);
+        if (query == null) return null;
+        final rawId = args['song_id'];
+        String? songId;
+        if (rawId != null) {
+          if (!RegExp(r'^\d{1,18}$').hasMatch(rawId)) return null;
+          songId = rawId;
+        }
+        final label = cleanText(args['label'], 120);
+        return NovaAction(type, {
+          'query': query,
+          if (songId != null) 'song_id': songId,
+          if (label != null) 'label': label,
+        });
+      case NovaActionType.musicControl:
+        final command = args['command'];
+        if (command == null || !musicCommands.contains(command)) return null;
+        return NovaAction(type, {'command': command});
     }
   }
 
@@ -202,6 +230,8 @@ class NovaActionValidator {
     'nova settings': 'nova_settings', 'nova assistant settings': 'nova_settings',
     'assistant settings': 'nova_settings',
     'nova x settings': 'browser_settings', 'browser settings': 'browser_settings',
+    'nova music': 'nova_music', 'music player': 'nova_music', 'my music': 'nova_music',
+    'music app': 'nova_music', 'nova music player': 'nova_music', 'music library': 'nova_music',
   };
 
   /// Web pages used when an app isn't installed (opened inside NOVA X).

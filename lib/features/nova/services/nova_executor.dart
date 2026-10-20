@@ -53,6 +53,7 @@ class NovaExecutor {
     'nova_ai': 'NOVA AI chat',
     'nova_settings': 'NOVA assistant settings',
     'browser_settings': 'NOVA X settings',
+    'nova_music': 'NOVA Music',
   };
 
   Future<NovaActionResult> execute(NovaAction a) async {
@@ -66,6 +67,8 @@ class NovaExecutor {
         NovaActionType.dialNumber => _dial(a),
         NovaActionType.openSettings => _openSettings(a),
         NovaActionType.navigate => _navigate(a),
+        NovaActionType.playMusic => _playMusic(a),
+        NovaActionType.musicControl => _musicControl(a),
       };
     } catch (_) {
       return _result(a, NovaActionStatus.failed, 'Something went wrong while doing that.');
@@ -115,6 +118,10 @@ class NovaExecutor {
         }
         return _result(a, NovaActionStatus.success, 'Opening $label.');
       case 'not_found':
+        // No music app on the phone: NOVA X's own player plays the songs.
+        if (canonical == 'music' && await _host.openFeature('nova_music')) {
+          return _result(a, NovaActionStatus.success, 'Opening NOVA Music.');
+        }
         final web = NovaActionValidator.webFallbacks[canonical];
         if (web != null && await _host.openInBrowser(web)) {
           return _result(a, NovaActionStatus.success,
@@ -184,6 +191,7 @@ class NovaExecutor {
       }
     }
 
+    _dedupeNumbers(matches);
     if (matches.isEmpty) {
       return _result(a, NovaActionStatus.notFound, "I couldn't find “$name” in your contacts.");
     }
@@ -231,6 +239,141 @@ class NovaExecutor {
     }
     if (r.status == 'invalid') {
       return _result(a, NovaActionStatus.invalid, "That phone number doesn't look right.");
+    }
+    return _nativeFailure(a, r.status);
+  }
+
+  /// The same number saved twice (e.g. "+233 27 127 3330" and "0271273330")
+  /// is offered once.
+  static void _dedupeNumbers(List<Map<String, String>> matches) {
+    final seen = <String>{};
+    matches.retainWhere((m) {
+      final digits = (m['number'] ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+      final key = digits.length > 9 ? digits.substring(digits.length - 9) : digits;
+      return key.isEmpty || seen.add(key);
+    });
+  }
+
+  // ── NOVA Music ────────────────────────────────────────────────────────────
+
+  Future<NovaActionResult> _playMusic(NovaAction a) async {
+    final query = a.arg('query');
+    final r = await _native.runAction('play_music', {
+      'query': query,
+      if (a.args['song_id'] != null) 'song_id': a.arg('song_id'),
+    });
+    switch (r.status) {
+      case 'success':
+        final title = r.str('title') ?? 'your music';
+        final artist = r.str('artist') ?? '';
+        final by = artist.isEmpty ? '' : ' by $artist';
+        final kind = r.str('kind');
+        if (kind == 'all') {
+          return _result(a, NovaActionStatus.success, 'Shuffling your music, starting with $title$by.');
+        }
+        if (kind == 'artist') {
+          final name = r.str('artistName') ?? artist;
+          return _result(a, NovaActionStatus.success, 'Playing songs by $name, starting with $title.');
+        }
+        return _result(a, NovaActionStatus.success, 'Playing $title$by.');
+      case 'choices':
+        final raw = r.data['matches'];
+        final choices = <NovaChoice>[];
+        if (raw is List) {
+          for (final m in raw.take(4)) {
+            if (m is! Map) continue;
+            final id = m['id'];
+            final title = m['title'];
+            final artist = m['artist'];
+            if (id is! String || title is! String) continue;
+            final pick = NovaActionValidator.build(
+                NovaActionType.playMusic, {'query': '', 'song_id': id, 'label': title});
+            if (pick == null) continue;
+            choices.add(NovaChoice(
+              label: title,
+              subtitle: artist is String && artist.isNotEmpty ? artist : null,
+              action: pick,
+            ));
+          }
+        }
+        if (choices.isEmpty) return _musicNotFound(a, query);
+        return NovaActionResult(
+          action: a,
+          status: NovaActionStatus.needsClarification,
+          message: 'I found a few songs like “$query”. Which one should I play?',
+          choices: choices,
+        );
+      case 'not_found':
+        return _musicNotFound(a, query);
+      case 'empty':
+        return _result(a, NovaActionStatus.notFound,
+            "I couldn't find any music saved on this phone. Download or copy songs to your phone "
+            'and they will appear in NOVA Music.');
+      case 'permission_required':
+        return _result(a, NovaActionStatus.permissionRequired,
+            'To play your songs, NOVA needs access to the music and audio files on this phone. '
+            'Your music stays on your phone — nothing is uploaded.');
+      default:
+        return _nativeFailure(a, r.status);
+    }
+  }
+
+  /// Song not on the phone: offer to search YouTube or Spotify instead.
+  NovaActionResult _musicNotFound(NovaAction a, String query) {
+    if (query.isEmpty) {
+      return _result(a, NovaActionStatus.notFound, "I couldn't find any music on this phone.");
+    }
+    final choices = <NovaChoice>[];
+    for (final app in const ['youtube', 'spotify']) {
+      final search = NovaActionValidator.build(NovaActionType.searchInApp, {'app': app, 'query': query});
+      if (search != null) {
+        choices.add(NovaChoice(
+          label: 'Search ${NovaActionValidator.displayName(app)}',
+          subtitle: query,
+          action: search,
+        ));
+      }
+    }
+    return NovaActionResult(
+      action: a,
+      status: choices.isEmpty ? NovaActionStatus.notFound : NovaActionStatus.needsClarification,
+      message: "I couldn't find “$query” on your phone. Should I search for it online?",
+      choices: choices,
+    );
+  }
+
+  Future<NovaActionResult> _musicControl(NovaAction a) async {
+    final command = a.arg('command');
+    final r = await _native.runAction('music_control', {'command': command});
+    final title = r.str('title') ?? 'the song';
+    final artist = r.str('artist') ?? '';
+    final by = artist.isEmpty ? '' : ' by $artist';
+    if (r.status == 'success') {
+      final message = switch (command) {
+        'pause' => 'Paused.',
+        'resume' => 'Playing $title$by.',
+        'next' => 'Next up: $title$by.',
+        'previous' => 'Playing $title$by.',
+        'stop' => 'Music stopped.',
+        'now_playing' => r.data['playing'] == true
+            ? 'This is $title$by.'
+            : '$title$by is paused.',
+        'volume_up' => 'Turning the volume up.',
+        'volume_down' => 'Turning the volume down.',
+        'mute' => 'Muted.',
+        'unmute' => 'Sound is back on.',
+        _ => 'Done.',
+      };
+      return _result(a, NovaActionStatus.success, message);
+    }
+    if (r.status == 'not_playing') {
+      if (command == 'resume') {
+        // "play the music" with nothing queued → play everything.
+        final all = NovaActionValidator.build(NovaActionType.playMusic, {'query': ''});
+        if (all != null) return _playMusic(all);
+      }
+      return _result(a, NovaActionStatus.notFound,
+          "Nothing is playing right now. Say “play” and a song name, or “play some music”.");
     }
     return _nativeFailure(a, r.status);
   }

@@ -18,6 +18,7 @@ import 'package:nova_x/core/services/api_service.dart';
 import 'nova_chat_api.dart';
 import 'nova_chat_models.dart';
 import 'nova_chat_store.dart';
+import 'nova_media_store.dart';
 
 class NovaChatRepository extends ChangeNotifier {
   NovaChatRepository._(this._store, this._api);
@@ -117,7 +118,9 @@ class NovaChatRepository extends ChangeNotifier {
 
   /// A short title from the first message.
   static String titleFrom(String text) {
-    var t = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final parts = NovaMediaStore.split(text);
+    var t = parts.text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (t.isEmpty && parts.photos.isNotEmpty) return 'Photo';
     final lower = t.toLowerCase();
     if (lower.startsWith('/image ')) t = 'Image: ${t.substring(7).trim()}';
     if (lower.startsWith('/video ')) t = 'Video: ${t.substring(7).trim()}';
@@ -249,6 +252,7 @@ class NovaChatRepository extends ChangeNotifier {
   Future<void> delete(String id) async {
     _store.chats.removeWhere((c) => c.id == id);
     _toUpload.remove(id);
+    unawaited(NovaMediaStore.deleteChat(id)); // its photos on this phone
     final api = _api;
     if (api != null) _store.pendingDeletes.add(id);
     _notify();
@@ -263,6 +267,7 @@ class NovaChatRepository extends ChangeNotifier {
   Future<void> _forget(String id) async {
     _store.chats.removeWhere((c) => c.id == id);
     _toUpload.remove(id);
+    unawaited(NovaMediaStore.deleteChat(id));
     _notify();
     await _store.removeMessages(id);
     await _saveIndexQuietly();
@@ -326,6 +331,7 @@ class NovaChatRepository extends ChangeNotifier {
       _notify();
       for (final id in removed) {
         await _store.removeMessages(id);
+        unawaited(NovaMediaStore.deleteChat(id)); // deleted on another phone
       }
       await _saveIndexQuietly();
 

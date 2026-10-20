@@ -37,7 +37,14 @@ enum NovaActionType {
   callContact('call_contact'),
   dialNumber('dial_number'),
   openSettings('open_settings'),
-  navigate('navigate');
+  navigate('navigate'),
+
+  /// NOVA Music: play songs saved on the phone (offline).
+  playMusic('play_music'),
+
+  /// NOVA Music: pause · resume · next · previous · stop · now_playing,
+  /// and the phone's media volume (volume_up · volume_down · mute · unmute).
+  musicControl('music_control');
 
   const NovaActionType(this.wireName);
 
@@ -174,12 +181,24 @@ class NovaPageContent {
 
 /// Voice/assistant preferences (stored locally on the phone).
 class NovaSettings {
-  const NovaSettings({this.speakReplies = true, this.greetOnActivate = true});
+  const NovaSettings({
+    this.speakReplies = true,
+    this.greetOnActivate = true,
+    this.voice = defaultVoice,
+  });
+
+  /// NOVA's default voice (the British "Libby" voice NOVA X used before).
+  static const String defaultVoice = 'libby';
+
   final bool speakReplies;
   final bool greetOnActivate;
 
-  NovaSettings copyWith({bool? speakReplies, bool? greetOnActivate}) => NovaSettings(
+  /// NOVA Voice short name (see NovaVoiceCatalog).
+  final String voice;
+
+  NovaSettings copyWith({bool? speakReplies, bool? greetOnActivate, String? voice}) => NovaSettings(
         speakReplies: speakReplies ?? this.speakReplies,
         greetOnActivate: greetOnActivate ?? this.greetOnActivate,
+        voice: voice ?? this.voice,
       );
 }

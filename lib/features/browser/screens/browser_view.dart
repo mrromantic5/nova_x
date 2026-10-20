@@ -8,6 +8,7 @@
 
 import 'dart:convert';
 import 'dart:collection';
+import 'dart:typed_data';
 import 'package:nova_x/core/services/biometric_service.dart';
 import 'dart:io';
 import 'package:speech_to_text/speech_to_text.dart';
@@ -29,6 +30,8 @@ import 'package:nova_x/core/services/tabs_service.dart';
 import 'package:nova_x/features/browser/screens/tabs_screen.dart';
 import '../widgets/devtools_panel.dart';
 import 'package:url_launcher/url_launcher.dart' as ul;
+import 'package:nova_x/features/ai/screens/ai_assistant_screen.dart';
+import 'package:nova_x/features/ai/services/nova_media_store.dart';
 import 'package:nova_x/features/nova/models/nova_models.dart';
 import 'package:nova_x/features/nova/nova_launcher.dart';
 import 'package:nova_x/features/nova/services/nova_wake.dart';
@@ -1361,6 +1364,9 @@ class _BrowserViewState extends State<BrowserView>
           _menuTile(Icons.auto_awesome_rounded, 'Summarise with NOVA',
             () { Navigator.pop(context); _summariseWithNova(); },
             color: AppTheme.accentCyan),
+          _menuTile(Icons.image_search_rounded, 'Ask NOVA about this page',
+            () { Navigator.pop(context); _askNovaAboutPage(); },
+            color: AppTheme.accentCyan),
 
           // ── AD BLOCKER ──────────────────────────────────────────────────────
           ListTile(
@@ -1427,6 +1433,49 @@ class _BrowserViewState extends State<BrowserView>
     if (!mounted) return;
     await showNovaAssistant(context,
         summarise: NovaPageContent(title: _pageTitle, url: _currentUrl, text: text));
+  }
+
+  /// Captures what is on screen (+ the page's visible text) and opens NOVA AI
+  /// with it attached. Only when the user asks; never in private tabs.
+  Future<void> _askNovaAboutPage() async {
+    if (widget.incognito) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Not available in private tabs, so nothing from them is kept.')));
+      return;
+    }
+    final wvc = _wvc;
+    if (wvc == null) return;
+    Uint8List? shot;
+    String text = '';
+    // Smaller JPEG until it fits what NOVA AI accepts (≈ 2 MB).
+    for (final quality in const [75, 55, 35]) {
+      try {
+        shot = await wvc.takeScreenshot(
+            screenshotConfiguration: ScreenshotConfiguration(
+                compressFormat: CompressFormat.JPEG, quality: quality));
+      } catch (_) {
+        shot = null;
+      }
+      if (shot == null || shot.length <= NovaMediaStore.maxBytes) break;
+    }
+    if (shot != null && shot.length > NovaMediaStore.maxBytes) shot = null;
+    try {
+      final r = await wvc.evaluateJavascript(source:
+          "(function(){try{return (document.body&&document.body.innerText||'').slice(0,12000);}catch(e){return '';}})()");
+      if (r is String) text = r;
+    } catch (_) {}
+    if (!mounted) return;
+    if (shot == null || shot.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text("Couldn't capture this page. Try again when it has loaded.")));
+      return;
+    }
+    final Uint8List image = shot;
+    Navigator.push(context, MaterialPageRoute(
+      builder: (_) => AiAssistantScreen(
+        pageCapture: NovaPageCapture(image: image, title: _pageTitle, url: _currentUrl, text: text),
+      ),
+    ));
   }
 
   Widget _menuTile(IconData icon, String label, VoidCallback onTap,

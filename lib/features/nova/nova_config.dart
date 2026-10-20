@@ -28,7 +28,7 @@ class NovaConfig {
 
   // Limits mirrored from the Worker so requests are never rejected for size.
   static const int maxHistoryMessages = 10; // Worker keeps history.slice(-10)
-  static const int maxHistoryChars = 2000; // Worker truncates each to 2000
+  static const int maxHistoryChars = 4000; // Worker 3.4 keeps 4000 per message
   static const int maxMessageChars = 4000; // Worker returns 413 above 4000
 
   /// /vision accepts up to 8000 characters (question + page text).
@@ -42,5 +42,40 @@ class NovaConfig {
   // Agent safety limits
   static const int maxPlanSteps = 3;
 
-  static const String greeting = 'Hi, NOVA is active to assist you.';
+  static const String greeting = 'Hi! How can I help?';
+
+  static const _morning = [
+    'Good morning! What can I do for you?',
+    'Morning! How can I help?',
+    "Good morning — what's on your mind?",
+  ];
+  static const _afternoon = [
+    'Good afternoon! What can I help with?',
+    'Hey! What do you need?',
+    'Hi there — how can I help this afternoon?',
+  ];
+  static const _evening = [
+    'Good evening! What can I do for you?',
+    'Evening! How can I help?',
+    "Hi! What's on your mind tonight?",
+  ];
+  static const _night = [
+    'Hey, night owl! What do you need?',
+    "Hi! I'm here — what can I do?",
+    'Still up? How can I help?',
+  ];
+
+  /// A short, friendly greeting that fits the time of day and changes each
+  /// time ([pick] chooses the wording; any int works).
+  static String greetingFor(DateTime now, int pick) {
+    final h = now.hour;
+    final options = h >= 5 && h < 12
+        ? _morning
+        : h >= 12 && h < 17
+            ? _afternoon
+            : h >= 17 && h < 22
+                ? _evening
+                : _night;
+    return options[pick.abs() % options.length];
+  }
 }

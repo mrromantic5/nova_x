@@ -6,6 +6,12 @@
 //
 // Runs in its own Flutter engine (entrypoint `novaAssistantMain` in
 // main.dart, hosted by NovaAssistActivity on a transparent window).
+//
+// 3.4.0: 📷 adds photos / screenshots from the camera or gallery, and
+// "Read my screen" lets NOVA see the app in front: ONE screenshot, only after
+// the user agrees in Android's screen-capture dialog (never over the lock
+// screen). The panel hides itself for that moment so NOVA sees the app, not
+// the panel. Photos and screenshots here stay in memory only.
 
 import 'dart:async';
 
@@ -13,12 +19,14 @@ import 'package:flutter/material.dart';
 
 import '../../core/database/local_db.dart';
 import '../../core/theme/app_theme.dart';
+import '../ai/services/nova_media_store.dart';
 import 'controller/nova_controller.dart';
 import 'models/nova_models.dart';
 import 'services/nova_api.dart';
 import 'services/nova_executor.dart';
 import 'services/nova_native.dart';
 import 'services/nova_prefs.dart';
+import 'services/nova_screen.dart';
 import 'services/nova_voice.dart';
 import 'services/nova_wake.dart';
 import 'widgets/nova_panel.dart';
@@ -102,6 +110,10 @@ class _NovaOverlayScreenState extends State<NovaOverlayScreen> {
   );
   StreamSubscription<NovaNativeEvent>? _invocations;
 
+  /// True while the screenshot is taken (the panel is invisible).
+  bool _hidden = false;
+  bool _busyMedia = false;
+
   @override
   void initState() {
     super.initState();
@@ -122,7 +134,95 @@ class _NovaOverlayScreenState extends State<NovaOverlayScreen> {
 
   void _close() {
     _controller.cancel();
+    NovaScreen.cancel();
     NovaNative.instance.closeAssistant();
+  }
+
+  void _say(String text) => ScaffoldMessenger.maybeOf(context)
+      ?.showSnackBar(SnackBar(content: Text(text), duration: const Duration(seconds: 3)));
+
+  /// 📷 — camera or gallery (the panel stays open while picking).
+  Future<void> _addPhoto() async {
+    if (_busyMedia) return;
+    if (await NovaScreen.phoneLocked()) {
+      _say('Unlock your phone to add photos.');
+      return;
+    }
+    if (!mounted) return;
+    final room = 3 - _controller.pendingImages.length;
+    if (room <= 0) {
+      _say('You can add up to 3 photos.');
+      return;
+    }
+    final camera = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: AppTheme.bgCard,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            leading: const Icon(Icons.photo_camera_outlined, color: AppTheme.accentCyan),
+            title: const Text('Take a photo', style: TextStyle(color: Colors.white)),
+            onTap: () => Navigator.pop(ctx, true),
+          ),
+          ListTile(
+            leading: const Icon(Icons.photo_library_outlined, color: AppTheme.accentCyan),
+            title: const Text('Photo or screenshot from gallery', style: TextStyle(color: Colors.white)),
+            onTap: () => Navigator.pop(ctx, false),
+          ),
+        ]),
+      ),
+    );
+    if (camera == null || !mounted) return;
+    _busyMedia = true;
+    await NovaScreen.keepAssistantOpen(true);
+    try {
+      final photos = await NovaMediaStore.pick(camera: camera, max: room);
+      if (photos.isNotEmpty) {
+        _controller.addImages([for (final p in photos) NovaVisionImage(p.bytes, p.mime)]);
+      }
+    } on NovaPhotoException catch (e) {
+      _say(e.message);
+    } finally {
+      await NovaScreen.keepAssistantOpen(false);
+      _busyMedia = false;
+    }
+  }
+
+  /// "Read my screen": Android's consent dialog, then one screenshot.
+  Future<void> _readScreen() async {
+    if (_busyMedia) return;
+    _busyMedia = true;
+    _controller.cancel();
+    try {
+      await NovaScreen.keepAssistantOpen(true);
+      final consent = await NovaScreen.request();
+      if (consent != NovaScreenStatus.granted) {
+        if (consent != NovaScreenStatus.denied) _say(NovaScreen.messageFor(consent));
+        return;
+      }
+      if (!mounted) {
+        await NovaScreen.cancel();
+        return;
+      }
+      // Hide the panel so the screenshot shows the app behind it.
+      setState(() => _hidden = true);
+      await WidgetsBinding.instance.endOfFrame;
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      final shot = await NovaScreen.grab();
+      if (!mounted) return;
+      setState(() => _hidden = false);
+      final bytes = shot.bytes;
+      if (shot.status == NovaScreenStatus.ok && bytes != null) {
+        _controller.addImages([NovaVisionImage(bytes, 'image/jpeg')], fromScreen: true);
+      } else {
+        _say(NovaScreen.messageFor(shot.status));
+      }
+    } finally {
+      await NovaScreen.keepAssistantOpen(false);
+      _busyMedia = false;
+      if (mounted && _hidden) setState(() => _hidden = false);
+    }
   }
 
   Future<void> _toggleVoice(bool on) async {
@@ -144,33 +244,41 @@ class _NovaOverlayScreenState extends State<NovaOverlayScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: _close,
-              child: const ColoredBox(color: Color(0x47000000)),
-            ),
-          ),
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: TweenAnimationBuilder<double>(
-              tween: Tween(begin: 0, end: 1),
-              duration: const Duration(milliseconds: 320),
-              curve: Curves.easeOutCubic,
-              builder: (context, v, child) => Opacity(
-                opacity: v,
-                child: Transform.translate(offset: Offset(0, (1 - v) * 60), child: child),
-              ),
-              child: NovaPanel(
-                controller: _controller,
-                onClose: _close,
-                onToggleVoice: _toggleVoice,
+      body: Visibility(
+        visible: !_hidden,
+        maintainState: true,
+        maintainAnimation: true,
+        maintainSize: true,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _close,
+                child: const ColoredBox(color: Color(0x47000000)),
               ),
             ),
-          ),
-        ],
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: TweenAnimationBuilder<double>(
+                tween: Tween(begin: 0, end: 1),
+                duration: const Duration(milliseconds: 320),
+                curve: Curves.easeOutCubic,
+                builder: (context, v, child) => Opacity(
+                  opacity: v,
+                  child: Transform.translate(offset: Offset(0, (1 - v) * 60), child: child),
+                ),
+                child: NovaPanel(
+                  controller: _controller,
+                  onClose: _close,
+                  onToggleVoice: _toggleVoice,
+                  onAddPhoto: _addPhoto,
+                  onReadScreen: _readScreen,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

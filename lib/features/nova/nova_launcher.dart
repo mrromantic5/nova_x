@@ -8,7 +8,9 @@
 import 'package:flutter/material.dart';
 
 import '../../core/database/local_db.dart';
+import '../../core/theme/app_theme.dart';
 import '../ai/screens/ai_assistant_screen.dart';
+import '../ai/services/nova_media_store.dart';
 import '../bookmarks/screens/bookmarks_screen.dart';
 import '../browser/screens/browser_view.dart';
 import '../downloads/screens/downloads_screen.dart';
@@ -173,6 +175,44 @@ class _NovaSheetState extends State<_NovaSheet> {
     await NovaPrefs.save(next);
   }
 
+  /// 📷 — a photo or screenshot from the camera or gallery for NOVA to read.
+  Future<void> _addPhoto() async {
+    final room = 3 - _controller.pendingImages.length;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (room <= 0) {
+      messenger?.showSnackBar(const SnackBar(content: Text('You can add up to 3 photos.')));
+      return;
+    }
+    final camera = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: AppTheme.bgCard,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            leading: const Icon(Icons.photo_camera_outlined, color: AppTheme.accentCyan),
+            title: const Text('Take a photo', style: TextStyle(color: Colors.white)),
+            onTap: () => Navigator.pop(ctx, true),
+          ),
+          ListTile(
+            leading: const Icon(Icons.photo_library_outlined, color: AppTheme.accentCyan),
+            title: const Text('Photo or screenshot from gallery', style: TextStyle(color: Colors.white)),
+            onTap: () => Navigator.pop(ctx, false),
+          ),
+        ]),
+      ),
+    );
+    if (camera == null || !mounted) return;
+    try {
+      final photos = await NovaMediaStore.pick(camera: camera, max: room);
+      if (photos.isNotEmpty && mounted) {
+        _controller.addImages([for (final p in photos) NovaVisionImage(p.bytes, p.mime)]);
+      }
+    } on NovaPhotoException catch (e) {
+      messenger?.showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+
   @override
   void dispose() {
     _controller.dispose();
@@ -187,6 +227,7 @@ class _NovaSheetState extends State<_NovaSheet> {
     return NovaPanel(
       controller: _controller,
       onToggleVoice: _toggleVoice,
+      onAddPhoto: _addPhoto,
       onClose: () {
         _controller.cancel();
         _closeSheet();

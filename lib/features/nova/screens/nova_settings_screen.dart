@@ -120,9 +120,70 @@ class _NovaSettingsScreenState extends State<NovaSettingsScreen> with WidgetsBin
           ? 'Say "Hey NOVA" to call NOVA, even in other apps'
           : 'Say "Hey NOVA" to call NOVA while NOVA X is open';
     }
-    if (w.running) return 'Listening on this phone — say "Hey NOVA"';
+    if (w.running) {
+      return w.screenOff
+          ? 'Listening on this phone, also with the screen off — say "Hey NOVA"'
+          : 'Listening on this phone — say "Hey NOVA"';
+    }
     if (w.error == 'microphone') return 'Needs microphone access';
     return 'Starts again when you open NOVA X';
+  }
+
+  /// "Listen when the screen is off" (off by default; explained before it turns on).
+  Future<void> _setScreenOff(bool on) async {
+    if (!on) {
+      await NovaWake.setScreenOff(false);
+      await _refresh();
+      return;
+    }
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.bgCard,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text('Listen when the screen is off',
+            style: GoogleFonts.spaceGrotesk(
+                color: AppTheme.textPrimary, fontWeight: FontWeight.w700, fontSize: 17)),
+        content: SingleChildScrollView(
+          child: Text(
+            '• NOVA keeps listening for "Hey NOVA" while the screen is off or locked.\n'
+            '• When it hears you, the screen turns on and NOVA opens over the lock screen.\n'
+            '• Music and questions work while locked. Opening apps, calling and other '
+            'personal actions ask you to unlock first.\n'
+            '• Sound is still checked on this phone only — nothing is recorded or sent '
+            'until NOVA opens. The notification stays visible.\n'
+            '• This uses noticeably more battery. Turn it off any time here.\n\n'
+            'For it to work, allow "Display over other apps" and set NOVA X\'s battery '
+            'use to "Unrestricted" (next steps).',
+            style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 13, height: 1.5),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('Not now', style: GoogleFonts.inter(color: AppTheme.textHint)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.accentCyan, foregroundColor: Colors.black),
+            child: Text('Turn on', style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+    if (go != true) return;
+    await NovaWake.setScreenOff(true);
+    await _refresh();
+    if (!mounted) return;
+    // Next step the phone still needs: overlay first (opens over the lock screen).
+    if (!_wake.overlay) {
+      _snack('Allow "Display over other apps" so NOVA can open over the lock screen.');
+      await NovaWake.openOverlaySettings();
+    } else if (!_wake.batteryUnrestricted) {
+      _snack('Set battery use to "Unrestricted" so the phone doesn\'t stop NOVA.');
+      await NovaWake.openBatterySettings();
+    }
   }
 
   Future<void> _save(NovaSettings s) async {
@@ -280,7 +341,8 @@ class _NovaSettingsScreenState extends State<NovaSettingsScreen> with WidgetsBin
                       '(Tech Lyfe, using Microsoft\'s online voices) to create the audio. '
                       'The audio is played, then deleted from your phone.\n'
                       '• "Hey NOVA" listens on your phone only: sound is checked in memory and '
-                      'never recorded, kept or sent until NOVA opens.\n'
+                      'never recorded, kept or sent until NOVA opens (also with the screen off, '
+                      'if you turn that on).\n'
                       '• Voice-assistant conversations are not saved after you close NOVA. '
                       'NOVA AI chats are kept in your chat history (on this phone, and in your '
                       'NOVA X account when you are signed in) until you delete them.\n'
@@ -413,13 +475,41 @@ class _NovaSettingsScreenState extends State<NovaSettingsScreen> with WidgetsBin
           onChanged: _wakeBusy ? null : _setWake,
         ),
         if (w.enabled && w.background)
+          SwitchListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+            secondary: _leading(Icons.screen_lock_portrait_rounded, AppTheme.accentCyan),
+            title: Text('Listen when the screen is off',
+                style: GoogleFonts.inter(
+                    color: AppTheme.textPrimary, fontSize: 14, fontWeight: FontWeight.w500)),
+            subtitle: Text(
+                w.screenOff
+                    ? 'On — NOVA wakes the screen and opens over the lock screen. Uses more battery'
+                    : 'Off — NOVA pauses while the screen is off (saves battery)',
+                style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11.5)),
+            value: w.screenOff,
+            activeColor: AppTheme.accentCyan,
+            onChanged: _wakeBusy ? null : _setScreenOff,
+          ),
+        if (w.enabled && w.background)
           _permissionTile(
             Icons.open_in_new_rounded,
             'Open NOVA over other apps',
-            'Allow "Display over other apps" so "Hey NOVA" opens NOVA straight away. '
-                'Without it, NOVA shows a notification you tap.',
+            w.screenOff
+                ? 'Needed to open NOVA over other apps and over the lock screen. '
+                    'Without it, NOVA shows a notification you tap.'
+                : 'Allow "Display over other apps" so "Hey NOVA" opens NOVA straight away. '
+                    'Without it, NOVA shows a notification you tap.',
             w.overlay,
             NovaWake.openOverlaySettings,
+          ),
+        if (w.enabled && w.screenOff)
+          _permissionTile(
+            Icons.battery_charging_full_rounded,
+            'Battery: Unrestricted',
+            'Choose NOVA X → "Unrestricted" / "Don\'t optimise" so the phone doesn\'t stop '
+                'NOVA while the screen is off',
+            w.batteryUnrestricted,
+            NovaWake.openBatterySettings,
           ),
         if (w.enabled && !w.notifications)
           _permissionTile(
@@ -438,7 +528,9 @@ class _NovaSettingsScreenState extends State<NovaSettingsScreen> with WidgetsBin
             '• A notification shows while NOVA listens. Turn it off here or from the notification.\n'
             '• It runs on your phone and uses some battery while on.\n'
             '• After the phone restarts, open NOVA X once to start listening again.\n'
-            '• NOVA pauses during calls and while you use NOVA itself.'
+            '• NOVA pauses during calls and while you use NOVA itself.\n'
+            '• With the screen off it pauses to save battery, unless you turn on '
+            '"Listen when the screen is off".'
             '${w.background ? '' : '\n• On this Android version NOVA listens only while NOVA X is open.'}',
       ),
     ];

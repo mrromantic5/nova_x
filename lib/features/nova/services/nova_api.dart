@@ -70,6 +70,10 @@ abstract class NovaApi {
   Future<NovaPlannerResult?> plan(String message, List<Map<String, String>> history,
       {CancelToken? cancel});
 
+  /// Question about 1–3 images (photos, screenshots, a captured screen).
+  Future<String> vision(String message, List<Map<String, String>> history, List<NovaVisionImage> images,
+      {CancelToken? cancel});
+
   void dispose();
 }
 
@@ -107,8 +111,9 @@ class NovaApiClient implements NovaApi {
     return reply.trim();
   }
 
-  /// Chat about 1–3 images (NOVA AI screen). Not retried automatically: the
-  /// upload can be large on slow connections.
+  /// Chat about 1–3 images (NOVA AI chat and the assistant panel). Not
+  /// retried automatically: the upload can be large on slow connections.
+  @override
   Future<String> vision(String message, List<Map<String, String>> history, List<NovaVisionImage> images,
       {CancelToken? cancel}) async {
     if (images.isEmpty) {

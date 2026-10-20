@@ -2,13 +2,19 @@ package com.tlyfe.nova_x.nova
 
 import android.Manifest
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import com.tlyfe.nova_x.music.NovaMusicBridge
+import com.tlyfe.nova_x.music.NovaMusicCommands
+import com.tlyfe.nova_x.music.NovaMusicLibrary
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -24,10 +30,15 @@ import io.flutter.plugin.common.MethodChannel
  *   runAction{action,args}   — action ∈ ALLOWED_ACTIONS only
  *   assistantStatus · openAssistantSettings · closeAssistant · launchReason
  *   wakeStatus · setWakeEnabled{enabled} · setWakeHold{reason,held} · openOverlaySettings
+ *   playVoiceFile{path,id} · stopVoiceFile          — NOVA's cloud voice (MP3 in the app cache)
+ *   networkStatus · startDeviceSpeech · stopDeviceSpeech · cancelDeviceSpeech — offline voice input
  *
  * Android → Dart events:
  *   onAmplitude(double) · onRecordingAutoStopped(reason)
  *   onTtsStart(id) · onTtsDone(id) · onTtsError(id) · onAssistInvoked(reason)
+ *   onDeviceSpeech({kind: partial|result|error, text, code})
+ *
+ * NOVA Music has its own channel (NovaMusicBridge, created here).
  *
  * One instance per Flutter engine (MainActivity and NovaAssistActivity each
  * create their own and dispose it in onDestroy).
@@ -47,11 +58,13 @@ class NovaBridge(
             "contacts" to Manifest.permission.READ_CONTACTS,
             // Only a runtime permission from Android 13; granted before that.
             "notifications" to "android.permission.POST_NOTIFICATIONS",
+            // NOVA Music: "Music and audio" (Android 13+) or storage read access (older).
+            "audio" to NovaMusicLibrary.permissionName(),
         )
 
         private val ALLOWED_ACTIONS = setOf(
             "open_app", "search_in_app", "dial_number", "search_contacts",
-            "open_settings", "navigate", "open_in_nova",
+            "open_settings", "navigate", "open_in_nova", "play_music", "music_control",
         )
     }
 
@@ -60,6 +73,9 @@ class NovaBridge(
     private val recorder = NovaRecorder(activity.applicationContext) { event, arg -> emit(event, arg) }
     private val speaker = NovaSpeaker(activity.applicationContext) { event, arg -> emit(event, arg) }
     private val actions = NovaDeviceActions(activity)
+    private val voicePlayer = NovaVoicePlayer(activity.applicationContext) { event, arg -> emit(event, arg) }
+    private val deviceSpeech = NovaDeviceSpeech(activity.applicationContext) { event, arg -> emit(event, arg) }
+    private val music = NovaMusicBridge(activity.applicationContext, messenger)
 
     private var pendingPermission: MethodChannel.Result? = null
     private var disposed = false
@@ -117,7 +133,39 @@ class NovaBridge(
                 }
                 "requestPermission" -> requestPermission(call.argument<String>("kind") ?: "", result)
                 "openAppPermissionSettings" -> result.success(actions.openAppDetailsSettings())
-                "runAction" -> result.success(runAction(call))
+                "runAction" -> {
+                    if (call.argument<String>("action") == "play_music") playMusicAsync(call, result)
+                    else result.success(runAction(call))
+                }
+                "playVoiceFile" -> {
+                    val path = call.argument<String>("path") ?: ""
+                    val id = (call.argument<String>("id") ?: "nova").take(64)
+                    result.success(voicePlayer.play(path, id))
+                }
+                "stopVoiceFile" -> {
+                    voicePlayer.stop()
+                    result.success(null)
+                }
+                "networkStatus" -> result.success(mapOf("online" to isOnline()))
+                "startDeviceSpeech" -> {
+                    if (!isGranted(Manifest.permission.RECORD_AUDIO)) {
+                        result.success(mapOf("status" to "permission_required"))
+                    } else if (recorder.isActive()) {
+                        result.success(mapOf("status" to "busy"))
+                    } else {
+                        speaker.stop()
+                        voicePlayer.stop()
+                        result.success(deviceSpeech.start())
+                    }
+                }
+                "stopDeviceSpeech" -> {
+                    deviceSpeech.stop()
+                    result.success(null)
+                }
+                "cancelDeviceSpeech" -> {
+                    deviceSpeech.cancel()
+                    result.success(null)
+                }
                 "assistantStatus" -> result.success(NovaAssistantRole.status(activity))
                 "openAssistantSettings" -> result.success(NovaAssistantRole.openSettings(activity))
                 "closeAssistant" -> {
@@ -177,7 +225,39 @@ class NovaBridge(
             "open_settings" -> actions.openSettings(args["target"])
             "navigate" -> actions.navigate(args["destination"])
             "open_in_nova" -> actions.openInNova(args["url"])
+            "music_control" -> NovaMusicCommands.control(activity.applicationContext, args["command"])
             else -> mapOf("status" to "unsupported")
+        }
+    }
+
+    /** Reading the music library can take a moment: warm it off the UI thread, then play. */
+    private fun playMusicAsync(call: MethodCall, result: MethodChannel.Result) {
+        val rawArgs: Map<*, *> = call.argument<Map<*, *>>("args") ?: emptyMap<String, String>()
+        val query = (rawArgs["query"] as? String)?.take(200)
+        val songId = (rawArgs["song_id"] as? String)?.take(24)
+        val ctx = activity.applicationContext
+        Thread {
+            try { NovaMusicLibrary.songs(ctx) } catch (ignored: Exception) { }
+            main.post {
+                if (disposed) return@post
+                try {
+                    result.success(NovaMusicCommands.play(ctx, query, songId))
+                } catch (e: Exception) {
+                    result.success(mapOf("status" to "error"))
+                }
+            }
+        }.start()
+    }
+
+    private fun isOnline(): Boolean {
+        val cm = activity.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return true
+        return try {
+            val network = cm.activeNetwork ?: return false
+            val caps = cm.getNetworkCapabilities(network) ?: return false
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        } catch (e: Exception) {
+            true
         }
     }
 
@@ -220,6 +300,11 @@ class NovaBridge(
             emit("onRecordingAutoStopped", "interrupted")
         }
         speaker.stop()
+        voicePlayer.stop()
+        if (deviceSpeech.isActive()) {
+            deviceSpeech.cancel()
+            emit("onDeviceSpeech", mapOf("kind" to "error", "code" to "interrupted"))
+        }
     }
 
     /** NOVA was invoked again (e.g. assistant gesture or "Hey NOVA" while already showing). */
@@ -260,6 +345,9 @@ class NovaBridge(
         dartHolds.clear()
         recorder.cancel()
         speaker.shutdown()
+        voicePlayer.shutdown()
+        deviceSpeech.cancel()
+        music.dispose()
         pendingPermission?.success(false)
         pendingPermission = null
         channel.setMethodCallHandler(null)

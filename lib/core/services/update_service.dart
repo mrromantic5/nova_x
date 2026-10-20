@@ -21,7 +21,7 @@ class UpdateService {
   // ── UPDATE THIS every time you release a new version ─────────────────────
   // Must match the version in pubspec.yaml (e.g. if pubspec says 3.1.2+7,
   // set this to '3.1.2')
-  static const String _installedVersion = '3.1.1';
+  static const String _installedVersion = '3.2.0';
 
   // ── Hosted on your server — update version.json whenever you release ──────
   static const String _versionUrl =

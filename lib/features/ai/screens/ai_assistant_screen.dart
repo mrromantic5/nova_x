@@ -28,9 +28,12 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:nova_x/core/services/rewards_service.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
 import 'package:nova_x/features/ai/services/nova_chat_repository.dart';
+import 'package:nova_x/features/ai/services/nova_markdown_parser.dart';
 import 'package:nova_x/features/ai/services/nova_media_store.dart';
 import 'package:nova_x/features/ai/widgets/ai_flag_sheet.dart';
 import 'package:nova_x/features/ai/widgets/nova_chat_drawer.dart';
+import 'package:nova_x/features/ai/widgets/nova_markdown_view.dart';
+import 'package:nova_x/features/browser/screens/browser_view.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:nova_x/features/nova/controller/nova_controller.dart';
 import 'package:nova_x/features/nova/nova_config.dart';
@@ -905,11 +908,12 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
           content.replaceFirst('[LOADING_VIDEO]', ''));
     }
 
+    if (!isUser) return _buildAnswer(id, content);
+
     return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+      alignment: Alignment.centerRight,
       child: Column(
-        crossAxisAlignment:
-            isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           // Bubble
           Container(
@@ -918,13 +922,12 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
             margin: const EdgeInsets.symmetric(vertical: 4),
             padding: const EdgeInsets.all(13),
             decoration: BoxDecoration(
-              gradient: isUser ? AppTheme.primaryGradient : null,
-              color:    isUser ? null : AppTheme.bgCard,
-              borderRadius: BorderRadius.only(
-                topLeft:     const Radius.circular(18),
-                topRight:    const Radius.circular(18),
-                bottomLeft:  Radius.circular(isUser ? 18 : 4),
-                bottomRight: Radius.circular(isUser ? 4  : 18),
+              gradient: AppTheme.primaryGradient,
+              borderRadius: const BorderRadius.only(
+                topLeft:     Radius.circular(18),
+                topRight:    Radius.circular(18),
+                bottomLeft:  Radius.circular(18),
+                bottomRight: Radius.circular(4),
               ),
               boxShadow: AppTheme.cardShadow,
             ),
@@ -933,40 +936,60 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
                     color: Colors.white, fontSize: 14, height: 1.5)),
           ),
 
-          // Action row — assistant
-          if (!isUser)
-            Padding(
-              padding: const EdgeInsets.only(left: 4, bottom: 4),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                _ActionBtn(
-                  icon:  _speakingId == id
-                      ? FontAwesomeIcons.stop
-                      : FontAwesomeIcons.volumeHigh,
-                  label: _speakingId == id ? 'Stop' : 'Read aloud',
-                  color: _speakingId == id
-                      ? Colors.redAccent
-                      : AppTheme.textHint,
-                  onTap: () => _speakMessage(id, content),
-                ),
-                const SizedBox(width: 14),
-                _ActionBtn(
-                  icon:  FontAwesomeIcons.flag,
-                  label: 'Report',
-                  color: AppTheme.textHint,
-                  onTap: () => _reportContent(
-                    contentType: 'text',
-                    contentRef: content.length > 500
-                        ? content.substring(0, 500)
-                        : content,
-                  ),
-                ),
-              ]),
-            ),
-
           // NOTE: No report button on user messages — only AI responses are flaggable.
         ],
       ),
     );
+  }
+
+  // ── NOVA's answer: full width, formatted like a modern AI chat ───────────
+  Widget _buildAnswer(String id, String content) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, bottom: 2, right: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          NovaMarkdownView(text: content, onLink: _openLink),
+          Padding(
+            padding: const EdgeInsets.only(top: 8, bottom: 6),
+            child: Row(children: [
+              _ActionBtn(
+                icon: FontAwesomeIcons.copy,
+                label: 'Copy',
+                color: AppTheme.textHint,
+                onTap: () {
+                  Clipboard.setData(ClipboardData(text: NovaMarkdown.plain(content)));
+                  HapticFeedback.selectionClick();
+                  _snack('Copied');
+                },
+              ),
+              const SizedBox(width: 16),
+              _ActionBtn(
+                icon: _speakingId == id ? FontAwesomeIcons.stop : FontAwesomeIcons.volumeHigh,
+                label: _speakingId == id ? 'Stop' : 'Read aloud',
+                color: _speakingId == id ? Colors.redAccent : AppTheme.textHint,
+                onTap: () => _speakMessage(id, content),
+              ),
+              const SizedBox(width: 16),
+              _ActionBtn(
+                icon: FontAwesomeIcons.flag,
+                label: 'Report',
+                color: AppTheme.textHint,
+                onTap: () => _reportContent(
+                  contentType: 'text',
+                  contentRef: content.length > 500 ? content.substring(0, 500) : content,
+                ),
+              ),
+            ]),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Links in answers open in a NOVA X tab.
+  void _openLink(String url) {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => BrowserView(initialQuery: url)));
   }
 
   // ── Welcome (first line only; ▾ shows the rest) ───────────────────────────

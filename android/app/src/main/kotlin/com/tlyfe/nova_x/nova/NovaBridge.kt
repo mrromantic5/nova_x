@@ -33,6 +33,10 @@ import io.flutter.plugin.common.MethodChannel
  *   assistantStatus · openAssistantSettings · closeAssistant · launchReason
  *   wakeStatus · setWakeEnabled{enabled} · setWakeHold{reason,held} · openOverlaySettings
  *   saveImageToGallery{path}  — a NOVA AI photo → Pictures/NOVA X (Android 10+)
+ *   screenCaptureRequest · screenCaptureGrab · screenCaptureCancel — "Read my screen"
+ *     in the assistant panel: one screenshot after Android's consent dialog
+ *     (NovaScreenCapture) · assistantKeepOpen{open} — keep the floating panel
+ *     open while the photo picker / camera is in front · phoneLocked
  *   setWakeScreenOff{enabled} · openBatterySettings  — "Listen when the screen is off"
  *   (over the lock screen, runAction asks for the PIN first, except music)
  *   playVoiceFile{path,id} · stopVoiceFile          — NOVA's cloud voice (MP3 in the app cache)
@@ -77,6 +81,10 @@ class NovaBridge(
     }
 
     private val channel = MethodChannel(messenger, CHANNEL)
+
+    /** Set by NovaAssistActivity: keeps the floating panel open while the
+     *  photo picker or camera is in front. */
+    var keepOpenHandler: ((Boolean) -> Unit)? = null
     private val main = Handler(Looper.getMainLooper())
     private val recorder = NovaRecorder(activity.applicationContext) { event, arg -> emit(event, arg) }
     private val speaker = NovaSpeaker(activity.applicationContext) { event, arg -> emit(event, arg) }
@@ -218,6 +226,24 @@ class NovaBridge(
                     result.success(true)
                 }
                 "openBatterySettings" -> result.success(openBatterySettings())
+                "screenCaptureRequest" -> {
+                    // Only the floating assistant reads other apps' screens.
+                    if (activity !is com.tlyfe.nova_x.NovaAssistActivity) {
+                        result.success(mapOf("status" to "unsupported"))
+                    } else {
+                        NovaScreenCapture.request(activity) { if (!disposed) result.success(it) }
+                    }
+                }
+                "screenCaptureGrab" -> NovaScreenCapture.grab { if (!disposed) result.success(it) }
+                "screenCaptureCancel" -> {
+                    NovaScreenCapture.cancel()
+                    result.success(true)
+                }
+                "assistantKeepOpen" -> {
+                    keepOpenHandler?.invoke(call.argument<Boolean>("open") ?: false)
+                    result.success(keepOpenHandler != null)
+                }
+                "phoneLocked" -> result.success(phoneLocked())
                 "saveImageToGallery" -> {
                     val path = call.argument<String>("path") ?: ""
                     val ctx = activity.applicationContext

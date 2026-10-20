@@ -38,8 +38,8 @@ class BrowserView extends StatefulWidget {
   /// Set to true to open in private/incognito mode
   final bool incognito;
 
-  /// Optional HTML to load directly (e.g. visual search page).
-  /// When set, loaded via loadData() with baseUrl=google.com
+  /// Optional HTML to load directly (e.g. the Lens photo-upload page).
+  /// When set, it is the tab's first page (base URL google.com).
   final String? htmlContent;
 
   /// When true, the Developer Tools panel opens automatically after first load
@@ -590,7 +590,16 @@ class _BrowserViewState extends State<BrowserView>
   // ── WebView ────────────────────────────────────────────────────────────────
   Widget _buildWebView() {
     return InAppWebView(
-      initialUrlRequest: URLRequest(url: WebUri(_currentUrl)),
+      // A local page (e.g. the Lens photo upload) loads directly; otherwise the URL.
+      initialUrlRequest: widget.htmlContent == null ? URLRequest(url: WebUri(_currentUrl)) : null,
+      initialData: widget.htmlContent == null
+          ? null
+          : InAppWebViewInitialData(
+              data: widget.htmlContent!,
+              mimeType: 'text/html',
+              encoding: 'utf-8',
+              baseUrl: WebUri('https://www.google.com'),
+            ),
       initialSettings: InAppWebViewSettings(
         javaScriptEnabled:            true,
         domStorageEnabled:            !widget.incognito,
@@ -698,16 +707,6 @@ class _BrowserViewState extends State<BrowserView>
             return null;
           },
         );
-        if (widget.htmlContent != null) {
-          Future.delayed(const Duration(milliseconds: 80), () {
-            c.loadData(
-              data:     widget.htmlContent!,
-              mimeType: 'text/html',
-              encoding: 'utf-8',
-              baseUrl:  WebUri('https://www.google.com'),
-            );
-          });
-        }
 
         // ── Voice bridge: page calls webkitSpeechRecognition → native STT ──
         c.addJavaScriptHandler(

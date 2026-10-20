@@ -396,6 +396,12 @@ void main() {
     expect(c.reply, contains("can't lock your screen"));
   });
 
+  test('over the lock screen: an action the user did not unlock for is reported honestly', () async {
+    native.results['open_app'] = const NovaNativeResult('locked', {});
+    await c.submitText('open youtube');
+    expect(c.reply, 'Unlock your phone first, then ask me again.');
+  });
+
   test('the same number saved twice is offered once', () async {
     native.contactsGranted = true;
     native.results['search_contacts'] = const NovaNativeResult('success', {

@@ -106,7 +106,7 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                               color: Colors.white, fontSize: 32,
                               fontWeight: FontWeight.w900, height: 1.1)),
                       const SizedBox(height: 8),
-                      Text('Effective: June 1, 2026  •  v2.6',
+                      Text('Effective: October 20, 2026  •  v2.7',
                           style: GoogleFonts.inter(
                               color: AppTheme.textHint, fontSize: 12)),
                     ],
@@ -177,10 +177,21 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                     '(flutter_secure_storage). Saved passwords are NEVER transmitted to '
                     'our servers, any third party, or backed up to the cloud.'),
                 _sub('Visual Search Images',
-                    'When you use the Visual Search (Lens) feature, your selected image '
-                    'is uploaded directly to Google Image Search from within the browser. '
-                    'We do not store, process, or have access to that image. '
-                    'Google\'s Privacy Policy applies.'),
+                    'When you use the Visual Search (Lens) feature, the photo you take or '
+                    'choose is resized on your device and uploaded directly to Google Lens '
+                    'from within the browser. We do not store, process, or have access to '
+                    'that image. Google\'s Privacy Policy applies.'),
+                _sub('NOVA AI Chat History',
+                    'When you are signed in, your NOVA AI chats (your messages, NOVA\'s '
+                    'replies and links to images or videos you generated) are saved to '
+                    'your NOVA X account so you can see them on any device you sign in '
+                    'to. Without an account, chats are kept only on your device. You can '
+                    'rename or delete any chat from the chat history in NOVA AI; deleting '
+                    'your account deletes all of your chats.'),
+                _sub('Music on Your Device',
+                    'With your permission, NOVA Music reads the list of songs saved on '
+                    'your device so it can play them, including offline. Your songs and '
+                    'this list never leave your device.'),
                 _sub('Business Listings',
                     'If you submit a business listing, we collect the business name, '
                     'description, category, location, website URL, and any images '
@@ -257,29 +268,32 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                     'conversation and, when you use voice, a short recording to the '
                     'NOVA AI service run by Tech Lyfe, which uses third-party AI '
                     'processing to produce replies and transcripts. Recordings are '
-                    'deleted from your phone after they are sent and conversations are '
-                    'not saved on your phone. Contacts used for "call" requests are '
-                    'searched on your phone only. Do not share sensitive personal '
-                    'information in AI conversations.'),
+                    'deleted from your phone after they are sent. NOVA AI chats are '
+                    'kept in your chat history (see "NOVA AI Chat History"); NOVA '
+                    'voice-assistant conversations are not saved. Contacts used for '
+                    '"call" requests are searched on your phone only. Do not share '
+                    'sensitive personal information in AI conversations.'),
                 _sub('NOVA Voice and "Hey NOVA"',
-                    'Spoken replies are created by the Brains Jet voice service: the '
-                    'text of the reply is sent to it and an audio file is played back. '
-                    'If that service is unavailable, your phone\'s own voice is used. '
+                    'Spoken replies are created by the NOVA Voice service run by Tech '
+                    'Lyfe, which uses Microsoft\'s online text-to-speech voices: the text '
+                    'of the reply is sent to it and the audio is played back, then '
+                    'deleted from your phone. If that service is unavailable (for '
+                    'example offline), your phone\'s own voice is used. '
                     '"Hey NOVA" is off until you turn it on. While it is on, NOVA '
                     'checks microphone sound on your phone for the wake phrase; this '
                     'sound is analysed in memory and is not recorded, stored or sent. '
                     'A notification is shown the whole time, and you can turn it off '
                     'from that notification or in NOVA settings.'),
-                _sub('Image Generation',
-                    'The /image command sends prompts to Pollinations.ai for '
-                    'image generation. Pollinations.ai\'s privacy policy applies '
-                    'to generated image data.'),
+                _sub('Image and Video Generation',
+                    'The /image and /video commands in NOVA AI send your prompt to '
+                    'third-party generation services (ab-text-toimgfast.abrahamdw882.'
+                    'workers.dev for images and eliteprotech-apis.zone.id for videos). '
+                    'Their privacy policies apply to the prompts and generated media.'),
                 _sub('Visual Search (Google Image Search)',
                     'The Lens/Visual Search feature uploads your image directly to '
-                    'Google\'s image search endpoint (google.com/searchbyimage/upload) '
-                    'from within the app\'s WebView. Google may process and store your '
-                    'image according to Google\'s Privacy Policy. We do not receive '
-                    'or process the image.'),
+                    'Google Lens (lens.google.com) from within the app\'s WebView. '
+                    'Google may process and store your image according to Google\'s '
+                    'Privacy Policy. We do not receive or process the image.'),
                 _sub('NOVA Cyber Security Scanner',
                     'NOVA Cyber performs active security probes against websites you choose '
                     'to scan. These probes include HTTP requests with security test payloads. '
@@ -379,7 +393,11 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                     '30 days, except where retention is required by law.'),
                 _sub('Local Data',
                     'Data stored on your device (history, bookmarks, saved '
-                    'passwords) remains until you clear it or uninstall the app.'),
+                    'passwords, NOVA AI chats) remains until you clear it or '
+                    'uninstall the app.'),
+                _sub('NOVA AI Chats',
+                    'Chats saved to your account are kept until you delete them in '
+                    'NOVA AI or delete your account.'),
               ]),
 
               _section('11. International Transfers',

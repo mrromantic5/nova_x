@@ -34,12 +34,25 @@ import com.tlyfe.nova_x.NovaAssistActivity
 object NovaWakePrefs {
     private const val FILE = "nova_wake"
     private const val KEY_ENABLED = "enabled"
+    private const val KEY_SCREEN_OFF = "screen_off"
 
     fun isEnabled(context: Context): Boolean =
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, false)
 
     fun setEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(KEY_ENABLED, enabled).apply()
+    }
+
+    /**
+     * "Listen when the screen is off" (off by default): keep listening while
+     * the screen is off or locked, wake the screen and open NOVA over the
+     * lock screen. Uses more battery.
+     */
+    fun screenOffEnabled(context: Context): Boolean =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean(KEY_SCREEN_OFF, false)
+
+    fun setScreenOffEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(KEY_SCREEN_OFF, enabled).apply()
     }
 }
 
@@ -58,6 +71,12 @@ object NovaWakePrefs {
  *    over other apps"; otherwise a notification asks the user to tap it.
  *  - Android 7–9 allow one recorder at a time, so there it only listens while
  *    NOVA X is open (other apps' voice notes and calls keep working).
+ *  - Screen off: by default it pauses (saves battery). With "Listen when the
+ *    screen is off" on, it keeps listening (holding a partial wake lock only
+ *    while the screen is off), and on "Hey NOVA" it turns the screen on and
+ *    opens NOVA over the lock screen (needs "Display over other apps";
+ *    otherwise the tap-to-talk notification is shown on the lock screen).
+ *    Anything that needs the phone unlocked asks for the PIN first.
  */
 class NovaWakeService : Service() {
 
@@ -131,6 +150,8 @@ class NovaWakeService : Service() {
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var active = false
     private var worker: Thread? = null
+    private var cpuLock: PowerManager.WakeLock? = null
+    private var cpuLockRenewedAt = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -176,6 +197,7 @@ class NovaWakeService : Service() {
         worker?.interrupt()
         worker = null
         NovaMicArbiter.wakeMicOpen = false
+        setCpuAwake(false)
         super.onDestroy()
     }
 
@@ -199,9 +221,12 @@ class NovaWakeService : Service() {
                         record = null
                         engine.restart()
                     }
+                    setCpuAwake(false)
                     sleep(150)
                     continue
                 }
+                // Screen off (option on): keep the processor awake so listening continues.
+                setCpuAwake(!screenIsOn())
                 if (record == null) {
                     record = openRecord()
                     if (record == null) {
@@ -235,6 +260,7 @@ class NovaWakeService : Service() {
         } finally {
             record?.let { closeRecord(it) }
             NovaMicArbiter.wakeMicOpen = false
+            setCpuAwake(false)
             engine.release()
             // Ended without being asked to (engine/microphone failure): never
             // leave a "listening" notification up while nothing listens.
@@ -248,15 +274,36 @@ class NovaWakeService : Service() {
 
     private fun shouldPause(): Boolean {
         if (NovaMicArbiter.isHeld()) return true
-        // Screen off: a detection could only post a notification, so save the
-        // battery and listen again as soon as the screen turns on.
-        val power = getSystemService(POWER_SERVICE) as? PowerManager
-        if (power != null && !power.isInteractive) return true
+        // Screen off: pause to save battery unless the user chose
+        // "Listen when the screen is off".
+        if (!screenIsOn() && !NovaWakePrefs.screenOffEnabled(this)) return true
         if (!backgroundSupported() && !NovaMicArbiter.appVisible()) return true
         val audio = getSystemService(AUDIO_SERVICE) as? AudioManager
         val mode = audio?.mode ?: AudioManager.MODE_NORMAL
         return mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION ||
             mode == AudioManager.MODE_RINGTONE
+    }
+
+    private fun screenIsOn(): Boolean =
+        (getSystemService(POWER_SERVICE) as? PowerManager)?.isInteractive ?: true
+
+    /** Partial wake lock while listening with the screen off (renewed, never left held). */
+    private fun setCpuAwake(awake: Boolean) {
+        try {
+            if (!awake) {
+                cpuLock?.let { if (it.isHeld) it.release() }
+                return
+            }
+            val now = SystemClock.elapsedRealtime()
+            val lock = cpuLock ?: (getSystemService(POWER_SERVICE) as? PowerManager)
+                ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "novax:heynova")
+                ?.also { it.setReferenceCounted(false); cpuLock = it }
+                ?: return
+            if (!lock.isHeld || now - cpuLockRenewedAt > 60_000L) {
+                lock.acquire(10 * 60 * 1000L)
+                cpuLockRenewedAt = now
+            }
+        } catch (ignored: Exception) { }
     }
 
     @SuppressLint("MissingPermission") // checked in micGranted()
@@ -309,28 +356,57 @@ class NovaWakeService : Service() {
         if (!running) return
         buzz()
         val locked = (getSystemService(KEYGUARD_SERVICE) as? KeyguardManager)?.isKeyguardLocked == true
+        val screenOn = screenIsOn()
         val overlayAllowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this)
-        if (!locked && (NovaMicArbiter.appVisible() || overlayAllowed)) {
-            val requestedAt = SystemClock.elapsedRealtime()
-            try {
-                startActivity(assistIntent())
-            } catch (e: Exception) {
-                showTapToTalk()
-                return
+        val lockScreenMode = NovaWakePrefs.screenOffEnabled(this)
+        when {
+            // Phone in use: open the panel as before.
+            !locked && screenOn && (NovaMicArbiter.appVisible() || overlayAllowed) -> launchPanel(false)
+            // Screen off or locked, option on: wake the screen, NOVA over the lock screen.
+            lockScreenMode && overlayAllowed -> {
+                wakeScreen()
+                launchPanel(true)
             }
-            // If Android blocked the launch anyway, fall back to the notification.
-            main.postDelayed({
-                if (NovaAssistActivity.lastStartedAt < requestedAt) showTapToTalk()
-            }, 2500)
-        } else {
-            showTapToTalk()
+            else -> {
+                if (lockScreenMode) wakeScreen()
+                showTapToTalk()
+            }
         }
     }
 
-    private fun assistIntent(): Intent =
+    private fun launchPanel(overLockScreen: Boolean) {
+        val requestedAt = SystemClock.elapsedRealtime()
+        try {
+            startActivity(assistIntent(overLockScreen))
+        } catch (e: Exception) {
+            showTapToTalk()
+            return
+        }
+        // If Android blocked the launch anyway, fall back to the notification.
+        main.postDelayed({
+            if (NovaAssistActivity.lastStartedAt < requestedAt) showTapToTalk()
+        }, 2500)
+    }
+
+    /** Turns the screen on for a moment (the NOVA window then keeps it on). */
+    @Suppress("DEPRECATION")
+    private fun wakeScreen() {
+        try {
+            (getSystemService(POWER_SERVICE) as? PowerManager)
+                ?.newWakeLock(
+                    PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                        PowerManager.ON_AFTER_RELEASE,
+                    "novax:heynova-wake",
+                )
+                ?.acquire(4000L)
+        } catch (ignored: Exception) { }
+    }
+
+    private fun assistIntent(overLockScreen: Boolean = false): Intent =
         Intent(this, NovaAssistActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             .putExtra(NovaAssistActivity.EXTRA_REASON, "wake")
+            .putExtra(NovaAssistActivity.EXTRA_LOCK_SCREEN, overLockScreen)
 
     private fun showTapToTalk() {
         val nm = getSystemService(NOTIFICATION_SERVICE) as? NotificationManager ?: return
@@ -344,6 +420,7 @@ class NovaWakeService : Service() {
             .setContentText("Tap to talk to NOVA")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setAutoCancel(true)
             .setTimeoutAfter(20_000)
             .setContentIntent(pi)

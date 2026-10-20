@@ -2,6 +2,7 @@ package com.tlyfe.nova_x.nova
 
 import android.Manifest
 import android.app.Activity
+import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -11,6 +12,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.provider.Settings
 import com.tlyfe.nova_x.music.NovaMusicBridge
 import com.tlyfe.nova_x.music.NovaMusicCommands
@@ -30,6 +32,8 @@ import io.flutter.plugin.common.MethodChannel
  *   runAction{action,args}   — action ∈ ALLOWED_ACTIONS only
  *   assistantStatus · openAssistantSettings · closeAssistant · launchReason
  *   wakeStatus · setWakeEnabled{enabled} · setWakeHold{reason,held} · openOverlaySettings
+ *   setWakeScreenOff{enabled} · openBatterySettings  — "Listen when the screen is off"
+ *   (over the lock screen, runAction asks for the PIN first, except music)
  *   playVoiceFile{path,id} · stopVoiceFile          — NOVA's cloud voice (MP3 in the app cache)
  *   networkStatus · startDeviceSpeech · stopDeviceSpeech · cancelDeviceSpeech — offline voice input
  *
@@ -66,6 +70,9 @@ class NovaBridge(
             "open_app", "search_in_app", "dial_number", "search_contacts",
             "open_settings", "navigate", "open_in_nova", "play_music", "music_control",
         )
+
+        /** Allowed over the lock screen without unlocking (nothing private is shown). */
+        private val LOCK_SCREEN_SAFE = setOf("play_music", "music_control")
     }
 
     private val channel = MethodChannel(messenger, CHANNEL)
@@ -134,8 +141,13 @@ class NovaBridge(
                 "requestPermission" -> requestPermission(call.argument<String>("kind") ?: "", result)
                 "openAppPermissionSettings" -> result.success(actions.openAppDetailsSettings())
                 "runAction" -> {
-                    if (call.argument<String>("action") == "play_music") playMusicAsync(call, result)
-                    else result.success(runAction(call))
+                    val action = call.argument<String>("action") ?: ""
+                    if (action !in LOCK_SCREEN_SAFE && phoneLocked()) {
+                        // NOVA is showing over the lock screen: ask for the PIN first.
+                        unlockThen(result) { runActionNow(call, it) }
+                    } else {
+                        runActionNow(call, result)
+                    }
                 }
                 "playVoiceFile" -> {
                     val path = call.argument<String>("path") ?: ""
@@ -200,11 +212,56 @@ class NovaBridge(
                     result.success(null)
                 }
                 "openOverlaySettings" -> result.success(openOverlaySettings())
+                "setWakeScreenOff" -> {
+                    NovaWakePrefs.setScreenOffEnabled(activity.applicationContext, call.argument<Boolean>("enabled") ?: false)
+                    result.success(true)
+                }
+                "openBatterySettings" -> result.success(openBatterySettings())
                 else -> result.notImplemented()
             }
         } catch (e: Exception) {
             result.error("nova_native_error", e.message ?: "Unexpected native error", null)
         }
+    }
+
+    private fun runActionNow(call: MethodCall, result: MethodChannel.Result) {
+        if (call.argument<String>("action") == "play_music") playMusicAsync(call, result)
+        else result.success(runAction(call))
+    }
+
+    private fun phoneLocked(): Boolean =
+        (activity.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager)?.isKeyguardLocked == true
+
+    /** Shows Android's unlock prompt; runs [then] after a successful unlock. */
+    private fun unlockThen(result: MethodChannel.Result, then: (MethodChannel.Result) -> Unit) {
+        val km = activity.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        if (km == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            result.success(mapOf("status" to "locked"))
+            return
+        }
+        var answered = false
+        fun answer(block: () -> Unit) {
+            if (answered || disposed) return
+            answered = true
+            block()
+        }
+        try {
+            km.requestDismissKeyguard(activity, object : KeyguardManager.KeyguardDismissCallback() {
+                override fun onDismissSucceeded() {
+                    main.post { answer { then(result) } }
+                }
+                override fun onDismissCancelled() {
+                    main.post { answer { result.success(mapOf("status" to "locked")) } }
+                }
+                override fun onDismissError() {
+                    main.post { answer { result.success(mapOf("status" to "locked")) } }
+                }
+            })
+        } catch (e: Exception) {
+            answer { result.success(mapOf("status" to "locked")) }
+        }
+        // Never leave NOVA waiting if the prompt is ignored or never answers.
+        main.postDelayed({ answer { result.success(mapOf("status" to "locked")) } }, 60_000L)
     }
 
     private fun runAction(call: MethodCall): Map<String, Any?> {
@@ -324,9 +381,27 @@ class NovaBridge(
                 "notifications" to (Build.VERSION.SDK_INT < 33 || isGranted("android.permission.POST_NOTIFICATIONS")),
                 "microphone" to isGranted(Manifest.permission.RECORD_AUDIO),
                 "error" to NovaWakeService.lastError,
+                "screenOff" to NovaWakePrefs.screenOffEnabled(ctx),
+                "batteryUnrestricted" to batteryUnrestricted(ctx),
             )
             main.post { if (!disposed) result.success(status) }
         }.start()
+    }
+
+    private fun batteryUnrestricted(ctx: Context): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
+        val pm = ctx.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return false
+        return try { pm.isIgnoringBatteryOptimizations(ctx.packageName) } catch (e: Exception) { false }
+    }
+
+    /** Android's battery-optimisation list (no special permission needed), else app info. */
+    private fun openBatterySettings(): Boolean = try {
+        activity.startActivity(
+            Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+        true
+    } catch (e: Exception) {
+        actions.openAppDetailsSettings()
     }
 
     private fun openOverlaySettings(): Boolean = try {

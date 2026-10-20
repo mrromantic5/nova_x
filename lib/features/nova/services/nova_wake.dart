@@ -20,6 +20,8 @@ class NovaWakeStatus {
     this.notifications = false,
     this.microphone = false,
     this.error,
+    this.screenOff = false,
+    this.batteryUnrestricted = false,
   });
 
   /// The detector can run on this phone (model present, CPU supported).
@@ -45,6 +47,12 @@ class NovaWakeStatus {
   /// Last start problem: microphone · start_not_allowed · unsupported · engine_error.
   final String? error;
 
+  /// "Listen when the screen is off" is on (off by default).
+  final bool screenOff;
+
+  /// NOVA X's battery use is "Unrestricted" (phones stop it less often).
+  final bool batteryUnrestricted;
+
   factory NovaWakeStatus.fromMap(Map<dynamic, dynamic> m) => NovaWakeStatus(
         supported: m['supported'] == true,
         enabled: m['enabled'] == true,
@@ -54,6 +62,8 @@ class NovaWakeStatus {
         notifications: m['notifications'] == true,
         microphone: m['microphone'] == true,
         error: m['error'] is String ? m['error'] as String : null,
+        screenOff: m['screenOff'] == true,
+        batteryUnrestricted: m['batteryUnrestricted'] == true,
       );
 }
 
@@ -109,6 +119,25 @@ class NovaWake {
   static void resumeAfterOtherMic(String reason) {
     _timedHolds.remove(reason)?.cancel();
     hold(reason, false);
+  }
+
+  /// "Listen when the screen is off": keep listening with the screen off or
+  /// locked and open NOVA over the lock screen. Uses more battery.
+  static Future<void> setScreenOff(bool enabled) async {
+    try {
+      await _channel.invokeMethod<bool>('setWakeScreenOff', {'enabled': enabled});
+    } catch (_) {
+      // best effort (no channel in tests)
+    }
+  }
+
+  /// Android's battery-optimisation settings (to choose "Unrestricted").
+  static Future<void> openBatterySettings() async {
+    try {
+      await _channel.invokeMethod<bool>('openBatterySettings');
+    } catch (_) {
+      // best effort
+    }
   }
 
   static Future<void> openOverlaySettings() async {

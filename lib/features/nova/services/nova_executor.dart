@@ -426,6 +426,8 @@ class NovaExecutor {
             "That isn't supported on this phone yet."),
         'permission_required' => _result(a, NovaActionStatus.permissionRequired,
             'NOVA needs permission to do that.'),
+        // Over the lock screen the user didn't unlock (music works without unlocking).
+        'locked' => _result(a, NovaActionStatus.failed, 'Unlock your phone first, then ask me again.'),
         _ => _result(a, NovaActionStatus.failed, 'Something went wrong while doing that.'),
       };
 

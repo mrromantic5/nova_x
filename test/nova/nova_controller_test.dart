@@ -11,6 +11,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nova_x/features/nova/controller/nova_controller.dart';
 import 'package:nova_x/features/nova/models/nova_models.dart';
+import 'package:nova_x/features/nova/nova_config.dart';
 import 'package:nova_x/features/nova/services/nova_api.dart';
 import 'package:nova_x/features/nova/services/nova_executor.dart';
 import 'package:nova_x/features/nova/services/nova_native.dart';
@@ -45,6 +46,19 @@ class FakeApi implements NovaApi {
   Future<NovaPlannerResult?> plan(String message, List<Map<String, String>> history,
           {CancelToken? cancel}) async =>
       planResult;
+
+  String visionReply = 'It is a login form.';
+  final List<String> visionCalls = [];
+  int lastImageCount = 0;
+
+  @override
+  Future<String> vision(String message, List<Map<String, String>> history, List<NovaVisionImage> images,
+      {CancelToken? cancel}) async {
+    visionCalls.add(message);
+    lastHistory = history;
+    lastImageCount = images.length;
+    return visionReply;
+  }
 
   @override
   void dispose() {}
@@ -510,6 +524,63 @@ void main() {
     await c.submitText('pause');
     expect(native.actions.last, 'music_control:pause');
     expect(c.reply, 'Paused.');
+  });
+
+  group('photos and screen in the assistant panel (3.4.0)', () {
+    const img = NovaVisionImage([0xFF, 0xD8, 0xFF, 0x00], 'image/jpeg');
+
+    test('a question with a photo goes to /vision, never to actions', () async {
+      c.addImages([img]);
+      expect(c.pendingImages.length, 1);
+      await c.submitText('open youtube');
+      expect(api.visionCalls, ['open youtube']);
+      expect(api.lastImageCount, 1);
+      expect(native.actions, isEmpty);
+      expect(api.chatCalls, isEmpty);
+      expect(c.reply, 'It is a login form.');
+      expect(c.pendingImages, isEmpty);
+      expect(c.history.toJson().first['content'], '(I shared a photo.) open youtube');
+    });
+
+    test('screen capture: default question and replacement of an older capture', () async {
+      c.addImages([img], fromScreen: true);
+      c.addImages([img], fromScreen: true);
+      expect(c.pendingImages.length, 1);
+      expect(c.pendingIsScreen, isTrue);
+      await c.askAboutImages();
+      expect(api.visionCalls.single, startsWith('This is a screenshot of my phone screen.'));
+      expect(c.transcript, 'What is on my screen?');
+    });
+
+    test('at most 3 photos; remove and clear', () {
+      c.addImages([img, img, img, img]);
+      expect(c.pendingImages.length, 3);
+      c.removeImage(0);
+      expect(c.pendingImages.length, 2);
+      c.clearImages();
+      expect(c.pendingImages, isEmpty);
+      expect(c.pendingIsScreen, isFalse);
+    });
+
+    test('"cancel" still cancels with a photo attached', () async {
+      c.addImages([img]);
+      await c.submitText('cancel');
+      expect(api.visionCalls, isEmpty);
+    });
+
+    test('links in answers open in NOVA X (web links only)', () async {
+      await c.openLink('https://flutter.dev');
+      await c.openLink('javascript:alert(1)');
+      expect(host.opened, ['https://flutter.dev']);
+    });
+  });
+
+  test('greetings are short, friendly and fit the time of day', () {
+    final morning = {for (var i = 0; i < 6; i++) NovaConfig.greetingFor(DateTime(2026, 1, 1, 8), i)};
+    expect(morning.length, 3);
+    expect(morning.every((g) => !g.contains('NOVA')), isTrue);
+    expect(NovaConfig.greetingFor(DateTime(2026, 1, 1, 20), 0), contains('evening'));
+    expect(NovaConfig.greetingFor(DateTime(2026, 1, 1, 2), 0), contains('night owl'));
   });
 
   test('spoken text drops markdown and long content', () {

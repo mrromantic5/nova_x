@@ -143,14 +143,118 @@ void main() {
     test('questions and vague requests go to the AI', () {
       expect(parser.parse('what is flutter'), isNull);
       expect(parser.parse('who created you'), isNull);
-      expect(parser.parse('start a timer for 5 minutes'), isNull);
-      expect(parser.parse('start a timer'), isNull);
+      expect(parser.parse('tell me about nova x'), isNull);
     });
 
     test('wake phrase only', () {
       expect(NovaCommandParser.isWakeOnly('Hey NOVA'), isTrue);
+      expect(NovaCommandParser.isWakeOnly('Hello NOVA.'), isTrue);
       expect(NovaCommandParser.isWakeOnly('hey nova open youtube'), isFalse);
       expect(parser.parse('hey nova'), isNull);
+    });
+  });
+
+  group("things NOVA can't do are answered honestly (never \"done\")", () {
+    test('lock screen, screenshots, power, alarms, messages, torch', () {
+      for (final input in [
+        'lock my screen',
+        'Hey NOVA, lock the phone',
+        'turn off the screen',
+        'take a screenshot',
+        'restart my phone',
+        'turn off my phone',
+        'set an alarm for 6am',
+        'start a timer for 5 minutes',
+        'start a timer',
+        'remind me to call mum',
+        'send a message to Ama',
+        'text Wendy',
+        'whatsapp kofi that I am late',
+        'turn on the flashlight',
+      ]) {
+        final plan = parser.parse(input);
+        expect(plan, isA<NovaReplyPlan>(), reason: input);
+        expect((plan as NovaReplyPlan).reply, contains("can't"), reason: input);
+      }
+    });
+
+    test('similar questions and settings still work', () {
+      expect(parser.parse('text to speech apps'), isNull);
+      expect(parser.parse('email etiquette tips'), isNull);
+      expect(parser.parse('how do i lock my screen'), isNull);
+      expect(parser.parse('remind me what the capital of france is'), isNull);
+      expect(parser.parse('make a timer in flutter'), isNull);
+      expect(parser.parse('text editor'), isNull);
+      expect(parser.parse('message history'), isNull);
+      expect(single('lock screen settings').args, {'target': 'security'});
+      expect(single('open clock').args['app'], 'clock');
+    });
+  });
+
+  group('music (NOVA Music, works offline)', () {
+    test('play a song or an artist', () {
+      final a = single('Hey NOVA, play me Tatiana Like You');
+      expect(a.type, NovaActionType.playMusic);
+      expect(a.args['query'], 'tatiana like you');
+      expect(single('play the song called essence').args['query'], 'essence');
+      expect(single('listen to burna boy').args['query'], 'burna boy');
+      expect(single('play songs by sarkodie').args['query'], 'sarkodie');
+    });
+
+    test('any music', () {
+      for (final input in [
+        'play some music',
+        'play music',
+        'shuffle my songs',
+        'put on some music',
+        'listen to some music',
+      ]) {
+        final a = single(input);
+        expect(a.type, NovaActionType.playMusic, reason: input);
+        expect(a.args['query'], '', reason: input);
+      }
+    });
+
+    test('player controls', () {
+      String command(String input) {
+        final a = single(input);
+        expect(a.type, NovaActionType.musicControl, reason: input);
+        return a.args['command']!;
+      }
+
+      expect(command('pause'), 'pause');
+      expect(command('pause the music'), 'pause');
+      expect(command('resume'), 'resume');
+      expect(command('play'), 'resume');
+      expect(command('continue playing'), 'resume');
+      expect(command('next song'), 'next');
+      expect(command('skip'), 'next');
+      expect(command('previous song'), 'previous');
+      expect(command('stop the music'), 'stop');
+      expect(command("what's playing"), 'now_playing');
+      expect(command('turn the volume up'), 'volume_up');
+      expect(command('louder'), 'volume_up');
+      expect(command('turn down the volume'), 'volume_down');
+      expect(command('mute'), 'mute');
+      expect(command('unmute'), 'unmute');
+    });
+
+    test('not songs', () {
+      expect(single('play despacito on spotify').type, NovaActionType.searchInApp);
+      expect(single('play a video of cats').args, {'app': 'youtube', 'query': 'cats'});
+      expect(single('open play store').args['app'], 'play store');
+      expect(parser.parse('play a game'), isNull);
+      expect(parser.parse('play the guitar chords for amazing grace'), isNull);
+      expect(parser.parse('listen to this article'), isNull);
+      expect(parser.parse('continue'), isNull);
+      expect(parser.parse('Stop.'), isA<NovaCancelPlan>());
+    });
+
+    test('NOVA Music screen', () {
+      expect(single('open my music').args['app'], 'my music');
+      expect(single('open nova music').args['app'], 'nova music');
+      expect(single('open music player').args['app'], 'music player');
+      expect(single('open my points').args['app'], 'my points');
     });
   });
 }

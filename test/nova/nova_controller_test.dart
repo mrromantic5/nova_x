@@ -2,7 +2,8 @@
 //
 // End-to-end assistant flows with fake API, native layer and host:
 // commands, conversation, permissions, contact disambiguation, voice
-// capture rules, overlay hand-off and cancellation of stale work.
+// capture rules, offline voice input, NOVA Music, honest answers for things
+// NOVA can't do, overlay hand-off and cancellation of stale work.
 
 import 'dart:async';
 
@@ -56,15 +57,22 @@ class FakeNative implements NovaNativeApi {
   final Map<String, NovaNativeResult> results = {};
   bool micGranted = true;
   bool contactsGranted = false;
+  bool audioGranted = false;
   bool grantOnRequest = true;
+  bool online = true;
+  String deviceSpeechStatus = 'listening';
+  int recordStarts = 0;
+  int deviceSpeechStarts = 0;
   NovaRecording recording = const NovaRecording(status: 'idle');
 
   @override
   Stream<NovaNativeEvent> get events => controller.stream;
 
   @override
-  Future<NovaRecordStart> startRecording({int maxSeconds = 30, bool autoStop = true}) async =>
-      micGranted ? const NovaRecordStart('recording') : const NovaRecordStart('permission_required');
+  Future<NovaRecordStart> startRecording({int maxSeconds = 30, bool autoStop = true}) async {
+    recordStarts++;
+    return micGranted ? const NovaRecordStart('recording') : const NovaRecordStart('permission_required');
+  }
 
   @override
   Future<NovaRecording> stopRecording() async => recording;
@@ -82,14 +90,18 @@ class FakeNative implements NovaNativeApi {
   Future<void> stopSpeaking() async {}
 
   @override
-  Future<bool> isPermissionGranted(String kind) async =>
-      kind == 'microphone' ? micGranted : contactsGranted;
+  Future<bool> isPermissionGranted(String kind) async => switch (kind) {
+        'microphone' => micGranted,
+        'audio' => audioGranted,
+        _ => contactsGranted,
+      };
 
   @override
   Future<bool> requestPermission(String kind) async {
     if (!grantOnRequest) return false;
     if (kind == 'contacts') contactsGranted = true;
     if (kind == 'microphone') micGranted = true;
+    if (kind == 'audio') audioGranted = true;
     return true;
   }
 
@@ -100,6 +112,9 @@ class FakeNative implements NovaNativeApi {
   Future<NovaNativeResult> runAction(String action, Map<String, String> args) async {
     actions.add('$action:${args.values.join('|')}');
     if (action == 'search_contacts' && !contactsGranted) {
+      return const NovaNativeResult('permission_required', {});
+    }
+    if (action == 'play_music' && !audioGranted) {
       return const NovaNativeResult('permission_required', {});
     }
     return results[action] ?? const NovaNativeResult('success', {'label': 'YouTube'});
@@ -114,6 +129,21 @@ class FakeNative implements NovaNativeApi {
 
   @override
   Future<void> closeAssistant() async {}
+
+  @override
+  Future<bool> isOnline() async => online;
+
+  @override
+  Future<String> startDeviceSpeech() async {
+    deviceSpeechStarts++;
+    return deviceSpeechStatus;
+  }
+
+  @override
+  Future<void> stopDeviceSpeech() async {}
+
+  @override
+  Future<void> cancelDeviceSpeech() async {}
 }
 
 class FakeHost implements NovaHost {
@@ -357,6 +387,123 @@ void main() {
     await run;
     await settle();
     expect(c.state, NovaState.idle);
+  });
+
+  test('"lock my screen" gets an honest answer — no AI, no action', () async {
+    await c.submitText('Lock my screen');
+    expect(api.chatCalls, isEmpty);
+    expect(native.actions, isEmpty);
+    expect(c.reply, contains("can't lock your screen"));
+  });
+
+  test('the same number saved twice is offered once', () async {
+    native.contactsGranted = true;
+    native.results['search_contacts'] = const NovaNativeResult('success', {
+      'matches': [
+        {'name': 'Wendy', 'number': '+233 27 127 3330', 'type': 'Mobile'},
+        {'name': 'Wendy', 'number': '0271273330', 'type': 'Mobile'},
+      ],
+    });
+    await c.submitText('call wendy');
+    expect(native.actions.last, 'dial_number:+233271273330');
+    expect(c.state, isNot(NovaState.clarifying));
+    expect(c.reply, contains('Opening the dialer for Wendy'));
+  });
+
+  test('offline: the phone recognises the words and on-device commands still work', () async {
+    native.online = false;
+    await c.startListening();
+    expect(c.state, NovaState.listening);
+    expect(native.deviceSpeechStarts, 1);
+    expect(native.recordStarts, 0); // nothing is recorded or uploaded
+    native.controller.add(const NovaDeviceSpeechEvent('result', text: 'open youtube'));
+    await settle();
+    expect(native.actions, ['open_app:youtube']);
+    expect(api.transcribeCalls, isEmpty);
+  });
+
+  test('offline without on-device speech: NOVA says so', () async {
+    native.online = false;
+    native.deviceSpeechStatus = 'unavailable';
+    await c.startListening();
+    expect(c.reply, NovaController.offlineNoSpeech);
+    expect(c.state, isNot(NovaState.listening));
+  });
+
+  test('"Hey NOVA" heard again right after waking: NOVA listens once more', () async {
+    api.transcript = 'Hello NOVA';
+    native.recording =
+        const NovaRecording(status: 'ok', path: '/tmp/none.m4a', durationMs: 1800, hadSpeech: true);
+    await c.startListening();
+    native.controller.add(const NovaRecordingStoppedEvent('silence'));
+    await settle();
+    expect(c.state, NovaState.listening);
+    expect(native.recordStarts, 2);
+    expect(native.spoken, contains("I'm listening."));
+
+    // Only once: hearing just the wake phrase again ends with the greeting.
+    native.controller.add(const NovaRecordingStoppedEvent('silence'));
+    await settle();
+    expect(c.state, isNot(NovaState.listening));
+    expect(native.recordStarts, 2);
+  });
+
+  test('play a song: asks for music access first, then plays it', () async {
+    native.results['play_music'] = const NovaNativeResult(
+        'success', {'kind': 'song', 'title': 'Like You', 'artist': 'Tatiana Manaois'});
+    await c.submitText('Hey NOVA, play me Tatiana Like You');
+    expect(c.state, NovaState.permissionRequired);
+    expect(c.permissionKind, 'audio');
+    expect(api.chatCalls, isEmpty);
+
+    await c.grantPermission();
+    expect(native.actions.last, 'play_music:tatiana like you');
+    expect(c.reply, 'Playing Like You by Tatiana Manaois.');
+  });
+
+  test('"play my music" with nothing queued asks for music access (not contacts)', () async {
+    native.results['music_control'] = const NovaNativeResult('not_playing', {});
+    await c.submitText('play my music');
+    expect(c.state, NovaState.permissionRequired);
+    expect(c.permissionKind, 'audio');
+  });
+
+  test('several matching songs: NOVA asks which one, then plays the choice', () async {
+    native.audioGranted = true;
+    native.results['play_music'] = const NovaNativeResult('choices', {
+      'matches': [
+        {'id': '11', 'title': 'Like You', 'artist': 'Tatiana Manaois'},
+        {'id': '12', 'title': 'Like You (Remix)', 'artist': 'Tatiana Manaois'},
+      ],
+    });
+    await c.submitText('play like you');
+    expect(c.state, NovaState.clarifying);
+    expect(c.choices.map((x) => x.label), ['Like You', 'Like You (Remix)']);
+
+    native.results['play_music'] = const NovaNativeResult(
+        'success', {'kind': 'song', 'title': 'Like You (Remix)', 'artist': 'Tatiana Manaois'});
+    await c.choose(c.choices.last);
+    expect(native.actions.last, 'play_music:|12');
+    expect(c.reply, 'Playing Like You (Remix) by Tatiana Manaois.');
+  });
+
+  test('a song that is not on the phone: offers to search online', () async {
+    native.audioGranted = true;
+    native.results['play_music'] = const NovaNativeResult('not_found', {});
+    await c.submitText('play essence');
+    expect(c.state, NovaState.clarifying);
+    expect(c.choices.map((x) => x.label), ['Search YouTube', 'Search Spotify']);
+  });
+
+  test('music controls: "next song" and "pause" go to NOVA Music', () async {
+    native.results['music_control'] =
+        const NovaNativeResult('success', {'title': 'Essence', 'artist': 'Wizkid'});
+    await c.submitText('next song');
+    expect(native.actions.last, 'music_control:next');
+    expect(c.reply, 'Next up: Essence by Wizkid.');
+    await c.submitText('pause');
+    expect(native.actions.last, 'music_control:pause');
+    expect(c.reply, 'Paused.');
   });
 
   test('spoken text drops markdown and long content', () {

@@ -121,6 +121,47 @@ void main() {
     });
   });
 
+  group('NOVA Music actions', () {
+    test('play_music: empty query plays everything; song ids are digits only', () {
+      expect(NovaActionValidator.fromPlanner('play_music', {})?.args, {'query': ''});
+      expect(NovaActionValidator.fromPlanner('play_music', {'query': ' Like You '})?.args,
+          {'query': 'Like You'});
+      expect(
+          NovaActionValidator.build(NovaActionType.playMusic,
+              {'query': '', 'song_id': '1234', 'label': 'Like You'})?.args,
+          {'query': '', 'song_id': '1234', 'label': 'Like You'});
+      expect(NovaActionValidator.build(NovaActionType.playMusic, {'song_id': '../etc/passwd'}), isNull);
+      expect(NovaActionValidator.build(NovaActionType.playMusic, {'song_id': '12a'}), isNull);
+      expect(NovaActionValidator.fromPlanner('play_music', {'query': 'a' * 201}), isNull);
+    });
+
+    test('music_control: only known commands', () {
+      expect(NovaActionValidator.fromPlanner('music_control', {'command': 'next'})?.args,
+          {'command': 'next'});
+      expect(NovaActionValidator.fromPlanner('music_control', {'command': 'volume_up'})?.type,
+          NovaActionType.musicControl);
+      expect(NovaActionValidator.fromPlanner('music_control', {'command': 'delete_all'}), isNull);
+      expect(NovaActionValidator.fromPlanner('music_control', {}), isNull);
+    });
+
+    test('plan response with a music action', () {
+      final plan = NovaApiClient.parsePlanResponse({
+        'type': 'actions',
+        'actions': [
+          {'name': 'play_music', 'args': {'query': 'Essence'}},
+        ],
+      });
+      final action = (plan as NovaActionsPlan).actions.single;
+      expect(action.type, NovaActionType.playMusic);
+      expect(action.args['query'], 'Essence');
+    });
+
+    test('NOVA Music screen names', () {
+      expect(NovaActionValidator.inAppFeatures['nova music'], 'nova_music');
+      expect(NovaActionValidator.inAppFeatures['my music'], 'nova_music');
+    });
+  });
+
   group('history', () {
     test('is bounded like the Worker expects', () {
       final h = NovaHistory();

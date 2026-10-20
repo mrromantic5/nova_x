@@ -15,6 +15,8 @@
 //   • at most NovaConfig.maxPlanSteps actions; the chain stops at the first
 //     action that fails or needs the user (permission / clarification)
 //   • AI output is validated before anything runs (NovaActionValidator)
+//   • photos / a screenshot the user added go to /vision only; text read
+//     from an image can never trigger an action
 
 import 'dart:async';
 import 'dart:io';
@@ -113,6 +115,17 @@ class NovaController extends ChangeNotifier {
   String? _lastSubmitted;
   DateTime? _lastSubmittedAt;
   bool _disposed = false;
+  int _greetings = DateTime.now().millisecond;
+
+  // Photos or a screenshot waiting to be sent with the next question.
+  final List<NovaVisionImage> _images = [];
+  bool _imagesFromScreen = false;
+
+  /// Photos / screenshot attached to the next question (max 3).
+  List<NovaVisionImage> get pendingImages => List.unmodifiable(_images);
+
+  /// True when the attached image is a capture of the user's screen.
+  bool get pendingIsScreen => _imagesFromScreen && _images.isNotEmpty;
 
   bool get isListening => _state == NovaState.listening;
   bool get isBusy =>
@@ -136,8 +149,9 @@ class NovaController extends ChangeNotifier {
     _relistened = false;
     _setState(NovaState.activating, reply: '', transcript: '');
     if (greet ?? _settings.greetOnActivate) {
-      _setState(NovaState.activating, reply: NovaConfig.greeting);
-      await _speak(NovaConfig.greeting, s);
+      final hello = NovaConfig.greetingFor(DateTime.now(), _greetings++);
+      _setState(NovaState.activating, reply: hello);
+      await _speak(hello, s);
       if (!_alive(s)) return;
     }
     await _listen(s);
@@ -177,6 +191,85 @@ class NovaController extends ChangeNotifier {
     _lastSubmittedAt = now;
     final s = _newSession();
     await _handle(t, s);
+  }
+
+  /// Adds photos or a screenshot to the next question (at most 3 in all).
+  void addImages(List<NovaVisionImage> images, {bool fromScreen = false}) {
+    if (_disposed || images.isEmpty) return;
+    if (fromScreen) {
+      // A new screen capture replaces an older one.
+      if (_imagesFromScreen) _images.clear();
+      _imagesFromScreen = true;
+    } else if (_imagesFromScreen) {
+      _images.clear();
+      _imagesFromScreen = false;
+    }
+    for (final img in images) {
+      if (_images.length >= 3) break;
+      _images.add(img);
+    }
+    notifyListeners();
+  }
+
+  void removeImage(int index) {
+    if (index < 0 || index >= _images.length) return;
+    _images.removeAt(index);
+    if (_images.isEmpty) _imagesFromScreen = false;
+    notifyListeners();
+  }
+
+  void clearImages() {
+    if (_images.isEmpty) return;
+    _images.clear();
+    _imagesFromScreen = false;
+    notifyListeners();
+  }
+
+  /// Send button with photos attached but no question typed.
+  Future<void> askAboutImages([String text = '']) async {
+    if (_images.isEmpty) return;
+    final s = _newSession();
+    await _askAboutImages(text.trim(), s);
+  }
+
+  /// A link in NOVA's answer was tapped: open it in NOVA X.
+  Future<void> openLink(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null || !(uri.scheme == 'http' || uri.scheme == 'https')) return;
+    await _host.openInBrowser(url);
+  }
+
+  Future<void> _askAboutImages(String text, int s) async {
+    final images = List<NovaVisionImage>.of(_images);
+    final screen = _imagesFromScreen;
+    _images.clear();
+    _imagesFromScreen = false;
+    _choices = const [];
+    final n = images.length;
+    final what = screen ? 'my screen' : (n == 1 ? 'a photo' : '$n photos');
+    _transcript = text.isEmpty ? (screen ? 'What is on my screen?' : 'What is in this ${n == 1 ? 'photo' : 'image'}?') : text;
+    final question = text.isNotEmpty
+        ? (screen ? 'This is a screenshot of my phone screen. $text' : text)
+        : screen
+            ? 'This is a screenshot of my phone screen. Tell me what is on it, read the important text, '
+                'and point out anything I should know or do next.'
+            : 'What is in this image? Read any text in it and explain anything important.';
+    _setState(NovaState.thinking, reply: '');
+    final past = history.toJson();
+    try {
+      final reply = await _api.vision(question, past, images, cancel: _token());
+      if (!_alive(s)) return;
+      history.addUser('(I shared $what.) $_transcript');
+      await _respond(s, reply);
+    } on NovaApiException catch (e) {
+      if (!_alive(s) || e.kind == NovaApiErrorKind.cancelled) return;
+      // Keep the photos so the user can simply try again.
+      _images
+        ..clear()
+        ..addAll(images);
+      _imagesFromScreen = screen;
+      await _fail(s, e.userMessage);
+    }
   }
 
   /// A clarification / contact choice was tapped.
@@ -466,7 +559,7 @@ class NovaController extends ChangeNotifier {
         if (_alive(s)) await _listen(s);
         return;
       }
-      await _respond(s, NovaConfig.greeting, addToHistory: false);
+      await _respond(s, NovaConfig.greetingFor(DateTime.now(), _greetings++), addToHistory: false);
       return;
     }
 
@@ -474,6 +567,11 @@ class NovaController extends ChangeNotifier {
     if (local is NovaCancelPlan) {
       cancel();
       _setState(NovaState.idle, reply: 'Okay.');
+      return;
+    }
+    if (_images.isNotEmpty) {
+      // A question about the attached photos / screenshot.
+      await _askAboutImages(text, s);
       return;
     }
     if (local is NovaReplyPlan) {

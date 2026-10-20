@@ -30,6 +30,9 @@ class NovaConfig {
   static const int maxHistoryMessages = 10; // Worker keeps history.slice(-10)
   static const int maxHistoryChars = 2000; // Worker truncates each to 2000
   static const int maxMessageChars = 4000; // Worker returns 413 above 4000
+
+  /// /vision accepts up to 8000 characters (question + page text).
+  static const int maxVisionMessageChars = 7000;
   static const int maxPageCharsForSummary = 3200;
 
   // Voice

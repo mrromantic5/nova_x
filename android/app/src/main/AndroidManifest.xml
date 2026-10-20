@@ -28,6 +28,15 @@
          notification to tap). -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
+    <!-- NOVA Music (built-in offline player): read the songs saved on the
+         phone — asked only when the user opens NOVA Music or asks NOVA to
+         play a song. Music keeps playing in the background with a media
+         notification (play/pause/next) like any music app. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
     <!-- See installed browsers / be eligible as default browser (Android 11+ visibility) -->
     <queries>
         <intent>
@@ -43,6 +52,10 @@
         <!-- NOVA: on-device text-to-speech engine (required on Android 11+). -->
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <!-- NOVA: offline voice input uses the phone's speech recogniser. -->
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
         </intent>
         <!-- NOVA: "open <app>" — resolve the spoken app name locally. -->
         <intent>
@@ -151,6 +164,12 @@
             android:name=".nova.NovaWakeService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- NOVA Music playback (started only when the user plays music). -->
+        <service
+            android:name=".music.NovaMusicService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <!-- Flutter embedding v2 -->
         <meta-data

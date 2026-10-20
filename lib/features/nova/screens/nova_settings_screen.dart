@@ -346,6 +346,8 @@ class _NovaSettingsScreenState extends State<NovaSettingsScreen> with WidgetsBin
                       '• Voice-assistant conversations are not saved after you close NOVA. '
                       'NOVA AI chats are kept in your chat history (on this phone, and in your '
                       'NOVA X account when you are signed in) until you delete them.\n'
+                      '• Photos you show NOVA AI are sent to the NOVA AI service to be read, '
+                      'not stored there; they stay saved on this phone only.\n'
                       '• NOVA Music plays songs from this phone, even offline. '
                       'Your music list never leaves your phone.\n'
                       '• Contacts never leave your phone.',

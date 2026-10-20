@@ -2,10 +2,13 @@ package com.tlyfe.nova_x
 
 import android.app.NotificationManager
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import android.view.WindowManager
 import com.tlyfe.nova_x.nova.NovaBridge
 import com.tlyfe.nova_x.nova.NovaMicArbiter
+import com.tlyfe.nova_x.nova.NovaWakePrefs
 import com.tlyfe.nova_x.nova.NovaWakeService
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -35,6 +38,9 @@ class NovaAssistActivity : FlutterFragmentActivity() {
     companion object {
         const val EXTRA_REASON = "com.tlyfe.nova_x.NOVA_REASON"
 
+        /** "Hey NOVA" with the screen off/locked: show over the lock screen. */
+        const val EXTRA_LOCK_SCREEN = "com.tlyfe.nova_x.NOVA_LOCK_SCREEN"
+
         /** elapsedRealtime of the last start (lets the wake service detect a blocked launch). */
         @Volatile var lastStartedAt = 0L
             private set
@@ -45,6 +51,7 @@ class NovaAssistActivity : FlutterFragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         lastStartedAt = SystemClock.elapsedRealtime()
         clearWakeAlert()
+        applyLockScreen(intent)
         // Ask the Flutter embedding for a transparent surface
         // (FlutterActivityLaunchConfigs.EXTRA_BACKGROUND_MODE).
         intent.putExtra("background_mode", "transparent")
@@ -63,6 +70,7 @@ class NovaAssistActivity : FlutterFragmentActivity() {
         setIntent(intent)
         lastStartedAt = SystemClock.elapsedRealtime()
         clearWakeAlert()
+        applyLockScreen(intent)
         // Invoked again while already open — start listening again.
         bridge?.emitAssistInvoked(reasonOf(intent))
     }
@@ -71,6 +79,25 @@ class NovaAssistActivity : FlutterFragmentActivity() {
         super.onStart()
         NovaMicArbiter.activityStarted()
         NovaMicArbiter.hold("assistant_window", true)
+    }
+
+    /**
+     * Shows NOVA over the lock screen and turns the screen on — only for
+     * "Hey NOVA" when the user turned on "Listen when the screen is off".
+     * Actions that need the phone unlocked ask for the PIN first (NovaBridge).
+     */
+    private fun applyLockScreen(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_LOCK_SCREEN, false) != true) return
+        if (!NovaWakePrefs.screenOffEnabled(this)) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            )
+        }
     }
 
     private fun reasonOf(intent: Intent?): String =

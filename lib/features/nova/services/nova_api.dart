@@ -7,6 +7,8 @@
 //   POST /transcribe  multipart "audio"             → {success, transcript}
 //   POST /plan        {message, history[]}          → {success, type, …}   (optional,
 //                     backward-compatible extension; 404 ⇒ not deployed yet)
+//   POST /vision      {message, history[], images[{mime, data}]} → {success, reply}
+//                     (Worker 3.3.0+; 404 ⇒ not deployed yet)
 //
 // Errors use {success:false, error, code} with HTTP 400/413/415/429/5xx.
 // All responses are treated as untrusted data.
@@ -52,6 +54,13 @@ class NovaPlannerResult {
   final int tokensUsed;
 }
 
+/// An image for POST /vision (JPEG, PNG or WebP bytes, already resized).
+class NovaVisionImage {
+  const NovaVisionImage(this.bytes, this.mime);
+  final List<int> bytes;
+  final String mime;
+}
+
 /// Abstraction so the controller can be unit-tested with a fake.
 abstract class NovaApi {
   Future<String> chat(String message, List<Map<String, String>> history, {CancelToken? cancel});
@@ -90,6 +99,51 @@ class NovaApiClient implements NovaApi {
           data: {'message': text, 'history': history},
           cancelToken: cancel,
         ));
+    final reply = data['reply'];
+    if (reply is! String || reply.trim().isEmpty) {
+      throw const NovaApiException(NovaApiErrorKind.malformed,
+          'NOVA sent an empty reply. Please try again.');
+    }
+    return reply.trim();
+  }
+
+  /// Chat about 1–3 images (NOVA AI screen). Not retried automatically: the
+  /// upload can be large on slow connections.
+  Future<String> vision(String message, List<Map<String, String>> history, List<NovaVisionImage> images,
+      {CancelToken? cancel}) async {
+    if (images.isEmpty) {
+      throw const NovaApiException(NovaApiErrorKind.badRequest, 'Add a photo first.');
+    }
+    final text = message.trim();
+    final Map<String, dynamic> data;
+    try {
+      data = _decode(await _dio.post<Object>(
+        '/vision',
+        data: {
+          'message': text.length > NovaConfig.maxVisionMessageChars
+              ? text.substring(0, NovaConfig.maxVisionMessageChars)
+              : text,
+          'history': history,
+          'images': [
+            for (final img in images.take(3)) {'mime': img.mime, 'data': base64Encode(img.bytes)},
+          ],
+        },
+        cancelToken: cancel,
+        options: Options(sendTimeout: NovaConfig.voiceTimeout, receiveTimeout: NovaConfig.voiceTimeout),
+      ));
+    } on DioException catch (e) {
+      final error = mapError(e);
+      if (error.statusCode == 404 || error.statusCode == 405) {
+        throw const NovaApiException(NovaApiErrorKind.badRequest,
+            "Reading photos isn't switched on yet on the NOVA AI server (needs the 3.3.0 update).",
+            statusCode: 404);
+      }
+      if (error.statusCode == 413) {
+        throw const NovaApiException(NovaApiErrorKind.tooLarge,
+            'That photo is too large. Try a smaller one.', statusCode: 413);
+      }
+      throw error;
+    }
     final reply = data['reply'];
     if (reply is! String || reply.trim().isEmpty) {
       throw const NovaApiException(NovaApiErrorKind.malformed,

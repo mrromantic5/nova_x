@@ -49,7 +49,7 @@ import 'package:nova_x/core/services/business_badge_service.dart';
 import 'package:nova_x/features/notifications/screens/notifications_screen.dart';
 import 'package:nova_x/features/devtools/screens/code_editor_screen.dart';
 import 'package:nova_x/core/services/update_service.dart';
-import 'package:nova_x/features/nova/nova_launcher.dart';
+import 'package:nova_x/features/music/screens/nova_music_screen.dart';
 import 'package:nova_x/features/nova/services/nova_wake.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -528,8 +528,8 @@ class _HomeScreenState extends State<HomeScreen>
                   color: AppTheme.textHint, size: 14),
               const SizedBox(width: 8),
               Expanded(child: Text(
-                'Identifies objects, products, landmarks, '
-                'text in images and finds visually similar pages.',
+                'Identifies objects, products, landmarks and text, and finds '
+                'similar images with Google Lens. The photo is sent to Google.',
                 style: GoogleFonts.inter(
                     color: AppTheme.textHint, fontSize: 11, height: 1.5),
               )),
@@ -574,23 +574,23 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<void> _doLensSearch({required bool fromCamera}) async {
     setState(() => _lensLoading = true);
-    _snack('📷 Preparing image…');
 
-    // Upload image to server → get Google Lens search URL.
-    // Returns null only if the user cancelled the image picker.
-    // Returns lens.google.com fallback URL if the server upload fails.
-    final url = await LensService.getSearchUrl(fromCamera: fromCamera);
-
+    // The photo is resized on the phone and handed to Google Lens from a
+    // browser tab (nothing is uploaded to Tech Lyfe's server).
+    final search = await LensService.prepare(fromCamera: fromCamera);
+    if (!mounted) return;
     setState(() => _lensLoading = false);
 
-    if (url == null) return; // user cancelled — do nothing
+    if (search == null) return; // user cancelled — do nothing
+    final html = search.html;
+    if (html == null) {
+      _snack(search.error ?? "That photo couldn't be used.");
+      return;
+    }
 
     RewardsService.earn(RewardTaskKey.visualSearch);
-
-    if (mounted) {
-      Navigator.push(context, MaterialPageRoute(
-          builder: (_) => BrowserView(initialQuery: url)));
-    }
+    Navigator.push(context, MaterialPageRoute(
+        builder: (_) => BrowserView(initialQuery: LensService.startUrl, htmlContent: html)));
   }
   void _snack(String msg) => ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
@@ -831,8 +831,9 @@ class _HomeScreenState extends State<HomeScreen>
         const Spacer(),
         const _PointsChip(),
         const SizedBox(width: 8),
-        // NOVA assistant (voice panel). Full NOVA AI chat: Menu → NOVA AI.
-        _hBtn(Icons.auto_awesome_rounded, () => showNovaAssistant(context)),
+        // NOVA AI chat. (The voice assistant: "Hey NOVA", the assistant
+        // gesture, or the voice button inside NOVA AI.)
+        _hBtn(Icons.auto_awesome_rounded, () => _push(const AiAssistantScreen())),
         const SizedBox(width: 8),
         // Profile (replaces the old incognito slot)
         GestureDetector(
@@ -990,10 +991,9 @@ class _HomeScreenState extends State<HomeScreen>
                           size: 20),
                     ),
                   ),
-                  // ── Lens icon hidden — restore in next update ────
-                  // To show again: remove the Offstage wrapper (keep inner content)
+                  // ── Lens: search with a photo (camera or gallery) ────
                   Offstage(
-                    offstage: true,
+                    offstage: false,
                     child: Row(mainAxisSize: MainAxisSize.min, children: [
                       const SizedBox(width: 4),
                       GestureDetector(
@@ -1665,6 +1665,8 @@ class _MenuSheet extends StatelessWidget {
     final items = [
       {'icon': Icons.psychology_outlined,      'label': 'NOVA AI',     'color': AppTheme.accentCyan,
        'fn': () { Navigator.pop(context); onPush(const AiAssistantScreen()); }},
+      {'icon': Icons.library_music_rounded,    'label': 'NOVA Music',  'color': AppTheme.accentPurple,
+       'fn': () { Navigator.pop(context); onPush(const NovaMusicScreen()); }},
       {'icon': Icons.bookmark_border_rounded,  'label': 'Bookmarks',   'color': const Color(0xFFFFAB00),
        'fn': () { Navigator.pop(context); onPush(const BookmarksScreen()); }},
       {'icon': Icons.download_outlined,        'label': 'Downloads',   'color': AppTheme.primaryBlue,

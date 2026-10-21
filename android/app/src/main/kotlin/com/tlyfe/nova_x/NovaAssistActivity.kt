@@ -8,6 +8,7 @@ import android.os.SystemClock
 import android.view.WindowManager
 import com.tlyfe.nova_x.nova.NovaBridge
 import com.tlyfe.nova_x.nova.NovaMicArbiter
+import com.tlyfe.nova_x.nova.NovaScreenCapture
 import com.tlyfe.nova_x.nova.NovaWakePrefs
 import com.tlyfe.nova_x.nova.NovaWakeService
 import io.flutter.embedding.android.FlutterFragmentActivity
@@ -48,6 +49,9 @@ class NovaAssistActivity : FlutterFragmentActivity() {
 
     private var bridge: NovaBridge? = null
 
+    /** True while the photo picker / camera (opened from the panel) is in front. */
+    private var keepOpen = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         lastStartedAt = SystemClock.elapsedRealtime()
         clearWakeAlert()
@@ -62,6 +66,7 @@ class NovaAssistActivity : FlutterFragmentActivity() {
         super.configureFlutterEngine(flutterEngine)
         bridge = NovaBridge(this, flutterEngine.dartExecutor.binaryMessenger) { closeAssistant() }.also {
             it.launchReason = reasonOf(intent)
+            it.keepOpenHandler = { open -> keepOpen = open }
         }
     }
 
@@ -120,15 +125,28 @@ class NovaAssistActivity : FlutterFragmentActivity() {
         bridge?.onRequestPermissionsResult(requestCode, grantResults)
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Back from the photo picker / camera / screen-capture dialog.
+        keepOpen = false
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (NovaScreenCapture.onActivityResult(applicationContext, requestCode, resultCode, data)) return
+        super.onActivityResult(requestCode, resultCode, data)
+    }
+
     override fun onStop() {
         super.onStop()
         NovaMicArbiter.activityStopped()
         NovaMicArbiter.hold("assistant_window", false)
         bridge?.onHostStop()
-        if (!isChangingConfigurations) closeAssistant()
+        if (!isChangingConfigurations && !keepOpen) closeAssistant()
     }
 
     override fun onDestroy() {
+        NovaScreenCapture.cancel()
         bridge?.dispose()
         bridge = null
         super.onDestroy()

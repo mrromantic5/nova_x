@@ -196,6 +196,15 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                     'service. The photo is saved on your device with the chat and is never '
                     'uploaded with your chat history; deleting the chat deletes it. Pages '
                     'in private (incognito) tabs are never captured.'),
+                _sub('Reading Your Screen (NOVA Assistant)',
+                    'When you tap "Read my screen" in the NOVA assistant panel, Android first '
+                    'asks for your permission. Only then does NOVA take one screenshot of the '
+                    'app in front, which you see before sending your question. It is sent to '
+                    'the NOVA AI service only with your question, is not stored by the service, '
+                    'and is not saved on your device. NOVA never records your screen in the '
+                    'background, never reads it over the lock screen, and cannot see apps that '
+                    'block screenshots. Photos you add in the assistant panel are handled the '
+                    'same way.'),
                 _sub('Music on Your Device',
                     'With your permission, NOVA Music reads the list of songs saved on '
                     'your device so it can play them, including offline. Your songs and '

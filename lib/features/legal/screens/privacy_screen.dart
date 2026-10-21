@@ -321,9 +321,11 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                     'DNS lookups for DMARC/SPF checks are made via Google DNS-over-HTTPS '
                     '(dns.google). Google\'s Privacy Policy applies to those DNS queries.'),
                 _sub('SMTP Email Service',
-                    'We use our own email server to send verification codes and '
-                    'account notifications. Email addresses are used solely for '
-                    'this purpose.'),
+                    'We use our own email server to send verification codes, password '
+                    'reset codes and account security notices (for example, when your '
+                    'password is changed). Email addresses are used solely for this '
+                    'purpose. Reset codes are stored only in scrambled (hashed) form '
+                    'and expire after 15 minutes.'),
               ]),
 
               _section('5.  Cookies & Tracking',

@@ -47,10 +47,13 @@ jobs:
             lib/features/browser/screens/browser_view.dart \
             lib/features/legal/screens/privacy_screen.dart \
             lib/features/legal/screens/terms_screen.dart \
-            test/nova
+            lib/features/auth \
+            lib/core/services/api_service.dart \
+            test/nova \
+            test/auth
 
       - name: NOVA unit tests
-        run: flutter test test/nova
+        run: flutter test test/nova test/auth
 
       - name: Patch flutter_inappwebview ProGuard
         run: |

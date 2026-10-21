@@ -137,7 +137,61 @@ class ApiService {
     }
   }
 
-  // ── Logout ───────────────────────────────────────────────────
+  // ── Forgot password (server API v2.8, password_reset.php) ─────
+  // 1. requestPasswordReset(email)        → a 6-digit code is emailed
+  // 2. verifyPasswordResetCode(email, code) → one-time reset token
+  // 3. resetPassword(email, token, password) → new password, signed in
+  static Future<PasswordResetResult> requestPasswordReset(String email) =>
+      _passwordCall('/api/v1/password/forgot', {'email': email.trim()});
+
+  static Future<PasswordResetResult> verifyPasswordResetCode({
+    required String email,
+    required String code,
+  }) =>
+      _passwordCall('/api/v1/password/verify-code', {'email': email.trim(), 'code': code});
+
+  /// On success the user is signed in on this phone (other devices are
+  /// signed out by the server).
+  static Future<PasswordResetResult> resetPassword({
+    required String email,
+    required String resetToken,
+    required String password,
+  }) async {
+    final r = await _passwordCall('/api/v1/password/reset',
+        {'email': email.trim(), 'reset_token': resetToken, 'password': password});
+    final token = r.data['access_token'];
+    final user = r.data['user'];
+    if (r.ok && token is String && user is Map) {
+      await _saveSession(token, Map<String, dynamic>.from(user));
+    }
+    return r;
+  }
+
+  static Future<PasswordResetResult> _passwordCall(String path, Map<String, dynamic> body) async {
+    try {
+      final res = await _dio.post(path,
+          data: body, options: Options(headers: {'Content-Type': 'application/json'}));
+      final data = res.data is Map ? Map<String, dynamic>.from(res.data as Map) : <String, dynamic>{};
+      return PasswordResetResult.fromJson(true, res.statusCode ?? 200, data);
+    } on DioException catch (e) {
+      final d = e.response?.data;
+      if (d is Map && d['message'] != null) {
+        return PasswordResetResult.fromJson(
+            false, e.response?.statusCode ?? 0, Map<String, dynamic>.from(d));
+      }
+      final code = e.response?.statusCode;
+      return PasswordResetResult(
+        ok: false,
+        statusCode: code ?? 0,
+        status: 'error',
+        message: code == 404
+            ? 'Password reset is not available yet. Please try again later.'
+            : _msg(e),
+      );
+    }
+  }
+
+  // ── Logout ───────────────────────────────────────────────────  // ── Logout ───────────────────────────────────────────────────
   static Future<void> logout() async {
     try { await _dio.post('/api/v1/sync/logout', options: await _authOpts()); }
     catch (_) {}
@@ -335,4 +389,56 @@ class ApiService {
     }
     return 'Something went wrong. Please try again.';
   }
+}
+
+/// Answer of the forgot-password endpoints.
+class PasswordResetResult {
+  const PasswordResetResult({
+    required this.ok,
+    required this.statusCode,
+    required this.status,
+    required this.message,
+    this.retryAfter,
+    this.resendAfter,
+    this.expiresIn,
+    this.attemptsLeft,
+    this.resetToken,
+    this.data = const {},
+  });
+
+  factory PasswordResetResult.fromJson(bool ok, int statusCode, Map<String, dynamic> d) {
+    int? asInt(Object? v) => v is num ? v.toInt() : int.tryParse('${v ?? ''}');
+    return PasswordResetResult(
+      ok: ok,
+      statusCode: statusCode,
+      status: (d['status'] ?? (ok ? 'success' : 'error')).toString(),
+      message: (d['message'] ?? '').toString(),
+      retryAfter: asInt(d['retry_after']),
+      resendAfter: asInt(d['resend_after']),
+      expiresIn: asInt(d['expires_in']),
+      attemptsLeft: asInt(d['attempts_left']),
+      resetToken: d['reset_token'] is String ? d['reset_token'] as String : null,
+      data: d,
+    );
+  }
+
+  final bool ok;
+  final int statusCode;
+
+  /// success · invalid_code · expired · weak_password · error
+  final String status;
+  final String message;
+
+  /// Seconds to wait (429 Too Many Requests).
+  final int? retryAfter;
+
+  /// Seconds before another code may be requested.
+  final int? resendAfter;
+  final int? expiresIn;
+  final int? attemptsLeft;
+  final String? resetToken;
+  final Map<String, dynamic> data;
+
+  bool get expired => status == 'expired' || statusCode == 410;
+  bool get rateLimited => statusCode == 429;
 }

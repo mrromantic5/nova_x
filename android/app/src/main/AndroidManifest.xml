@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Required for the browser and AI features -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -36,6 +37,9 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- NOVA assistant "Read my screen": one screenshot, only after the user
+         agrees in Android's screen-capture dialog (NovaScreenCapture). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
     <!-- See installed browsers / be eligible as default browser (Android 11+ visibility) -->
     <queries>
@@ -67,6 +71,10 @@
     <application
         android:label="NOVA X"
         android:name="${applicationName}"
+        android:allowBackup="false"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        tools:replace="android:allowBackup,android:fullBackupContent,android:dataExtractionRules"
         android:icon="@mipmap/ic_launcher"
         android:hardwareAccelerated="true"
         android:usesCleartextTraffic="true">
@@ -164,6 +172,13 @@
             android:name=".nova.NovaWakeService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- NOVA "Read my screen": runs only while taking the one screenshot the
+             user agreed to in Android's screen-capture dialog. -->
+        <service
+            android:name=".nova.NovaCaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
 
         <!-- NOVA Music playback (started only when the user plays music). -->
         <service

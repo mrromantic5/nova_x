@@ -11,6 +11,7 @@ import '../../legal/screens/terms_screen.dart';
 import '../../legal/screens/privacy_screen.dart';
 import '../../home/screens/home_screen.dart';
 import '../../permissions/screens/permission_slides_screen.dart';
+import 'forgot_password_screen.dart';
 import 'otp_screen.dart';
 
 class AuthScreen extends StatefulWidget {
@@ -376,6 +377,21 @@ class _AuthScreenState extends State<AuthScreen>
     }
   }
 
+  /// Reset by email code (ForgotPasswordScreen). When it returns without a
+  /// session, the email is filled in here so the user can log in.
+  Future<void> _openForgotPassword() async {
+    FocusScope.of(context).unfocus();
+    final email = await Navigator.push<String>(context, MaterialPageRoute(
+      builder: (_) => ForgotPasswordScreen(initialEmail: _loginEmailCtrl.text.trim()),
+    ));
+    if (!mounted || email == null || email.isEmpty) return;
+    setState(() {
+      _loginEmailCtrl.text = email;
+      _loginPassCtrl.clear();
+      _error = '';
+    });
+  }
+
   void _continueAsGuest() => Navigator.pushReplacement(
       context, MaterialPageRoute(builder: (_) => const HomeScreen()));
 
@@ -439,6 +455,7 @@ class _AuthScreenState extends State<AuthScreen>
                   gradient: AppTheme.primaryGradient,
                   borderRadius: BorderRadius.circular(12),
                 ),
+                indicatorSize: TabBarIndicatorSize.tab,
                 indicatorPadding: const EdgeInsets.all(4),
                 dividerColor: Colors.transparent,
                 labelColor: Colors.white,
@@ -457,6 +474,21 @@ class _AuthScreenState extends State<AuthScreen>
                 _registerForm(),
               ]),
             ),
+
+            if (_tabs.index == 0)
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: _loading ? null : _openForgotPassword,
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppTheme.accentCyan,
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                  ),
+                  child: Text('Forgot password?',
+                      style: GoogleFonts.inter(
+                          fontSize: 13, fontWeight: FontWeight.w600)),
+                ),
+              ),
 
             if (_error.isNotEmpty) ...[
               const SizedBox(height: 12),

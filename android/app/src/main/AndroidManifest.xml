@@ -5,6 +5,8 @@
     <!-- Required for the browser and AI features -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- NOVA Network: Wi-Fi link speed, band and signal (normal permission, no location). -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
     <!-- Optional: camera/mic for sites that request media access via WebView -->
     <uses-permission android:name="android.permission.CAMERA" />

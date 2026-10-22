@@ -32,6 +32,10 @@ import '../services/nova_executor.dart';
 import '../services/nova_history.dart';
 import '../services/nova_native.dart';
 import '../services/nova_voice.dart';
+import '../../network/services/network_intents.dart';
+import '../../network/services/network_probe.dart';
+import '../../network/services/speed_math.dart';
+import '../../network/services/speed_test_engine.dart';
 
 class NovaController extends ChangeNotifier {
   NovaController({
@@ -42,7 +46,9 @@ class NovaController extends ChangeNotifier {
     String Function(String query)? searchUrl,
     DateTime Function()? clock,
     NovaVoiceOutput? voice,
+    NovaNetworkProbe? network,
   })  : _api = api,
+        _network = network ?? NovaNetworkProbeImpl(),
         _native = native,
         _voice = voice ?? NovaNativeVoice(native),
         _host = host,
@@ -56,6 +62,10 @@ class NovaController extends ChangeNotifier {
   }
 
   final NovaApi _api;
+
+  /// NOVA Network: real speed test / ping / IP / battery answers.
+  final NovaNetworkProbe _network;
+  bool _networkBusy = false;
   final NovaNativeApi _native;
   final NovaHost _host;
   final NovaCommandParser _parser;
@@ -574,6 +584,13 @@ class NovaController extends ChangeNotifier {
       await _askAboutImages(text, s);
       return;
     }
+    final net = NetworkIntents.parse(text);
+    if (net != NetworkIntent.none && net != NetworkIntent.open) {
+      // Answered with real measurements on the phone (NOVA Network).
+      history.addUser(text);
+      await _networkQuestion(net, s);
+      return;
+    }
     if (local is NovaReplyPlan) {
       history.addUser(text);
       await _respond(s, local.reply);
@@ -622,6 +639,93 @@ class NovaController extends ChangeNotifier {
     } on NovaApiException catch (e) {
       if (!_alive(s) || e.kind == NovaApiErrorKind.cancelled) return;
       await _fail(s, e.userMessage);
+    }
+  }
+
+  /// "What's my internet speed / ping / IP / battery?" — measured for real.
+  Future<void> _networkQuestion(NetworkIntent intent, int s) async {
+    _setState(NovaState.executing, reply: switch (intent) {
+      NetworkIntent.speedTest => 'Testing your internet speed. This takes about 15 seconds…',
+      NetworkIntent.ping => 'Checking your ping…',
+      NetworkIntent.ip => 'Looking up your IP address…',
+      _ => 'Checking…',
+    });
+    _networkBusy = true;
+    try {
+      switch (intent) {
+        case NetworkIntent.speedTest:
+          // Say it first: speaking while testing would use the connection.
+          await _speak('Testing your internet speed. Give me about fifteen seconds.', s);
+          if (!_alive(s)) return;
+          _setState(NovaState.executing, reply: 'Testing your internet speed…');
+          final r = await _network.speedTest(onProgress: (p) {
+            if (!_alive(s)) return;
+            final line = switch (p.phase) {
+              SpeedPhase.connecting => 'Connecting to the nearest server…',
+              SpeedPhase.latency => 'Measuring ping… ${p.pingMs?.round() ?? '–'} ms',
+              SpeedPhase.download => 'Download: ${SpeedMath.speedText(p.liveMbps)} Mbps',
+              SpeedPhase.upload => 'Upload: ${SpeedMath.speedText(p.liveMbps)} Mbps',
+              _ => null,
+            };
+            if (line != null) _setState(NovaState.executing, reply: line);
+          });
+          if (!_alive(s)) return;
+          _networkBusy = false;
+          final summary = SpeedMath.spokenSummary(
+            down: r.downloadMbps,
+            up: r.uploadMbps,
+            ping: r.pingMs,
+            jitter: r.jitterMs,
+            loaded: r.loadedDownMs,
+            isp: r.isp,
+          );
+          final text = '**Download:** ${SpeedMath.speedText(r.downloadMbps)} Mbps\n'
+              '**Upload:** ${SpeedMath.speedText(r.uploadMbps)} Mbps\n'
+              '**Ping:** ${r.pingMs.round()} ms · **Jitter:** ${r.jitterMs.round()} ms\n\n$summary';
+          history.addAssistant(summary);
+          if (!_settings.speakReplies) {
+            _setState(NovaState.idle, reply: text);
+            return;
+          }
+          _setState(NovaState.speaking, reply: text);
+          await _speak(summary, s);
+          if (_alive(s) && _state == NovaState.speaking) _setState(NovaState.idle);
+        case NetworkIntent.ping:
+          final ms = await _network.ping();
+          if (!_alive(s)) return;
+          _networkBusy = false;
+          final quality = ms <= 40 ? 'great for gaming and calls' : ms <= 80 ? 'good' : ms <= 150 ? 'okay, but games may lag' : 'high — expect lag';
+          await _respond(s, 'Your ping to the nearest server is ${ms.round()} milliseconds. That is $quality.');
+        case NetworkIntent.ip:
+          final m = await _network.meta();
+          if (!_alive(s)) return;
+          _networkBusy = false;
+          final who = m.isp == null ? '' : ' from ${m.isp}';
+          final where = m.place == 'Unknown' ? '' : ', near ${m.place}';
+          await _respond(s, m.ip.isEmpty
+              ? "I couldn't find your public IP address."
+              : 'Your public IP address is ${m.ip}$who$where.');
+        case NetworkIntent.battery:
+          final d = await _network.device();
+          if (!_alive(s)) return;
+          _networkBusy = false;
+          final level = d.batteryPercent;
+          await _respond(s, level == null
+              ? "I couldn't read your battery level."
+              : 'Your battery is at $level percent${d.charging ? ' and charging' : ''}'
+                  '${d.powerSave ? ', with battery saver on' : ''}.');
+        case NetworkIntent.none:
+        case NetworkIntent.open:
+          _networkBusy = false;
+      }
+    } on SpeedTestException catch (e) {
+      _networkBusy = false;
+      if (!_alive(s)) return;
+      await _fail(s, e.message);
+    } catch (_) {
+      _networkBusy = false;
+      if (!_alive(s)) return;
+      await _fail(s, "I couldn't check your connection. Please try again.");
     }
   }
 
@@ -764,6 +868,10 @@ class NovaController extends ChangeNotifier {
 
   int _newSession() {
     _session++;
+    if (_networkBusy) {
+      _networkBusy = false;
+      _network.cancel();
+    }
     _cancel?.cancel();
     _cancel = null;
     if (_deviceSpeech) {
@@ -812,6 +920,7 @@ class NovaController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _session++;
+    if (_networkBusy) _network.cancel();
     _cancel?.cancel();
     _sub.cancel();
     _voiceSub.cancel();

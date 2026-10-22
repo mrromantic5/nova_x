@@ -29,6 +29,7 @@ import 'package:nova_x/features/cyber/screens/cyber_screen.dart';
 import 'package:nova_x/features/shield/screens/nova_shield_screen.dart';
 import 'package:nova_x/core/services/nova_shield_service.dart';
 import 'package:nova_x/features/map/screens/nova_map_screen.dart';
+import 'package:nova_x/features/network/screens/nova_network_screen.dart';
 import 'package:nova_x/features/map/map_premium_gate.dart';
 import 'package:nova_x/features/offline/screens/offline_pages_screen.dart';
 import 'package:nova_x/core/services/api_service.dart';
@@ -1689,6 +1690,8 @@ class _MenuSheet extends StatelessWidget {
        'fn': () { Navigator.pop(context); onPush(const NovaShieldScreen()); }},
       {'icon': Icons.security_rounded,          'label': 'NOVA Cyber', 'color': const Color(0xFF7C4DFF),
        'fn': () { Navigator.pop(context); onPush(const CyberScreen()); }},
+      {'icon': Icons.speed_rounded,             'label': 'NOVA Network', 'color': const Color(0xFF39FFB0),
+       'fn': () { Navigator.pop(context); onPush(const NovaNetworkScreen()); }},
       {'icon': Icons.developer_mode_rounded,    'label': 'Dev Tools',  'color': AppTheme.accentCyan,
        'fn': () { Navigator.pop(context); onPush(const BrowserView(
            initialQuery: 'https://api.browser.t-lyfe.com.ng/devtools.html', autoOpenDevTools: true)); }},

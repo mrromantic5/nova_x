@@ -9,6 +9,9 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nova_x/features/network/models/network_models.dart';
+import 'package:nova_x/features/network/services/network_probe.dart';
+import 'package:nova_x/features/network/services/speed_test_engine.dart';
 import 'package:nova_x/features/nova/controller/nova_controller.dart';
 import 'package:nova_x/features/nova/models/nova_models.dart';
 import 'package:nova_x/features/nova/nova_config.dart';
@@ -62,6 +65,42 @@ class FakeApi implements NovaApi {
 
   @override
   void dispose() {}
+}
+
+class FakeNetwork implements NovaNetworkProbe {
+  int tests = 0;
+  bool cancelled = false;
+  Object? error;
+
+  @override
+  Future<SpeedTestResult> speedTest({void Function(SpeedProgress)? onProgress}) async {
+    tests++;
+    if (error != null) throw error!;
+    onProgress?.call(const SpeedProgress(phase: SpeedPhase.download, liveMbps: 88));
+    return SpeedTestResult(
+      time: DateTime(2026, 10, 23),
+      downloadMbps: 131.3,
+      uploadMbps: 45.2,
+      pingMs: 37,
+      jitterMs: 3,
+      isp: 'Zenlayer',
+    );
+  }
+
+  @override
+  Future<double> ping() async => 23;
+
+  @override
+  Future<NetworkMeta> meta() async =>
+      NetworkMeta.fromJson(const {'ip': '31.57.228.94', 'isp': 'Zenlayer', 'city': 'Dubai', 'country': 'AE'});
+
+  @override
+  Future<DeviceSnapshot> device() async => DeviceSnapshot.fromMap(const {
+        'battery': {'level': 76, 'charging': true},
+      });
+
+  @override
+  void cancel() => cancelled = true;
 }
 
 class FakeNative implements NovaNativeApi {
@@ -222,6 +261,7 @@ void main() {
   late FakeNative native;
   late FakeHost host;
   late NovaController c;
+  late FakeNetwork network;
 
   NovaController make({bool overlay = false}) {
     host = FakeHost(overlay: overlay);
@@ -229,6 +269,7 @@ void main() {
       api: api,
       native: native,
       host: host,
+      network: network,
       searchUrl: (q) => 'https://search.test/?q=${Uri.encodeComponent(q)}',
       clock: () => DateTime(2026, 10, 19, 9, 30),
     );
@@ -237,6 +278,7 @@ void main() {
   setUp(() {
     api = FakeApi();
     native = FakeNative();
+    network = FakeNetwork();
     c = make();
   });
 
@@ -572,6 +614,40 @@ void main() {
       await c.openLink('https://flutter.dev');
       await c.openLink('javascript:alert(1)');
       expect(host.opened, ['https://flutter.dev']);
+    });
+  });
+
+  group('NOVA Network answers (3.6.0)', () {
+    test('"what\'s my internet speed" runs a real test, never the AI', () async {
+      await c.submitText("Hey NOVA, what's my internet speed?");
+      expect(network.tests, 1);
+      expect(api.chatCalls, isEmpty);
+      expect(native.actions, isEmpty);
+      expect(c.reply, contains('**Download:** 131.30 Mbps'));
+      expect(native.spoken.last, startsWith('Your internet speed on Zenlayer is 131 megabits per second'));
+      expect(c.state, NovaState.idle);
+    });
+
+    test('ping, IP address and battery', () async {
+      await c.submitText("what's my ping");
+      expect(c.reply, 'Your ping to the nearest server is 23 milliseconds. That is great for gaming and calls.');
+      await c.submitText('what is my IP address');
+      expect(c.reply, 'Your public IP address is 31.57.228.94 from Zenlayer, near Dubai, AE.');
+      await c.submitText("what's my battery percentage");
+      expect(c.reply, 'Your battery is at 76 percent and charging.');
+    });
+
+    test('a failed test is reported honestly', () async {
+      network.error = const SpeedTestException("Can't reach the internet. Check Wi-Fi or mobile data.");
+      await c.submitText('run a speed test');
+      expect(c.state, NovaState.error);
+      expect(c.reply, "Can't reach the internet. Check Wi-Fi or mobile data.");
+    });
+
+    test('"open NOVA Network" opens the page', () async {
+      await c.submitText('open NOVA Network');
+      expect(host.opened, ['feature:nova_network']);
+      expect(network.tests, 0);
     });
   });
 

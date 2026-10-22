@@ -205,6 +205,15 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                     'background, never reads it over the lock screen, and cannot see apps that '
                     'block screenshots. Photos you add in the assistant panel are handled the '
                     'same way.'),
+                _sub('NOVA Network (Speed Test and Device Details)',
+                    'When you run a speed test (or ask NOVA for your internet speed, ping or IP '
+                    'address), NOVA X exchanges random test data with the NOVA speed test '
+                    'server run by Tech Lyfe on Cloudflare. Like any website, the server sees '
+                    'your IP address and uses it only to show your provider and approximate '
+                    'location (city level, no GPS); nothing is stored on the server. Device '
+                    'details (battery, connection, storage) are read on your phone and never '
+                    'sent anywhere. Your test history is saved only on your phone and you can '
+                    'delete it at any time.'),
                 _sub('Music on Your Device',
                     'With your permission, NOVA Music reads the list of songs saved on '
                     'your device so it can play them, including offline. Your songs and '

@@ -232,6 +232,8 @@ class NovaActionValidator {
     'nova x settings': 'browser_settings', 'browser settings': 'browser_settings',
     'nova music': 'nova_music', 'music player': 'nova_music', 'my music': 'nova_music',
     'music app': 'nova_music', 'nova music player': 'nova_music', 'music library': 'nova_music',
+    'nova network': 'nova_network', 'network page': 'nova_network', 'speed test page': 'nova_network',
+    'speed tester': 'nova_network', 'network tools': 'nova_network', 'nova speed test': 'nova_network',
   };
 
   /// Web pages used when an app isn't installed (opened inside NOVA X).

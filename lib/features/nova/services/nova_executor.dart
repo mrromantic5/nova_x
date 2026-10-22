@@ -54,6 +54,7 @@ class NovaExecutor {
     'nova_settings': 'NOVA assistant settings',
     'browser_settings': 'NOVA X settings',
     'nova_music': 'NOVA Music',
+    'nova_network': 'NOVA Network',
   };
 
   Future<NovaActionResult> execute(NovaAction a) async {

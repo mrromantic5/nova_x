@@ -17,6 +17,7 @@ import '../downloads/screens/downloads_screen.dart';
 import '../history/screens/history_screen.dart';
 import '../map/screens/nova_map_screen.dart';
 import '../music/screens/nova_music_screen.dart';
+import '../network/screens/nova_network_screen.dart';
 import '../rewards/screens/rewards_screen.dart';
 import '../settings/screens/settings_screen.dart';
 import '../shield/screens/nova_shield_screen.dart';
@@ -96,6 +97,7 @@ class NovaInAppHost implements NovaHost {
       'nova_settings' => const NovaSettingsScreen(),
       'browser_settings' => const SettingsScreen(),
       'nova_music' => const NovaMusicScreen(),
+      'nova_network' => const NovaNetworkScreen(),
       _ => null,
     };
     if (screen == null) return false;

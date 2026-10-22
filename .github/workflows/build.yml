@@ -40,6 +40,7 @@ jobs:
             lib/features/nova \
             lib/features/ai \
             lib/features/music \
+            lib/features/network \
             lib/core/services/lens_service.dart \
             lib/features/home/screens/home_screen.dart \
             lib/features/map/screens/nova_map_screen.dart \

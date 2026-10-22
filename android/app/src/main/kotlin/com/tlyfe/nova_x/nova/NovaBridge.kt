@@ -40,6 +40,7 @@ import io.flutter.plugin.common.MethodChannel
  *   setWakeScreenOff{enabled} · openBatterySettings  — "Listen when the screen is off"
  *   (over the lock screen, runAction asks for the PIN first, except music)
  *   playVoiceFile{path,id} · stopVoiceFile          — NOVA's cloud voice (MP3 in the app cache)
+ *   deviceInfo — NOVA Network: device, battery, connection, system (NovaDeviceInfo)
  *   networkStatus · startDeviceSpeech · stopDeviceSpeech · cancelDeviceSpeech — offline voice input
  *
  * Android → Dart events:
@@ -168,6 +169,14 @@ class NovaBridge(
                     result.success(null)
                 }
                 "networkStatus" -> result.success(mapOf("online" to isOnline()))
+                "deviceInfo" -> {
+                    // NOVA Network: device, battery, connection and system details.
+                    val ctx = activity.applicationContext
+                    Thread {
+                        val info = NovaDeviceInfo.read(ctx)
+                        main.post { if (!disposed) result.success(info) }
+                    }.start()
+                }
                 "startDeviceSpeech" -> {
                     if (!isGranted(Manifest.permission.RECORD_AUDIO)) {
                         result.success(mapOf("status" to "permission_required"))

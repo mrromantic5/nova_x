@@ -7,6 +7,8 @@
 //                     Future completes only after the user answers the dialog.
 //   • initialUrl()  — one-shot link that launched / was waiting for the app.
 //   • onIncomingUrl — callback for links that arrive while the app is open.
+//   • initialFeature() / onOpenFeature — a NOVA X page the floating NOVA
+//                     assistant asked to open (same one-shot hand-over).
 //
 // Also awards the one-time 5-point reward when NOVA X becomes the default.
 
@@ -20,6 +22,10 @@ class DefaultBrowserService {
   /// Set by the home screen while it is mounted. Links that arrive while this
   /// is null are kept natively and returned by [initialUrl] later.
   static void Function(String url)? onIncomingUrl;
+
+  /// Set by the home screen while it is mounted: opens a NOVA X page by id.
+  /// Returns false when the id is unknown.
+  static bool Function(String featureId)? onOpenFeature;
 
   static bool _handlerSet = false;
   static Future<bool>? _requestInFlight;
@@ -35,6 +41,12 @@ class DefaultBrowserService {
     if (call.method == 'onNewUrl' && call.arguments is String) {
       final cb = onIncomingUrl;
       if (cb == null) return false; // native side keeps it for initialUrl()
+      cb(call.arguments as String);
+      return true;
+    }
+    if (call.method == 'onOpenFeature' && call.arguments is String) {
+      final cb = onOpenFeature;
+      if (cb == null) return false; // kept natively for initialFeature()
       cb(call.arguments as String);
       return true;
     }
@@ -94,6 +106,17 @@ class DefaultBrowserService {
     init();
     try {
       return await _ch.invokeMethod<String>('getInitialUrl');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// NOVA X page the assistant asked to open before the home screen was
+  /// ready. One-shot: returns null on subsequent calls.
+  static Future<String?> initialFeature() async {
+    init();
+    try {
+      return await _ch.invokeMethod<String>('getInitialFeature');
     } catch (_) {
       return null;
     }

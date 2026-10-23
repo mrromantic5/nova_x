@@ -16,7 +16,9 @@ import android.media.AudioManager
  *   not_playing · invalid
  *
  * music_control also adjusts the phone's media volume:
- *   volume_up · volume_down · mute · unmute (Android shows its volume bar).
+ *   volume_up · volume_down · mute · unmute (Android shows its volume bar)
+ * and the player modes: shuffle_on · shuffle_off · repeat_one · repeat_all ·
+ *   repeat_off · restart (the current song from the beginning).
  */
 object NovaMusicCommands {
 
@@ -89,6 +91,28 @@ object NovaMusicCommands {
             "now_playing" -> {
                 if (!active || song == null) mapOf("status" to "not_playing")
                 else success("now_playing", song, 0) + mapOf("playing" to NovaMusicPlayer.isPlayingNow())
+            }
+            "shuffle_on", "shuffle_off" -> {
+                NovaMusicPlayer.setShuffle(command == "shuffle_on")
+                success(command, song, 0)
+            }
+            "repeat_one", "repeat_all", "repeat_off" -> {
+                NovaMusicPlayer.setRepeat(
+                    when (command) {
+                        "repeat_one" -> NovaMusicPlayer.Repeat.ONE
+                        "repeat_all" -> NovaMusicPlayer.Repeat.ALL
+                        else -> NovaMusicPlayer.Repeat.OFF
+                    },
+                )
+                success(command, song, 0)
+            }
+            "restart" -> {
+                if (!active || song == null) mapOf("status" to "not_playing")
+                else {
+                    NovaMusicPlayer.seekTo(0)
+                    if (!NovaMusicPlayer.isPlayingNow()) NovaMusicPlayer.resume()
+                    success("restart", song, 0)
+                }
             }
             "volume_up" -> volume(context, AudioManager.ADJUST_RAISE, "volume_up")
             "volume_down" -> volume(context, AudioManager.ADJUST_LOWER, "volume_down")

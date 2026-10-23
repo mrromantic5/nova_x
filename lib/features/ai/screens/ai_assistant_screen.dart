@@ -27,6 +27,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:nova_x/core/services/rewards_service.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
+import 'package:nova_x/features/ai/services/nova_chat_commands.dart';
 import 'package:nova_x/features/ai/services/nova_chat_repository.dart';
 import 'package:nova_x/features/ai/services/nova_markdown_parser.dart';
 import 'package:nova_x/features/ai/services/nova_media_store.dart';
@@ -35,9 +36,16 @@ import 'package:nova_x/features/ai/widgets/nova_chat_drawer.dart';
 import 'package:nova_x/features/ai/widgets/nova_markdown_view.dart';
 import 'package:nova_x/features/browser/screens/browser_view.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:nova_x/features/network/services/network_intents.dart';
+import 'package:nova_x/features/network/services/network_probe.dart';
+import 'package:nova_x/features/network/services/speed_math.dart';
+import 'package:nova_x/features/network/services/speed_test_engine.dart';
 import 'package:nova_x/features/nova/controller/nova_controller.dart';
 import 'package:nova_x/features/nova/nova_config.dart';
+import 'package:nova_x/features/nova/models/nova_models.dart';
+import 'package:nova_x/features/nova/nova_features.dart';
 import 'package:nova_x/features/nova/nova_launcher.dart';
+import 'package:nova_x/features/nova/services/nova_executor.dart';
 import 'package:nova_x/features/nova/services/nova_api.dart';
 import 'package:nova_x/features/nova/services/nova_native.dart';
 import 'package:nova_x/features/nova/services/nova_prefs.dart';
@@ -97,6 +105,13 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
   StreamSubscription<String>? _voiceSub;
   CancelToken? _chatCancel;
 
+  // NOVA commands typed in the chat ("open NOVA Music", "next song",
+  // "test my internet speed") run for real instead of being explained.
+  final NovaChatCommands _commands = NovaChatCommands();
+  final NovaNetworkProbe _probe = NovaNetworkProbeImpl();
+  bool _measuring = false;
+  List<NovaChoice> _choices = const [];
+
   // ── API endpoints (image & video generation — unchanged) ───────────────────
   static const String _imageApi =
       'https://ab-text-toimgfast.abrahamdw882.workers.dev/?text=';
@@ -104,6 +119,8 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
       'https://eliteprotech-apis.zone.id/aivideo?q=';
 
   static const List<String> _suggestions = [
+    'Test my internet speed',
+    'Play me a song',
     'Summarise a news article',
     'Help me write an email',
     'Explain something simply',
@@ -116,6 +133,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
       '\u{1F44B} Hi! I\'m NOVA AI, your assistant in NOVA X.';
   static const String _welcomeMore =
       '• Ask me anything — including how to use NOVA X\n'
+      '• Tell me what to do: "open NOVA Network", "play me a song", "next song", "test my internet speed"\n'
       '• Type /image [description] to generate an image\n'
       '• Type /video [description] to generate a video\n'
       '• Tap \u{1F3A4} to talk, or \u{1F50A} on any reply to hear it\n'
@@ -161,6 +179,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
     WidgetsBinding.instance.removeObserver(this);
     _nativeSub?.cancel();
     _chatCancel?.cancel();
+    _probe.cancel();
     if (_isListening) _native.cancelRecording();
     _voiceSub?.cancel();
     if (_isSpeaking) _voice.stop();
@@ -241,6 +260,9 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
   void _stopActivity() {
     _chatCancel?.cancel();
     _chatCancel = null;
+    if (_measuring) _probe.cancel();
+    _measuring = false;
+    _choices = const [];
     if (_isSpeaking) _stopSpeaking();
     if (_isListening) {
       _native.cancelRecording();
@@ -475,6 +497,10 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
   Future<void> _send(String text) async {
     final t = text.trim();
     if (_loading || _openingChat) return;
+    if (_measuring) {
+      _snack('Wait a moment — the speed test is still running.');
+      return;
+    }
     if (_pending.isNotEmpty) {
       await _sendWithPhotos(t);
       return;
@@ -534,8 +560,226 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
       return;
     }
 
+    // NOVA commands: open a page, control music, measure the connection.
+    if (_choices.isNotEmpty) setState(() => _choices = const []);
+    if (await _runCommand(t)) return;
+
     // Text — NOVA AI (with the photos of the last few messages, if any)
     await _ask((cancel) => _answer(t, history, cancel));
+  }
+
+  // ── NOVA commands in the chat ──────────────────────────────────────────────
+
+  /// Runs [t] as a NOVA command when it is one. Returns false to let NOVA AI
+  /// answer instead.
+  Future<bool> _runCommand(String t) async {
+    final net = _commands.network(t);
+    if (net != NetworkIntent.none) {
+      await _runNetwork(net);
+      return true;
+    }
+    final actions = _commands.actions(t);
+    if (actions == null) return false;
+
+    final chatId = _chatId;
+    final openToken = _openToken;
+    final executor = NovaExecutor(
+      native: _native,
+      host: NovaInAppHost(Navigator.of(context), () {}),
+    );
+    final said = <String>[];
+    var choices = const <NovaChoice>[];
+    for (var i = 0; i < actions.length; i++) {
+      final a = actions[i];
+      if (NovaChatCommands.featureOf(a) == 'nova_ai') {
+        said.add("You're already in NOVA AI — ask me anything.");
+        continue;
+      }
+      var r = await executor.execute(a);
+      if (r.status == NovaActionStatus.permissionRequired && a.type == NovaActionType.playMusic) {
+        if (await _native.requestPermission('audio')) r = await executor.execute(a);
+      }
+      if (!mounted) return true;
+      // "open <something>" that isn't an app or a NOVA X page: a question for NOVA AI.
+      if (!r.ok && i == 0 && actions.length == 1 && a.type == NovaActionType.openApp &&
+          NovaChatCommands.featureOf(a) == null &&
+          (r.status == NovaActionStatus.notFound || r.status == NovaActionStatus.unsupported)) {
+        return false;
+      }
+      said.add(r.message);
+      if (r.status == NovaActionStatus.needsClarification) {
+        choices = r.choices;
+        break;
+      }
+      if (!r.ok) break;
+    }
+    if (!mounted || chatId != _chatId || openToken != _openToken) return true;
+    setState(() {
+      _msgs.add({'id': _newId(), 'role': 'assistant', 'content': said.join(' ')});
+      _choices = choices;
+      _loading = false;
+    });
+    _persist();
+    _scrollEnd();
+    return true;
+  }
+
+  /// A choice NOVA offered (e.g. which song): run it, or send its text.
+  Future<void> _pickChoice(NovaChoice c) async {
+    if (_loading || _measuring) return;
+    setState(() => _choices = const []);
+    final action = c.action;
+    if (action == null) {
+      final text = c.text ?? c.label;
+      if (text.trim().isNotEmpty) await _send(text);
+      return;
+    }
+    HapticFeedback.selectionClick();
+    final r = await NovaExecutor(
+      native: _native,
+      host: NovaInAppHost(Navigator.of(context), () {}),
+    ).execute(action);
+    if (!mounted) return;
+    setState(() => _msgs.add({'id': _newId(), 'role': 'assistant', 'content': r.message}));
+    _persist();
+    _scrollEnd();
+  }
+
+  /// Real measurements: speed test (live in the chat), ping, IP, battery.
+  Future<void> _runNetwork(NetworkIntent intent) async {
+    if (intent == NetworkIntent.open) {
+      NovaFeatures.open(Navigator.of(context), 'nova_network');
+      _addReply('Opening NOVA Network.');
+      return;
+    }
+    final chatId = _chatId;
+    final openToken = _openToken;
+    bool stillHere() => mounted && chatId == _chatId && openToken == _openToken;
+
+    final id = _newId();
+    final first = switch (intent) {
+      NetworkIntent.speedTest => '⚡ **Testing your internet speed…**\n\nConnecting to the nearest server.',
+      NetworkIntent.ping => 'Checking your ping…',
+      NetworkIntent.ip => 'Looking up your IP address…',
+      _ => 'Checking…',
+    };
+    setState(() {
+      _msgs.add({'id': id, 'role': 'assistant', 'content': first});
+      _loading = false;
+      _measuring = true;
+    });
+    _scrollEnd();
+
+    var reply = '';
+    try {
+      switch (intent) {
+        case NetworkIntent.speedTest:
+          var shownAt = 0;
+          final r = await _probe.speedTest(onProgress: (p) {
+            if (!stillHere()) return;
+            final now = DateTime.now().millisecondsSinceEpoch;
+            if (now - shownAt < 250 && p.phase != SpeedPhase.upload) return; // keep the list smooth
+            shownAt = now;
+            final line = switch (p.phase) {
+              SpeedPhase.connecting => 'Connecting to the nearest server.',
+              SpeedPhase.latency => 'Ping: ${p.pingMs?.round() ?? '–'} ms',
+              SpeedPhase.download => '↓ Download: ${SpeedMath.speedText(p.liveMbps)} Mbps',
+              SpeedPhase.upload => '↓ Download: ${SpeedMath.speedText(p.downloadMbps ?? 0.0)} Mbps\n'
+                  '↑ Upload: ${SpeedMath.speedText(p.liveMbps)} Mbps',
+              _ => null,
+            };
+            if (line != null) {
+              _updateMsg(id, '⚡ **Testing your internet speed… ${(p.progress * 100).round()}%**\n\n$line');
+            }
+          });
+          final summary = SpeedMath.spokenSummary(
+            down: r.downloadMbps,
+            up: r.uploadMbps,
+            ping: r.pingMs,
+            jitter: r.jitterMs,
+            loaded: r.loadedDownMs,
+            isp: r.isp,
+          );
+          reply = '⚡ **Speed test result**\n\n'
+              '- **Download:** ${SpeedMath.speedText(r.downloadMbps)} Mbps\n'
+              '- **Upload:** ${SpeedMath.speedText(r.uploadMbps)} Mbps\n'
+              '- **Ping:** ${r.pingMs.round()} ms · **Jitter:** ${r.jitterMs.round()} ms\n'
+              '${r.server == null || r.server!.isEmpty ? '' : '- **Server:** ${r.server}\n'}'
+              '\n$summary\n\nOpen **NOVA Network** for the full report and your test history.';
+        case NetworkIntent.ping:
+          final ms = await _probe.ping();
+          final quality = ms <= 40
+              ? 'great for gaming and calls'
+              : ms <= 80
+                  ? 'good'
+                  : ms <= 150
+                      ? 'okay, but games may lag'
+                      : 'high — expect lag';
+          reply = 'Your ping to the nearest server is **${ms.round()} ms**. That is $quality.';
+        case NetworkIntent.ip:
+          final m = await _probe.meta();
+          final who = m.isp == null ? '' : ' from ${m.isp}';
+          final where = m.place == 'Unknown' ? '' : ', near ${m.place}';
+          reply = m.ip.isEmpty
+              ? "I couldn't find your public IP address."
+              : 'Your public IP address is **${m.ip}**$who$where.';
+        case NetworkIntent.battery:
+          final d = await _probe.device();
+          final level = d.batteryPercent;
+          reply = level == null
+              ? "I couldn't read your battery level."
+              : 'Your battery is at **$level%**${d.charging ? ' and charging' : ''}'
+                  '${d.powerSave ? ', with battery saver on' : ''}.';
+        case NetworkIntent.none:
+        case NetworkIntent.open:
+          reply = '';
+      }
+    } on SpeedTestException catch (e) {
+      reply = '⚠️ ${e.message}';
+    } catch (_) {
+      reply = "⚠️ I couldn't check your connection. Please try again.";
+    }
+    if (!mounted) return;
+    setState(() => _measuring = false);
+    if (!stillHere()) return;
+    _updateMsg(id, reply);
+    _persist();
+    _scrollEnd();
+  }
+
+  void _addReply(String text) {
+    if (!mounted) return;
+    setState(() {
+      _msgs.add({'id': _newId(), 'role': 'assistant', 'content': text});
+      _loading = false;
+    });
+    _persist();
+    _scrollEnd();
+  }
+
+  Widget _buildChoices() {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: _choices.take(8).map((c) => GestureDetector(
+          onTap: () => _pickChoice(c),
+          child: Container(
+            margin: const EdgeInsets.only(right: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color:        AppTheme.bgCard,
+              borderRadius: BorderRadius.circular(20),
+              border:       Border.all(color: AppTheme.accentCyan.withOpacity(0.6)),
+            ),
+            child: Text(c.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.inter(color: AppTheme.textPrimary, fontSize: 12)),
+          ),
+        )).toList(),
+      ),
+    );
   }
 
   /// Sends the pending photos (and page capture) with the question.
@@ -1270,6 +1514,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
       ),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
         if (_pending.isNotEmpty) _buildPendingPhotos(),
+        if (_choices.isNotEmpty) _buildChoices(),
         Row(children: [
         // Mic
         GestureDetector(

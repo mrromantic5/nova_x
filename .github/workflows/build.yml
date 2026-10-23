@@ -50,6 +50,7 @@ jobs:
             lib/features/legal/screens/terms_screen.dart \
             lib/features/auth \
             lib/core/services/api_service.dart \
+            lib/core/services/default_browser_service.dart \
             test/nova \
             test/auth
 

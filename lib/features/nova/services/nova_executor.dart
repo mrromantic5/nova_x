@@ -55,6 +55,18 @@ class NovaExecutor {
     'browser_settings': 'NOVA X settings',
     'nova_music': 'NOVA Music',
     'nova_network': 'NOVA Network',
+    'cyber': 'NOVA Cyber',
+    'dev_tools': 'Dev Tools',
+    'code_editor': 'X Coder',
+    'business': 'the business directory',
+    'customize': 'Customize',
+    'profile': 'your profile',
+    'offline_pages': 'your offline pages',
+    'notifications': 'your notifications',
+    'premium': 'NOVA Premium',
+    'incognito': 'an incognito tab',
+    'new_tab': 'a new tab',
+    'home': 'the home page',
   };
 
   Future<NovaActionResult> execute(NovaAction a) async {
@@ -363,13 +375,19 @@ class NovaExecutor {
         'volume_down' => 'Turning the volume down.',
         'mute' => 'Muted.',
         'unmute' => 'Sound is back on.',
+        'shuffle_on' => 'Shuffle is on.',
+        'shuffle_off' => 'Shuffle is off.',
+        'repeat_one' => 'Repeating ${r.str('title') ?? 'this song'}.',
+        'repeat_all' => 'Repeating all songs.',
+        'repeat_off' => 'Repeat is off.',
+        'restart' => 'Playing $title$by from the beginning.',
         _ => 'Done.',
       };
       return _result(a, NovaActionStatus.success, message);
     }
     if (r.status == 'not_playing') {
-      if (command == 'resume') {
-        // "play the music" with nothing queued → play everything.
+      if (command == 'resume' || command == 'next') {
+        // "play the music" / "change the song" with nothing queued → a random song.
         final all = NovaActionValidator.build(NovaActionType.playMusic, {'query': ''});
         if (all != null) return _playMusic(all);
       }

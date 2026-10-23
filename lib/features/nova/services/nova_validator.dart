@@ -21,6 +21,7 @@ class NovaActionValidator {
   static const Set<String> musicCommands = {
     'pause', 'resume', 'next', 'previous', 'stop', 'now_playing',
     'volume_up', 'volume_down', 'mute', 'unmute',
+    'shuffle_on', 'shuffle_off', 'repeat_one', 'repeat_all', 'repeat_off', 'restart',
   };
 
   /// Apps that support "search inside the app" through a validated deep link.
@@ -234,6 +235,24 @@ class NovaActionValidator {
     'music app': 'nova_music', 'nova music player': 'nova_music', 'music library': 'nova_music',
     'nova network': 'nova_network', 'network page': 'nova_network', 'speed test page': 'nova_network',
     'speed tester': 'nova_network', 'network tools': 'nova_network', 'nova speed test': 'nova_network',
+    'speed test': 'nova_network', 'network': 'nova_network',
+    'nova cyber': 'cyber', 'cyber': 'cyber', 'cyber security': 'cyber', 'website scanner': 'cyber',
+    'security scanner': 'cyber', 'site scanner': 'cyber',
+    'dev tools': 'dev_tools', 'devtools': 'dev_tools', 'developer tools': 'dev_tools',
+    'x coder': 'code_editor', 'x code editor': 'code_editor', 'code editor': 'code_editor', 'x code': 'code_editor',
+    'coder': 'code_editor',
+    'business': 'business', 'businesses': 'business', 'nova x business': 'business',
+    'business directory': 'business', 'nova business': 'business',
+    'customize': 'customize', 'customise': 'customize', 'customization': 'customize',
+    'customisation': 'customize', 'wallpaper': 'customize', 'home background': 'customize',
+    'profile': 'profile', 'my profile': 'profile', 'my account': 'profile', 'account': 'profile',
+    'offline pages': 'offline_pages', 'saved offline pages': 'offline_pages',
+    'notifications': 'notifications', 'my notifications': 'notifications',
+    'premium': 'premium', 'nova x premium': 'premium', 'subscription': 'premium', 'go premium': 'premium',
+    'incognito': 'incognito', 'incognito tab': 'incognito', 'private tab': 'incognito',
+    'private mode': 'incognito', 'incognito mode': 'incognito', 'new private tab': 'incognito',
+    'new tab': 'new_tab', 'a new tab': 'new_tab',
+    'home': 'home', 'home page': 'home', 'homepage': 'home', 'home screen': 'home', 'nova x home': 'home',
   };
 
   /// Web pages used when an app isn't installed (opened inside NOVA X).

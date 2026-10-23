@@ -310,6 +310,39 @@ class NovaCommandParser {
       return control('now_playing');
     }
 
+    // "change the song", "play something else", "another song" → next song.
+    if (RegExp(r'^(?:change|switch)(?: the| this| my)? (?:song|track|music|tune)$').hasMatch(t) ||
+        RegExp(r'^(?:play )?(?:another|a different|some other) (?:song|track|one|tune)$').hasMatch(t) ||
+        RegExp(r"^play something else$|^skip (?:it|this one)$|^i (?:don't|do not) like this(?: song)?$").hasMatch(t)) {
+      return control('next');
+    }
+
+    // Player modes.
+    if (RegExp(r'^(?:turn on|enable|switch on) shuffle$|^shuffle (?:on|mode on)$').hasMatch(t)) {
+      return control('shuffle_on');
+    }
+    if (RegExp(r'^(?:turn off|disable|switch off|stop) shuffl(?:e|ing)$|^shuffle off$').hasMatch(t)) {
+      return control('shuffle_off');
+    }
+    if (RegExp(r'^(?:turn off|disable|switch off|stop) (?:repeat|repeating|loop|looping)$|^(?:repeat|loop) off$')
+        .hasMatch(t)) {
+      return control('repeat_off');
+    }
+    if (RegExp(r'^(?:repeat|loop) (?:all|everything|all songs|all the songs|the playlist|my playlist)$').hasMatch(t)) {
+      return control('repeat_all');
+    }
+    // ("repeat that" on its own means "say it again", not a music command.)
+    if (RegExp(r'^(?:repeat|loop) (?:this |the |that )?(?:song|track|one)$|^loop(?: this| it)?$|'
+            r'^(?:turn on|enable) (?:repeat|loop)$|^(?:play|put) (?:this|it|that)(?: song)? on repeat$')
+        .hasMatch(t)) {
+      return control('repeat_one');
+    }
+    if (RegExp(r'^(?:restart|replay)(?: the| this| that)?(?: song| track)?$|^play (?:it|this|that)(?: song| track)? again$|'
+            r'^(?:start )?(?:the|this) song (?:again|from the (?:start|beginning))$|^start (?:it|the song|this song) over$')
+        .hasMatch(t)) {
+      return control('restart');
+    }
+
     // Media volume.
     if (RegExp(r'^(?:turn|crank) (?:the |it )?(?:volume|music|sound) up$|^(?:turn )?(?:the )?(?:volume|sound) up$|'
             r'^(?:increase|raise|turn up|boost) (?:the )?(?:volume|sound|music)$|^(?:louder|make it louder)$')
@@ -324,12 +357,17 @@ class NovaCommandParser {
     if (RegExp(r'^mute(?: the)?(?: music| sound| volume| phone| it)?$').hasMatch(t)) return control('mute');
     if (RegExp(r'^unmute(?: the)?(?: music| sound| volume| phone| it)?$').hasMatch(t)) return control('unmute');
 
-    // Play: "play some music", "play songs by Burna Boy", "play me Tatiana Like You".
-    if (RegExp(r'^(?:play|put on|shuffle|start)(?: me| us)?(?: some| a| my| any| random| all my)? '
-            r'(?:music|song|songs|track|tracks|tunes|something)(?: for me)?$')
+    // Play: "play some music", "play me a random song", "play anything",
+    // "play songs by Burna Boy", "play me Tatiana Like You". No song named →
+    // NOVA Music starts a random song (shuffle).
+    if (RegExp(r'^(?:play|put on|shuffle|start)(?: me| us| for me)?'
+            r'(?: (?:some|a|an|my|any|random|nice|good|cool|great|new|fresh|all|all my|one of my|of my|from my))* '
+            r'(?:music|song|songs|track|tracks|tunes|tune|something|anything)'
+            r'(?: (?:for me|please|now|from my phone|from my library|on my phone|from my songs))*$')
         .hasMatch(t)) {
       return play('');
     }
+    if (RegExp(r'^surprise me with (?:a |some )?(?:song|music|tune)$').hasMatch(t)) return play('');
     var m = RegExp(r'^(?:play|put on)(?: me| us)?(?: some| the| all| all the)? (?:songs|music|tracks) (?:by|from) (.+)$')
         .firstMatch(t);
     if (m != null) return play(m.group(1)!);
@@ -358,12 +396,29 @@ class NovaCommandParser {
   }
 
   String? _inAppFeature(String t) {
-    final stripped = t.replaceFirst(RegExp(r'^(?:open|show|go to|show me|take me to)\s+'), '');
+    final opened = RegExp(r'^(?:open|show|go to|show me|take me to|launch|bring up|navigate to|switch to|go back to)\s+')
+        .hasMatch(t);
+    final stripped = t.replaceFirst(
+        RegExp(r'^(?:open|show|go to|show me|take me to|launch|bring up|navigate to|switch to|go back to)\s+'), '');
     // "my music" / "my points" are names of their own; otherwise "the"/"my" is dropped.
-    if (NovaActionValidator.inAppFeatures.containsKey(stripped)) return stripped;
+    if (NovaActionValidator.inAppFeatures.containsKey(stripped)) return _bareOk(stripped, opened);
     final phrase = stripped.replaceFirst(RegExp(r'^(?:the|my)\s+'), '');
-    return NovaActionValidator.inAppFeatures.containsKey(phrase) ? phrase : null;
+    if (NovaActionValidator.inAppFeatures.containsKey(phrase)) return _bareOk(phrase, opened);
+    // "open nova network page", "open the nova music screen".
+    final named = phrase.replaceFirst(RegExp(r'\s+(?:page|screen|section|tab|feature|menu)$'), '');
+    if (named != phrase && NovaActionValidator.inAppFeatures.containsKey(named)) return named;
+    return null;
   }
+
+  /// Short, common words open a screen only after "open"/"show"/"go to"
+  /// ("home", "network", "account" on their own are usually something else).
+  static const Set<String> _needsVerb = {
+    'home', 'network', 'account', 'profile', 'premium', 'business', 'businesses', 'subscription',
+    'wallpaper', 'coder', 'incognito', 'customize', 'customise', 'notifications', 'cyber',
+    'speed test', 'new tab', 'a new tab',
+  };
+
+  String? _bareOk(String phrase, bool opened) => opened || !_needsVerb.contains(phrase) ? phrase : null;
 
   NovaAction? _searchInApp(String app, String query) {
     final canonical = NovaActionValidator.canonicalApp(app);

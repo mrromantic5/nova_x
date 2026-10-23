@@ -52,6 +52,7 @@ import 'package:nova_x/features/devtools/screens/code_editor_screen.dart';
 import 'package:nova_x/core/services/update_service.dart';
 import 'package:nova_x/features/music/screens/nova_music_screen.dart';
 import 'package:nova_x/features/nova/services/nova_wake.dart';
+import 'package:nova_x/features/nova/nova_features.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -187,7 +188,9 @@ class _HomeScreenState extends State<HomeScreen>
     // launch link, so a link arriving at any moment is never dropped.
     DefaultBrowserService.init();
     DefaultBrowserService.onIncomingUrl = _openIncomingUrl;
+    DefaultBrowserService.onOpenFeature = _openNovaFeature;
     _handleDefaultBrowser();
+    _openQueuedFeature();
     _subtitle = _buildSubtitle();
     _animCtrl = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 800));
@@ -224,6 +227,9 @@ class _HomeScreenState extends State<HomeScreen>
     if (DefaultBrowserService.onIncomingUrl == _openIncomingUrl) {
       DefaultBrowserService.onIncomingUrl = null;
     }
+    if (DefaultBrowserService.onOpenFeature == _openNovaFeature) {
+      DefaultBrowserService.onOpenFeature = null;
+    }
     BrowseHeartbeat.stop();
     _scrollCtrl.removeListener(_onScroll);
     _searchCtrl.removeListener(_onSearchChanged);
@@ -244,7 +250,23 @@ class _HomeScreenState extends State<HomeScreen>
     if (state == AppLifecycleState.resumed) {
       DefaultBrowserService.checkAndAward();
       _openQueuedUrl();
+      _openQueuedFeature();
     }
+  }
+
+  // ── NOVA: open a NOVA X page asked for from the floating assistant ────────
+  bool _openNovaFeature(String id) {
+    if (!mounted || !NovaFeatures.isValid(id)) return false;
+    if (id == 'business') {
+      _openBusiness(); // also clears the "new businesses" badge
+      return true;
+    }
+    return NovaFeatures.open(Navigator.of(context), id);
+  }
+
+  Future<void> _openQueuedFeature() async {
+    final id = await DefaultBrowserService.initialFeature();
+    if (id != null && mounted) _openNovaFeature(id);
   }
 
   /// Opens a link the native side queued while no callback was set.
@@ -1219,10 +1241,10 @@ class _HomeScreenState extends State<HomeScreen>
              autoOpenDevTools: true))},
       {'icon': Icons.code_rounded,             'label': 'X Coder',
        'fn': () => _push(const CodeEditorScreen(sharedWorkspace: true))},
+      {'icon': Icons.speed_rounded,            'label': 'NOVA Network',
+       'fn': () => _push(const NovaNetworkScreen())},
       {'icon': Icons.monetization_on_rounded,  'label': 'Rewards',
        'fn': () => _push(const RewardsScreen())},
-      {'icon': Icons.business_center_outlined, 'label': 'Business',
-       'fn': () => _openBusiness()},
     ];
     const _kDarkBg     = Color(0xFF1A1D26);
     const _kDarkBorder = Color(0xFF2A2D3A);
@@ -1252,11 +1274,17 @@ class _HomeScreenState extends State<HomeScreen>
                   Icon(items[i]['icon'] as IconData,
                       color: Colors.white70, size: 22),
                   const SizedBox(height: 6),
-                  Text(items[i]['label'] as String,
-                      style: GoogleFonts.inter(
-                          color: Colors.white,
-                          fontSize: 9.5, fontWeight: FontWeight.w600),
-                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(items[i]['label'] as String,
+                          style: GoogleFonts.inter(
+                              color: Colors.white,
+                              fontSize: 9.5, fontWeight: FontWeight.w600),
+                          maxLines: 1),
+                    ),
+                  ),
                 ]),
               ),
             ),

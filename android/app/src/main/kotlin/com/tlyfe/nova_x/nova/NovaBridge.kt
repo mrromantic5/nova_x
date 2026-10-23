@@ -74,7 +74,7 @@ class NovaBridge(
 
         private val ALLOWED_ACTIONS = setOf(
             "open_app", "search_in_app", "dial_number", "search_contacts",
-            "open_settings", "navigate", "open_in_nova", "play_music", "music_control",
+            "open_settings", "navigate", "open_in_nova", "open_feature", "play_music", "music_control",
         )
 
         /** Allowed over the lock screen without unlocking (nothing private is shown). */
@@ -326,6 +326,7 @@ class NovaBridge(
             "open_settings" -> actions.openSettings(args["target"])
             "navigate" -> actions.navigate(args["destination"])
             "open_in_nova" -> actions.openInNova(args["url"])
+            "open_feature" -> actions.openFeature(args["feature"])
             "music_control" -> NovaMusicCommands.control(activity.applicationContext, args["command"])
             else -> mapOf("status" to "unsupported")
         }

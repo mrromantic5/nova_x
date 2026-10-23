@@ -351,6 +351,20 @@ class NovaDeviceActions(private val activity: Activity) {
         return if (start(intent)) status("success") else status("error")
     }
 
+    // ── Open a NOVA X page (used by the floating assistant) ─────────────────
+    // Only a short page id is passed; MainActivity validates it again and
+    // the Dart side opens it only if it is a known page.
+
+    fun openFeature(rawId: String?): Map<String, Any?> {
+        val id = rawId?.trim().orEmpty()
+        if (!MainActivity.isValidFeatureId(id)) return status("invalid")
+        val intent = Intent(activity, MainActivity::class.java)
+            .setAction(Intent.ACTION_MAIN)
+            .putExtra(MainActivity.EXTRA_FEATURE, id)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return if (start(intent)) status("success") else status("error")
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     private fun start(intent: Intent): Boolean = try {

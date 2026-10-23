@@ -55,12 +55,22 @@ class MainActivity : FlutterFragmentActivity() {
         private const val AUTO_DENY_WINDOW_MS = 700L
 
         private const val SHORTCUT_ACTION_MARKER = "nova_x."
+
+        /** Extra carrying a NOVA X page id from the floating assistant. */
+        const val EXTRA_FEATURE = "com.tlyfe.nova_x.extra.NOVA_FEATURE"
+
+        private val FEATURE_ID = Regex("^[a-z_]{1,30}$")
+
+        fun isValidFeatureId(id: String?): Boolean = id != null && FEATURE_ID.matches(id)
     }
 
     private var browserChannel: MethodChannel? = null
 
     /** Link waiting for Dart to collect via getInitialUrl (one-shot). */
     private var pendingUrl: String? = null
+
+    /** NOVA X page the assistant asked to open, waiting for Dart (one-shot). */
+    private var pendingFeature: String? = null
 
     /** Launcher shortcut action waiting for Dart (one-shot). */
     private var pendingShortcut: String = ""
@@ -90,6 +100,7 @@ class MainActivity : FlutterFragmentActivity() {
         if (!isRestoredInstance) {
             pendingUrl = extractUrl(intent)
             pendingShortcut = extractShortcut(intent)
+            pendingFeature = extractFeature(intent)
         }
 
         // ── Default browser ────────────────────────────────────────────────
@@ -102,6 +113,10 @@ class MainActivity : FlutterFragmentActivity() {
                     "getInitialUrl" -> {
                         result.success(pendingUrl)
                         pendingUrl = null
+                    }
+                    "getInitialFeature" -> {
+                        result.success(pendingFeature)
+                        pendingFeature = null
                     }
                     else -> result.notImplemented()
                 }
@@ -181,6 +196,27 @@ class MainActivity : FlutterFragmentActivity() {
         setIntent(intent)
         pendingShortcut = extractShortcut(intent)
         extractUrl(intent)?.let { deliverUrl(it) }
+        extractFeature(intent)?.let { deliverFeature(it) }
+    }
+
+    /** Same hand-over as [deliverUrl], for a NOVA X page id. */
+    private fun deliverFeature(id: String) {
+        val ch = browserChannel
+        if (ch == null) {
+            pendingFeature = id
+            return
+        }
+        ch.invokeMethod("onOpenFeature", id, object : MethodChannel.Result {
+            override fun success(result: Any?) {
+                if (result != true) pendingFeature = id
+            }
+            override fun error(code: String, message: String?, details: Any?) {
+                pendingFeature = id
+            }
+            override fun notImplemented() {
+                pendingFeature = id
+            }
+        })
     }
 
     /**
@@ -234,6 +270,14 @@ class MainActivity : FlutterFragmentActivity() {
         val data: Uri = intent.data ?: return null
         val scheme = data.scheme?.lowercase() ?: return null
         return if (scheme == "http" || scheme == "https") data.toString() else null
+    }
+
+    private fun extractFeature(intent: Intent?): String? {
+        if (intent == null) return null
+        if ((intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0) return null
+        val id = intent.getStringExtra(EXTRA_FEATURE) ?: return null
+        intent.removeExtra(EXTRA_FEATURE) // one-shot
+        return id.takeIf { isValidFeatureId(it) }
     }
 
     private fun extractShortcut(intent: Intent?): String =

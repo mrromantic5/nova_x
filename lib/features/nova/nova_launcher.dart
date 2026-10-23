@@ -11,19 +11,10 @@ import '../../core/database/local_db.dart';
 import '../../core/theme/app_theme.dart';
 import '../ai/screens/ai_assistant_screen.dart';
 import '../ai/services/nova_media_store.dart';
-import '../bookmarks/screens/bookmarks_screen.dart';
 import '../browser/screens/browser_view.dart';
-import '../downloads/screens/downloads_screen.dart';
-import '../history/screens/history_screen.dart';
-import '../map/screens/nova_map_screen.dart';
-import '../music/screens/nova_music_screen.dart';
-import '../network/screens/nova_network_screen.dart';
-import '../rewards/screens/rewards_screen.dart';
-import '../settings/screens/settings_screen.dart';
-import '../shield/screens/nova_shield_screen.dart';
 import 'controller/nova_controller.dart';
+import 'nova_features.dart';
 import 'models/nova_models.dart';
-import 'screens/nova_settings_screen.dart';
 import 'services/nova_api.dart';
 import 'services/nova_executor.dart';
 import 'services/nova_native.dart';
@@ -86,24 +77,9 @@ class NovaInAppHost implements NovaHost {
 
   @override
   Future<bool> openFeature(String featureId) async {
-    final Widget? screen = switch (featureId) {
-      'bookmarks' => const BookmarksScreen(),
-      'history' => const HistoryScreen(),
-      'downloads' => const DownloadsScreen(),
-      'shield' => const NovaShieldScreen(),
-      'nova_map' => const NovaMapScreen(),
-      'rewards' => const RewardsScreen(),
-      'nova_ai' => const AiAssistantScreen(),
-      'nova_settings' => const NovaSettingsScreen(),
-      'browser_settings' => const SettingsScreen(),
-      'nova_music' => const NovaMusicScreen(),
-      'nova_network' => const NovaNetworkScreen(),
-      _ => null,
-    };
-    if (screen == null) return false;
+    if (!NovaFeatures.isValid(featureId)) return false;
     close();
-    _navigator.push(MaterialPageRoute(builder: (_) => screen));
-    return true;
+    return NovaFeatures.open(_navigator, featureId);
   }
 
   @override

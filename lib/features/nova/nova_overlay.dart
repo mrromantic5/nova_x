@@ -50,9 +50,14 @@ class NovaOverlayHost implements NovaHost {
     return r.status == 'success';
   }
 
-  /// NOVA X screens can only be opened from inside the browser.
+  /// Opens a NOVA X page: Android brings NOVA X to the front and the home
+  /// screen opens the page (see MainActivity.EXTRA_FEATURE).
   @override
-  Future<bool> openFeature(String featureId) async => false;
+  Future<bool> openFeature(String featureId) async {
+    if (!RegExp(r'^[a-z_]{1,30}$').hasMatch(featureId)) return false;
+    final r = await _native.runAction('open_feature', {'feature': featureId});
+    return r.status == 'success';
+  }
 
   @override
   void close() {

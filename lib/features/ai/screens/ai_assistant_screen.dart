@@ -21,6 +21,7 @@
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -31,8 +32,11 @@ import 'package:nova_x/features/ai/services/nova_chat_commands.dart';
 import 'package:nova_x/features/ai/services/nova_chat_repository.dart';
 import 'package:nova_x/features/ai/services/nova_markdown_parser.dart';
 import 'package:nova_x/features/ai/services/nova_media_store.dart';
+import 'package:nova_x/features/ai/services/nova_quota.dart';
 import 'package:nova_x/features/ai/widgets/ai_flag_sheet.dart';
 import 'package:nova_x/features/ai/widgets/nova_chat_drawer.dart';
+import 'package:nova_x/features/ai/widgets/nova_image_generating.dart';
+import 'package:nova_x/features/ai/widgets/nova_limit_sheet.dart';
 import 'package:nova_x/features/ai/widgets/nova_markdown_view.dart';
 import 'package:nova_x/features/browser/screens/browser_view.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
@@ -51,7 +55,6 @@ import 'package:nova_x/features/nova/services/nova_native.dart';
 import 'package:nova_x/features/nova/services/nova_prefs.dart';
 import 'package:nova_x/features/nova/services/nova_voice.dart';
 import 'package:nova_x/features/nova/services/nova_wake.dart';
-import 'package:path_provider/path_provider.dart';
 
 class AiAssistantScreen extends StatefulWidget {
   const AiAssistantScreen({super.key, this.pageCapture});
@@ -234,7 +237,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
       if (id == 'welcome' || id == 'cleared' || content.trim().isEmpty) continue;
       if (role != 'user' && role != 'assistant') continue;
       if (m['error'] == 'true') continue;
-      if (content.startsWith('[LOADING_VIDEO]')) continue;
+      if (content.startsWith('[LOADING_VIDEO]') || content.startsWith('[GENERATING_IMAGE]')) continue;
       out.add({'id': id, 'role': role, 'content': content});
     }
     return out;
@@ -468,7 +471,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
       if (role != 'user' && role != 'assistant') continue;
       if (m['error'] == 'true') continue;
       if (content.startsWith('[IMAGE]') || content.startsWith('[VIDEO]') ||
-          content.startsWith('[LOADING_VIDEO]')) {
+          content.startsWith('[LOADING_VIDEO]') || content.startsWith('[GENERATING_IMAGE]')) {
         continue;
       }
       final lower = content.toLowerCase();
@@ -524,21 +527,41 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
     _persist();
     _scrollEnd();
 
-    // Image generation (unchanged)
+    // Image generation: 5 per 2 hours, a "creating" card while it works,
+    // and the result kept on the phone (shown and saved from that file).
     if (t.toLowerCase().startsWith('/image ')) {
       final prompt =
-          t.replaceFirst(RegExp(r'^/image\s+', caseSensitive: false), '');
-      final url = '$_imageApi${Uri.encodeComponent(prompt)}';
-      if (mounted) setState(() {
+          t.replaceFirst(RegExp(r'^/image\s+', caseSensitive: false), '').trim();
+      final blocked = await NovaQuota.tryUse(NovaQuotaKind.image);
+      if (!mounted) return;
+      if (blocked != null) {
+        final at = blocked.resetAt;
+        final when = at == null ? 'soon' : 'at ${TimeOfDay.fromDateTime(at).format(context)}';
+        setState(() {
+          _msgs.add({
+            'id':      _newId(),
+            'role':    'assistant',
+            'content': "You've created ${blocked.used} of ${blocked.limit} images in the last "
+                '${NovaQuotaRules.window.inHours} hours. You can create more $when.',
+            'error':   'true',
+          });
+          _loading = false;
+        });
+        _scrollEnd();
+        showNovaLimitSheet(context, blocked);
+        return;
+      }
+      final genId = _newId();
+      setState(() {
         _msgs.add({
-          'id':      _newId(),
+          'id':      genId,
           'role':    'assistant',
-          'content': '[IMAGE]$url',
+          'content': '[GENERATING_IMAGE]$prompt',
         });
         _loading = false;
       });
-      _persist();
       _scrollEnd();
+      _generateImage(prompt, genId);
       return;
     }
 
@@ -591,9 +614,30 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
     var choices = const <NovaChoice>[];
     for (var i = 0; i < actions.length; i++) {
       final a = actions[i];
-      if (NovaChatCommands.featureOf(a) == 'nova_ai') {
+      final page = NovaChatCommands.featureOf(a);
+      if (page == 'nova_ai') {
         said.add("You're already in NOVA AI — ask me anything.");
         continue;
+      }
+      // A NOVA X page: say so first, then NOVA's "Opening …" transition.
+      if (page != null && actions.length == 1) {
+        final text = page == 'home'
+            ? 'Sure — taking you home.'
+            : 'Sure — opening ${NovaFeatures.label(page)}…';
+        setState(() {
+          _msgs.add({'id': _newId(), 'role': 'assistant', 'content': text});
+          _loading = false;
+        });
+        _persist();
+        _scrollEnd();
+        await Future<void>.delayed(const Duration(milliseconds: 550));
+        if (!mounted || chatId != _chatId || openToken != _openToken) return true;
+        final opened = await executor.execute(a);
+        if (!opened.ok && mounted) {
+          setState(() => _msgs.add({'id': _newId(), 'role': 'assistant', 'content': opened.message}));
+          _persist();
+        }
+        return true;
       }
       var r = await executor.execute(a);
       if (r.status == NovaActionStatus.permissionRequired && a.type == NovaActionType.playMusic) {
@@ -794,6 +838,13 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
       _snack('These photos are too large together. Remove one and try again.');
       return;
     }
+    // Fair use: count the photos now (5 every 2 hours, chat + NOVA panel).
+    final blocked = await NovaQuota.tryUse(NovaQuotaKind.upload, _pending.length);
+    if (!mounted) return;
+    if (blocked != null) {
+      await showNovaLimitSheet(context, blocked);
+      return;
+    }
     RewardsService.earn(RewardTaskKey.useAi);
     final photos = List<NovaPickedPhoto>.of(_pending);
     final page = _page;
@@ -927,6 +978,39 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
       if (identical(_chatCancel, cancel)) _chatCancel = null;
     }
     _scrollEnd();
+  }
+
+  /// Creates the image, keeps it on the phone (nova_media) and replaces the
+  /// "creating" card with it. Failures give the use back.
+  Future<void> _generateImage(String prompt, String genId) async {
+    final chatId = _chatId;
+    final url = '$_imageApi${Uri.encodeComponent(prompt)}';
+    try {
+      final res = await _dio.get<List<int>>(
+        url,
+        options: Options(
+          responseType: ResponseType.bytes,
+          receiveTimeout: const Duration(seconds: 120),
+        ),
+      );
+      final data = res.data;
+      final bytes = data == null ? null : Uint8List.fromList(data);
+      if (bytes == null || NovaMediaStore.mimeOf(bytes) == null) {
+        throw const FormatException('not an image');
+      }
+      String? ref;
+      try {
+        ref = await NovaMediaStore.save(chatId, genId, 0, bytes);
+      } catch (_) {
+        ref = null; // phone storage full: still shown from the web address
+      }
+      if (_updateMsg(genId, ref == null ? '[IMAGE]$url' : '[IMAGE]$url\n$ref')) _persist();
+      _scrollEnd();
+    } catch (_) {
+      await NovaQuota.refund(NovaQuotaKind.image);
+      _updateMsg(genId, "⚠️ I couldn't create that image right now. Please try again "
+          "(this one didn't count toward your limit).", error: true);
+    }
   }
 
   Future<void> _generateVideo(String prompt, String loadId) async {
@@ -1141,8 +1225,14 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
 
     if (id == 'welcome') return _buildWelcome();
     if (isUser && NovaMediaStore.hasPhotos(content)) return _buildPhotoMessage(content);
+    if (content.startsWith('[GENERATING_IMAGE]')) {
+      return NovaImageGenerating(prompt: content.replaceFirst('[GENERATING_IMAGE]', ''));
+    }
     if (content.startsWith('[IMAGE]')) {
-      return _buildImageWidget(content.replaceFirst('[IMAGE]', ''));
+      // "[IMAGE]<url>" or, since 3.8.0, "[IMAGE]<url>\n<saved photo ref>".
+      final parts = content.replaceFirst('[IMAGE]', '').split('\n');
+      final ref = parts.length > 1 && NovaMediaStore.isValidRef(parts[1].trim()) ? parts[1].trim() : null;
+      return _buildImageWidget(parts.first.trim(), ref: ref);
     }
     if (content.startsWith('[VIDEO]')) {
       return _buildVideoWidget(content.replaceFirst('[VIDEO]', ''));
@@ -1312,14 +1402,16 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
   }
 
   // ── Image widget ───────────────────────────────────────────────────────────
-  Widget _buildImageWidget(String url) {
+  Widget _buildImageWidget(String url, {String? ref}) {
+    final file = ref == null ? null : NovaMediaStore.fileOf(ref);
+    final local = file != null && file.existsSync();
     return Align(
       alignment: Alignment.centerLeft,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           GestureDetector(
-            onTap: () => _showImagePreview(url),
+            onTap: () => _showImagePreview(url, ref: local ? ref : null),
             child: Container(
               margin: const EdgeInsets.symmetric(vertical: 4),
               constraints: BoxConstraints(
@@ -1327,16 +1419,16 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
               child: Stack(children: [
                 ClipRRect(
                   borderRadius: BorderRadius.circular(16),
-                  child: Image.network(
+                  child: local
+                      ? Image.file(file!, fit: BoxFit.contain)
+                      : Image.network(
                     url,
                     fit: BoxFit.contain,
-                    loadingBuilder: (_, child, prog) => prog == null
-                        ? child
-                        : Container(
-                            height: 120,
-                            alignment: Alignment.center,
-                            child: const CircularProgressIndicator(
-                                color: AppTheme.accentCyan, strokeWidth: 2)),
+                    // Older chats: the image is fetched again — show the
+                    // "creating" card until the first frame arrives.
+                    frameBuilder: (_, child, frame, sync) => frame == null && !sync
+                        ? const NovaImageGenerating(prompt: 'Loading image')
+                        : child,
                     errorBuilder: (_, __, ___) => Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
@@ -1635,11 +1727,25 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
   Future<void> _choosePhotos() async {
     HapticFeedback.lightImpact();
     if (_picking) return;
-    final room = NovaMediaStore.maxPhotos - _pending.length;
+    var room = NovaMediaStore.maxPhotos - _pending.length;
     if (room <= 0) {
       _snack('You can add up to ${NovaMediaStore.maxPhotos} photos to one message.');
       return;
     }
+    // Fair use: 5 photo uploads every 2 hours (shared with the NOVA panel).
+    final quota = await NovaQuota.status(NovaQuotaKind.upload);
+    if (!mounted) return;
+    if (quota.exhausted) {
+      await showNovaLimitSheet(context, quota);
+      return;
+    }
+    final allowed = quota.remaining - _pending.length;
+    if (allowed <= 0) {
+      _snack('You can send ${quota.remaining} more photo${quota.remaining == 1 ? '' : 's'} '
+          'for now — send these first.');
+      return;
+    }
+    if (allowed < room) room = allowed;
     final camera = await showModalBottomSheet<bool>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -1930,12 +2036,12 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
   }
 
   // ── Full-screen image preview ──────────────────────────────────────────────
-  void _showImagePreview(String url) {
+  void _showImagePreview(String url, {String? ref}) {
     Navigator.push<void>(
       context,
       MaterialPageRoute(
         fullscreenDialog: true,
-        builder: (_) => _ImagePreviewScreen(imageUrl: url),
+        builder: (_) => _ImagePreviewScreen(imageUrl: url, imageRef: ref, chatId: _chatId),
       ),
     );
   }
@@ -1971,7 +2077,11 @@ class _ActionBtn extends StatelessWidget {
 // ── Full-screen image preview screen ──────────────────────────────────────
 class _ImagePreviewScreen extends StatefulWidget {
   final String imageUrl;
-  const _ImagePreviewScreen({required this.imageUrl});
+
+  /// The image as saved on the phone when it was created (3.8.0).
+  final String? imageRef;
+  final String chatId;
+  const _ImagePreviewScreen({required this.imageUrl, this.imageRef, required this.chatId});
 
   @override
   State<_ImagePreviewScreen> createState() => _ImagePreviewScreenState();
@@ -1981,31 +2091,33 @@ class _ImagePreviewScreenState extends State<_ImagePreviewScreen> {
   bool _downloading = false;
   bool _downloaded  = false;
 
+  File? get _localFile {
+    final ref = widget.imageRef;
+    final f = ref == null ? null : NovaMediaStore.fileOf(ref);
+    return f != null && f.existsSync() ? f : null;
+  }
+
+  /// Saves the image to the phone's gallery (Pictures/NOVA X) through
+  /// Android's media store — the exact image shown, not a new one.
   Future<void> _download() async {
     if (_downloading || _downloaded) return;
     setState(() => _downloading = true);
     try {
-      final dio  = Dio();
-      final resp = await dio.get<List<int>>(
-        widget.imageUrl,
-        options: Options(responseType: ResponseType.bytes),
-      );
-
-      final String savePath;
-      if (Platform.isAndroid) {
-        final ext     = await getExternalStorageDirectory();
-        final base    = ext!.path.split('/Android/')[0];
-        final dir     = Directory('$base/Pictures/NOVA X');
-        if (!await dir.exists()) await dir.create(recursive: true);
-        savePath = '${dir.path}/nova_ai_'
-            '${DateTime.now().millisecondsSinceEpoch}.jpg';
-      } else {
-        final dir = await getApplicationDocumentsDirectory();
-        savePath  = '${dir.path}/nova_ai_'
-            '${DateTime.now().millisecondsSinceEpoch}.jpg';
+      var ref = widget.imageRef;
+      if (ref == null || !(NovaMediaStore.fileOf(ref)?.existsSync() ?? false)) {
+        // Older message: fetch it once and keep it next to the chat's photos.
+        final resp = await Dio().get<List<int>>(
+          widget.imageUrl,
+          options: Options(responseType: ResponseType.bytes, receiveTimeout: const Duration(seconds: 90)),
+        );
+        final bytes = Uint8List.fromList(resp.data ?? const <int>[]);
+        if (NovaMediaStore.mimeOf(bytes) == null) throw const FormatException('not an image');
+        ref = await NovaMediaStore.save(widget.chatId, 'download_${DateTime.now().millisecondsSinceEpoch}', 0, bytes);
       }
-
-      await File(savePath).writeAsBytes(resp.data!);
+      // Android 9 and older need the storage permission for the gallery.
+      await NovaNative.instance.requestPermission('storage');
+      final ok = await NovaMediaStore.saveToGallery(ref);
+      if (!ok) throw const FileSystemException('gallery');
       if (!mounted) return;
       setState(() { _downloading = false; _downloaded = true; });
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -2025,7 +2137,7 @@ class _ImagePreviewScreenState extends State<_ImagePreviewScreen> {
       if (!mounted) return;
       setState(() => _downloading = false);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: const Text('Download failed. Check your connection.',
+        content: const Text("Couldn't save the image. Check your connection and try again.",
             style: TextStyle(color: Colors.white)),
         backgroundColor: AppTheme.danger,
         behavior:        SnackBarBehavior.floating,
@@ -2047,7 +2159,9 @@ class _ImagePreviewScreenState extends State<_ImagePreviewScreen> {
           child: InteractiveViewer(
             minScale: 0.5,
             maxScale: 5.0,
-            child: Image.network(
+            child: _localFile != null
+                ? Image.file(_localFile!, fit: BoxFit.contain)
+                : Image.network(
               widget.imageUrl,
               fit: BoxFit.contain,
               errorBuilder: (_, __, ___) => const Icon(

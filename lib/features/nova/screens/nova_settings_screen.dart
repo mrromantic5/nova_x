@@ -7,6 +7,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../../core/services/reward_device_sync.dart';
 import '../../../core/theme/app_theme.dart';
 import '../models/nova_models.dart';
 import '../nova_launcher.dart';
@@ -64,6 +65,8 @@ class _NovaSettingsScreenState extends State<NovaSettingsScreen> with WidgetsBin
     final contacts = await _native.isPermissionGranted('contacts');
     final audio = await _native.isPermissionGranted('audio');
     final wake = await NovaWake.status();
+    // Rewards: NOVA setup (100 coins) is held while every setting here is on.
+    RewardDeviceSync.sync(force: true);
     if (!mounted) return;
     setState(() {
       _settings = settings;
@@ -126,7 +129,27 @@ class _NovaSettingsScreenState extends State<NovaSettingsScreen> with WidgetsBin
           : 'Listening on this phone — say "Hey NOVA"';
     }
     if (w.error == 'microphone') return 'Needs microphone access';
+    if (w.error == 'mic_blocked') {
+      return 'Android paused the microphone — open NOVA X or tap the NOVA notification to resume';
+    }
     return 'Starts again when you open NOVA X';
+  }
+
+  Future<void> _setHeadsetMic(bool on) async {
+    await NovaWake.setHeadsetMic(on);
+    await _refresh();
+  }
+
+  String _headsetSubtitle(NovaWakeStatus w) {
+    final now = switch (w.headset) {
+      'wired' => ' Earphones connected now.',
+      'bluetooth' => ' Bluetooth headset connected now.',
+      _ => '',
+    };
+    return w.headsetMic
+        ? 'NOVA hears you through wired and Bluetooth earphones/headsets. While music plays, '
+            '"Hey NOVA" uses the phone\'s mic so the music keeps full quality.$now'
+        : 'Off — NOVA always uses the phone\'s own microphone.$now';
   }
 
   /// "Listen when the screen is off" (off by default; explained before it turns on).
@@ -495,6 +518,19 @@ class _NovaSettingsScreenState extends State<NovaSettingsScreen> with WidgetsBin
             activeColor: AppTheme.accentCyan,
             onChanged: _wakeBusy ? null : _setScreenOff,
           ),
+        if (w.enabled)
+          SwitchListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+            secondary: _leading(Icons.headset_mic_rounded, AppTheme.accentCyan),
+            title: Text('Use headset microphone',
+                style: GoogleFonts.inter(
+                    color: AppTheme.textPrimary, fontSize: 14, fontWeight: FontWeight.w500)),
+            subtitle: Text(_headsetSubtitle(w),
+                style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11.5)),
+            value: w.headsetMic,
+            activeColor: AppTheme.accentCyan,
+            onChanged: _wakeBusy ? null : _setHeadsetMic,
+          ),
         if (w.enabled && w.background)
           _permissionTile(
             Icons.open_in_new_rounded,
@@ -507,12 +543,12 @@ class _NovaSettingsScreenState extends State<NovaSettingsScreen> with WidgetsBin
             w.overlay,
             NovaWake.openOverlaySettings,
           ),
-        if (w.enabled && w.screenOff)
+        if (w.enabled)
           _permissionTile(
             Icons.battery_charging_full_rounded,
             'Battery: Unrestricted',
             'Choose NOVA X → "Unrestricted" / "Don\'t optimise" so the phone doesn\'t stop '
-                'NOVA while the screen is off',
+                '"Hey NOVA" in the background',
             w.batteryUnrestricted,
             NovaWake.openBatterySettings,
           ),
@@ -532,7 +568,9 @@ class _NovaSettingsScreenState extends State<NovaSettingsScreen> with WidgetsBin
         '• Say "Hey NOVA" (or "Hello NOVA" / "Okay NOVA"), wait for the panel, then speak.\n'
             '• A notification shows while NOVA listens. Turn it off here or from the notification.\n'
             '• It runs on your phone and uses some battery while on.\n'
-            '• After the phone restarts, open NOVA X once to start listening again.\n'
+            '• Works from a distance and through wired or Bluetooth earphones (see "Use headset microphone").\n'
+            '• If Android pauses it (phone restart, memory clean-up), tap the "Hey NOVA is paused" '
+            'notification or open NOVA X to turn it back on.\n'
             '• NOVA pauses during calls and while you use NOVA itself.\n'
             '• With the screen off it pauses to save battery, unless you turn on '
             '"Listen when the screen is off".'

@@ -118,9 +118,10 @@ class NovaMusicBridge(context: Context, messenger: BinaryMessenger) : MethodChan
         result.success(NovaMusicPlayer.playQueue(appContext, songs, startIndex, shuffle))
     }
 
-    fun dispose() {
+    /** [clearChannel] false: a newer bridge already serves this engine — leave its handler. */
+    fun dispose(clearChannel: Boolean = true) {
         disposed = true
         NovaMusicPlayer.removeListener(listener)
-        channel.setMethodCallHandler(null)
+        if (clearChannel) channel.setMethodCallHandler(null)
     }
 }

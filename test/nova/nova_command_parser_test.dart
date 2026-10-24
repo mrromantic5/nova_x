@@ -257,4 +257,76 @@ void main() {
       expect(single('open my points').args['app'], 'my points');
     });
   });
+
+
+  group('3.7: random songs, change the song, player modes', () {
+    test('a song without a name plays a random one', () {
+      for (final input in [
+        'play me a song', 'play me song', 'play a random song', 'play any song', 'play anything',
+        'play me some songs please', 'play something', 'Hey NOVA play me a song',
+        'surprise me with a song', 'play some good music',
+      ]) {
+        final a = single(input);
+        expect(a.type, NovaActionType.playMusic, reason: input);
+        expect(a.args['query'], '', reason: input);
+      }
+      expect(single('play essence').args['query'], 'essence');
+    });
+
+    test('change the song, shuffle, repeat, restart', () {
+      String command(String input) {
+        final a = single(input);
+        expect(a.type, NovaActionType.musicControl, reason: input);
+        return a.args['command']!;
+      }
+
+      for (final i in [
+        'change the song', 'change song', 'switch the track', 'another song', 'play another song',
+        'play a different song', 'play something else', 'skip it', 'next song', 'skip',
+      ]) {
+        expect(command(i), 'next', reason: i);
+      }
+      expect(command('previous song'), 'previous');
+      expect(command('turn on shuffle'), 'shuffle_on');
+      expect(command('shuffle off'), 'shuffle_off');
+      expect(command('repeat this song'), 'repeat_one');
+      expect(command('loop'), 'repeat_one');
+      expect(command('put it on repeat'), 'repeat_one');
+      expect(command('repeat all'), 'repeat_all');
+      expect(command('turn off repeat'), 'repeat_off');
+      expect(command('restart the song'), 'restart');
+      expect(command('play it again'), 'restart');
+      expect(command('replay'), 'restart');
+      final that = parser.parse('repeat that');
+      expect(that is NovaActionsPlan && that.actions.first.type == NovaActionType.musicControl, isFalse);
+    });
+  });
+
+  group('3.7: open any NOVA X page', () {
+    test('pages by name', () {
+      final cases = <String, String>{
+        'open nova network': 'nova network',
+        'open nova network page': 'nova network',
+        'open the nova music screen': 'nova music',
+        'open dev tools': 'dev tools',
+        'open x coder': 'x coder',
+        'go premium': 'go premium',
+        'open a new tab': 'a new tab',
+        'take me to my bookmarks': 'bookmarks',
+        'launch nova music': 'nova music',
+      };
+      cases.forEach((input, app) {
+        final a = single(input);
+        expect(a.type, NovaActionType.openApp, reason: input);
+        expect(a.args['app'], app, reason: input);
+      });
+    });
+
+    test('bare common words are not commands', () {
+      for (final w in ['network', 'home']) {
+        expect(parser.parse(w), isNot(isA<NovaActionsPlan>()), reason: w);
+      }
+      expect(single('open settings').type, NovaActionType.openSettings); // the phone's Settings
+    });
+  });
 }

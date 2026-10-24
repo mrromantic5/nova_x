@@ -181,4 +181,30 @@ void main() {
       expect(h.isEmpty, isTrue);
     });
   });
+
+  group('3.7: every NOVA X page and player mode', () {
+    test('page names map to page ids', () {
+      const cases = {
+        'nova network': 'nova_network', 'speed test': 'nova_network', 'nova music': 'nova_music',
+        'nova cyber': 'cyber', 'dev tools': 'dev_tools', 'x coder': 'code_editor',
+        'code editor': 'code_editor', 'business': 'business', 'profile': 'profile',
+        'offline pages': 'offline_pages', 'notifications': 'notifications', 'go premium': 'premium',
+        'incognito tab': 'incognito', 'a new tab': 'new_tab', 'home': 'home', 'rewards': 'rewards',
+      };
+      cases.forEach((name, id) {
+        expect(NovaActionValidator.inAppFeatures[name], id, reason: name);
+      });
+      for (final id in NovaActionValidator.inAppFeatures.values) {
+        expect(RegExp(r'^[a-z_]{1,30}$').hasMatch(id), isTrue, reason: id);
+      }
+    });
+
+    test('new music commands are allowed, unknown ones are not', () {
+      for (final c in ['shuffle_on', 'shuffle_off', 'repeat_one', 'repeat_all', 'repeat_off', 'restart']) {
+        expect(NovaActionValidator.fromPlanner('music_control', {'command': c})?.type,
+            NovaActionType.musicControl, reason: c);
+      }
+      expect(NovaActionValidator.fromPlanner('music_control', {'command': 'format_phone'}), isNull);
+    });
+  });
 }

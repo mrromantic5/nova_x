@@ -55,13 +55,21 @@ import io.flutter.plugin.common.MethodChannel
  */
 class NovaBridge(
     private val activity: Activity,
-    messenger: BinaryMessenger,
+    private val messenger: BinaryMessenger,
     private val onCloseRequested: (() -> Unit)? = null,
 ) : MethodChannel.MethodCallHandler {
 
     companion object {
         const val CHANNEL = "com.tlyfe.nova_x/nova"
         const val REQ_PERMISSION = 9310
+
+        /**
+         * The bridge currently serving each engine. NOVA's floating window can
+         * reuse a warm engine (NovaAssistEngine): when a new window attaches
+         * before the old one is destroyed, the old bridge must not unregister
+         * the new one's channel handlers.
+         */
+        private val owners = java.util.WeakHashMap<BinaryMessenger, NovaBridge>()
 
         private val PERMISSIONS = mapOf(
             "microphone" to Manifest.permission.RECORD_AUDIO,
@@ -70,6 +78,9 @@ class NovaBridge(
             "notifications" to "android.permission.POST_NOTIFICATIONS",
             // NOVA Music: "Music and audio" (Android 13+) or storage read access (older).
             "audio" to NovaMusicLibrary.permissionName(),
+            // Saving NOVA AI images to the gallery on Android 9 and older only
+            // (Android 10+ needs no permission for that).
+            "storage" to Manifest.permission.WRITE_EXTERNAL_STORAGE,
         )
 
         private val ALLOWED_ACTIONS = setOf(
@@ -97,8 +108,12 @@ class NovaBridge(
     private var pendingPermission: MethodChannel.Result? = null
     private var disposed = false
 
-    /** Why this window opened: "assist" (gesture) or "wake" ("Hey NOVA"). */
-    var launchReason: String = "assist"
+    /**
+     * Why this window opened: "assist" (gesture) or "wake" ("Hey NOVA").
+     * Handed to Dart once; null when there is nothing to start (main app,
+     * or a warm engine that is told through onAssistInvoked instead).
+     */
+    var launchReason: String? = null
 
     // "Hey NOVA" steps aside while this engine's NOVA screens are open and visible.
     private val dartHolds: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
@@ -108,6 +123,7 @@ class NovaBridge(
     init {
         channel.setMethodCallHandler(this)
         NovaMicArbiter.addProvider(holdProvider)
+        synchronized(owners) { owners[messenger] = this }
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -204,7 +220,7 @@ class NovaBridge(
                 }
                 "launchReason" -> {
                     result.success(launchReason)
-                    launchReason = "assist"
+                    launchReason = null
                 }
                 "wakeStatus" -> wakeStatus(result)
                 "setWakeEnabled" -> {
@@ -232,6 +248,24 @@ class NovaBridge(
                 "openOverlaySettings" -> result.success(openOverlaySettings())
                 "setWakeScreenOff" -> {
                     NovaWakePrefs.setScreenOffEnabled(activity.applicationContext, call.argument<Boolean>("enabled") ?: false)
+                    result.success(true)
+                }
+                "setupStatus" -> {
+                    // Rewards: every NOVA assistant setting the "NOVA setup" bonus needs.
+                    val ctx = activity.applicationContext
+                    val role = NovaAssistantRole.status(activity)
+                    result.success(mapOf(
+                        "assistant" to (role["held"] == true),
+                        "microphone" to isGranted(Manifest.permission.RECORD_AUDIO),
+                        "contacts" to isGranted(Manifest.permission.READ_CONTACTS),
+                        "audio" to isGranted(NovaMusicLibrary.permissionName()),
+                        "overlay" to (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(ctx)),
+                        "battery" to batteryUnrestricted(ctx),
+                    ))
+                }
+                "installId" -> result.success(installId(activity.applicationContext))
+                "setHeadsetMic" -> {
+                    NovaAudioRoute.setHeadsetEnabled(activity.applicationContext, call.argument<Boolean>("enabled") ?: true)
                     result.success(true)
                 }
                 "openBatterySettings" -> result.success(openBatterySettings())
@@ -369,7 +403,9 @@ class NovaBridge(
             result.success(false)
             return
         }
-        if ((kind == "notifications" && Build.VERSION.SDK_INT < 33) || isGranted(permission)) {
+        if ((kind == "notifications" && Build.VERSION.SDK_INT < 33) ||
+            (kind == "storage" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) ||
+            isGranted(permission)) {
             result.success(true)
             return
         }
@@ -428,6 +464,8 @@ class NovaBridge(
                 "error" to NovaWakeService.lastError,
                 "screenOff" to NovaWakePrefs.screenOffEnabled(ctx),
                 "batteryUnrestricted" to batteryUnrestricted(ctx),
+                "headsetMic" to NovaAudioRoute.headsetEnabled(ctx),
+                "headset" to NovaAudioRoute.headsetKind(ctx),
             )
             main.post { if (!disposed) result.success(status) }
         }.start()
@@ -439,7 +477,7 @@ class NovaBridge(
      * nova_media folder are accepted.
      */
     private fun saveImageToGallery(ctx: Context, path: String): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return saveImageLegacy(ctx, path)
         return try {
             val root = java.io.File(ctx.getDir("flutter", Context.MODE_PRIVATE), "nova_media").canonicalPath + "/"
             val file = java.io.File(path).canonicalFile
@@ -476,6 +514,53 @@ class NovaBridge(
         }
     }
 
+    /**
+     * Android 7–9: copy into Pictures/NOVA X (needs the storage permission the
+     * app asks for first) and let the gallery know about it.
+     */
+    @Suppress("DEPRECATION")
+    private fun saveImageLegacy(ctx: Context, path: String): Boolean = try {
+        val root = java.io.File(ctx.getDir("flutter", Context.MODE_PRIVATE), "nova_media").canonicalPath + "/"
+        val file = java.io.File(path).canonicalFile
+        val name = file.name.lowercase()
+        if (!file.path.startsWith(root) || !file.isFile || file.length() > 20L * 1024 * 1024 ||
+            !(name.endsWith(".jpg") || name.endsWith(".png") || name.endsWith(".webp")) ||
+            !isGranted(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        ) {
+            false
+        } else {
+            val dir = java.io.File(
+                android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_PICTURES),
+                "NOVA X",
+            )
+            dir.mkdirs()
+            val out = java.io.File(dir, "nova_${System.currentTimeMillis()}_${file.name}")
+            file.inputStream().use { input -> out.outputStream().use { input.copyTo(it) } }
+            android.media.MediaScannerConnection.scanFile(ctx, arrayOf(out.absolutePath), null, null)
+            true
+        }
+    } catch (e: Exception) {
+        false
+    }
+
+    /**
+     * A one-way identifier of this phone for NOVA X (SHA-256 of Android's
+     * per-app ANDROID_ID with a NOVA X prefix). Used only so one phone's
+     * setup bonuses can't be claimed again by switching accounts; the raw ID
+     * never leaves the phone.
+     */
+    private fun installId(ctx: Context): String? = try {
+        val raw = Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ANDROID_ID)
+        if (raw.isNullOrEmpty()) {
+            null
+        } else {
+            val md = java.security.MessageDigest.getInstance("SHA-256")
+            md.digest("novax-device:$raw".toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+        }
+    } catch (e: Exception) {
+        null
+    }
+
     private fun batteryUnrestricted(ctx: Context): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
         val pm = ctx.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return false
@@ -510,10 +595,13 @@ class NovaBridge(
         speaker.shutdown()
         voicePlayer.shutdown()
         deviceSpeech.cancel()
-        music.dispose()
+        val stillOwner = synchronized(owners) {
+            (owners[messenger] === this).also { if (it) owners.remove(messenger) }
+        }
+        music.dispose(clearChannel = stillOwner)
         pendingPermission?.success(false)
         pendingPermission = null
-        channel.setMethodCallHandler(null)
+        if (stillOwner) channel.setMethodCallHandler(null)
     }
 
     private fun isGranted(permission: String): Boolean =

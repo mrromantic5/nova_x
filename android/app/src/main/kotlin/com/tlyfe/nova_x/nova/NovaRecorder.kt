@@ -33,13 +33,23 @@ class NovaRecorder(
     private val emit: (String, Any?) -> Unit,
 ) {
     private companion object {
-        const val METER_INTERVAL_MS = 80L
-        const val CALIBRATION_MS = 350L
-        const val SILENCE_AFTER_SPEECH_MS = 1500L
+        const val METER_INTERVAL_MS = 60L
+        const val CALIBRATION_MS = 240L
+
+        // 3.8.0: NOVA answers sooner — the command ends 1 s after the user
+        // stops talking (was 1.5 s), still long enough for a short pause.
+        const val SILENCE_AFTER_SPEECH_MS = 1000L
         const val NO_SPEECH_TIMEOUT_MS = 7000L
-        const val MIN_SPEECH_AMPLITUDE = 1200
+
+        // 3.8.0: a voice from across the room peaks far below the old 1200
+        // (≈ −29 dBFS) and was treated as "no speech". The threshold now
+        // starts at ≈ −37 dBFS and rises with the room's background noise.
+        const val MIN_SPEECH_AMPLITUDE = 450
         const val MAX_AMPLITUDE = 32767.0
     }
+
+    /** Headset microphone for this recording (wired, or Bluetooth when allowed). */
+    private val route = NovaAudioRoute.Session(context)
 
     private val handler = Handler(Looper.getMainLooper())
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -125,6 +135,10 @@ class NovaRecorder(
             @Suppress("DEPRECATION")
             MediaRecorder()
         }
+        // Earphones / headset plugged in or connected: listen through their
+        // microphone (the Bluetooth link comes up within a moment; the
+        // recording follows it automatically).
+        val headset = route.begin(allowBluetooth = NovaAudioRoute.headsetEnabled(context), waitMs = 0L)
         try {
             r.setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
             r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
@@ -133,6 +147,9 @@ class NovaRecorder(
             r.setAudioSamplingRate(16_000)
             r.setAudioEncodingBitRate(48_000)
             r.setOutputFile(out.absolutePath)
+            if (headset != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                try { r.setPreferredDevice(headset) } catch (ignored: Exception) { }
+            }
             r.prepare()
             requestFocus()
             r.start()
@@ -140,6 +157,7 @@ class NovaRecorder(
             try { r.release() } catch (ignored: Exception) { }
             out.delete()
             abandonFocus()
+            route.end()
             NovaMicArbiter.hold(holdKey, false)
             return mapOf("status" to "error", "message" to "The microphone is unavailable right now.")
         }
@@ -181,6 +199,7 @@ class NovaRecorder(
         file?.delete()
         file = null
         abandonFocus()
+        route.end()
         discardFinished()
         NovaMicArbiter.hold(holdKey, false)
     }
@@ -207,6 +226,7 @@ class NovaRecorder(
         }
         try { r.release() } catch (ignored: Exception) { }
         abandonFocus()
+        route.end()
         NovaMicArbiter.hold(holdKey, false)
 
         if (!valid || out == null || !out.exists() || out.length() == 0L) {

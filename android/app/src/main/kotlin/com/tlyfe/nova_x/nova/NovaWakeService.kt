@@ -61,10 +61,23 @@ object NovaWakePrefs {
  * word detector (NovaWakeEngine). Nothing is recorded, stored or uploaded
  * while it listens; audio is analysed in memory, 0.1 s at a time.
  *
+ * 3.8.0:
+ *  - Far voices: the audio passes through NovaMicGain (automatic gain with a
+ *    noise ceiling) before the detector.
+ *  - Headsets: wired/USB headset microphones are used when plugged in;
+ *    Bluetooth headset microphones too (NovaAudioRoute), except while music
+ *    or video plays (that would drop the headset to call quality).
+ *  - Staying on: the service is sticky. When Android closes NOVA X and may
+ *    not give the microphone back (Android 14+ background rules), when the
+ *    phone restarts, or when Android silences the microphone, NOVA shows a
+ *    one-tap "turn Hey NOVA back on" notification instead of failing quietly.
+ *  - Faster replies: the floating window's Flutter engine is started in
+ *    advance (NovaAssistEngine), so NOVA opens almost instantly.
+ *
  * Android rules this follows:
- *  - It can only be started while NOVA X is on screen (Android 14+ forbid
- *    starting microphone services from the background), so it starts when the
- *    user turns the setting on and whenever NOVA X is opened.
+ *  - It can only be started while NOVA X is on screen or from a notification
+ *    tap (Android 14+ forbid starting microphone services from the
+ *    background).
  *  - A notification is always shown while it listens.
  *  - Apps can't open screens from the background. On "Hey NOVA" the floating
  *    panel opens directly when NOVA X is visible or the user allowed "Display
@@ -74,9 +87,7 @@ object NovaWakePrefs {
  *  - Screen off: by default it pauses (saves battery). With "Listen when the
  *    screen is off" on, it keeps listening (holding a partial wake lock only
  *    while the screen is off), and on "Hey NOVA" it turns the screen on and
- *    opens NOVA over the lock screen (needs "Display over other apps";
- *    otherwise the tap-to-talk notification is shown on the lock screen).
- *    Anything that needs the phone unlocked asks for the PIN first.
+ *    opens NOVA over the lock screen.
  */
 class NovaWakeService : Service() {
 
@@ -85,11 +96,20 @@ class NovaWakeService : Service() {
         const val ACTION_STOP = "com.tlyfe.nova_x.nova.WAKE_STOP"
         const val ALERT_NOTIFICATION_ID = 9412
 
+        /** "Hey NOVA is paused — tap to turn it back on" (Android stopped it). */
+        const val RESUME_NOTIFICATION_ID = 9413
+
         private const val LISTEN_NOTIFICATION_ID = 9411
         private const val CHANNEL_LISTEN = "nova_wake"
         private const val CHANNEL_ALERT = "nova_wake_alert"
         private const val CHUNK = 1600 // 0.1 s at 16 kHz
         private const val AFTER_DETECTION_PAUSE_MS = 8000L
+
+        /** How often the microphone choice (headset plugged in, music…) is re-checked. */
+        private const val ROUTE_CHECK_MS = 2000L
+
+        /** All-zero audio this long = Android is silencing NOVA's microphone. */
+        private const val SILENT_CHUNKS_LIMIT = 50 // 5 s
 
         @Volatile var running = false
             private set
@@ -128,6 +148,7 @@ class NovaWakeService : Service() {
                 return false
             }
             val intent = Intent(context, NovaWakeService::class.java).setAction(ACTION_START)
+            cancelResumeNotice(context)
             return try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     context.startForegroundService(intent)
@@ -143,7 +164,64 @@ class NovaWakeService : Service() {
         }
 
         fun stop(context: Context) {
+            cancelResumeNotice(context)
             context.stopService(Intent(context, NovaWakeService::class.java))
+        }
+
+        fun cancelResumeNotice(context: Context) {
+            try {
+                (context.getSystemService(NOTIFICATION_SERVICE) as? NotificationManager)?.cancel(RESUME_NOTIFICATION_ID)
+            } catch (ignored: Exception) { }
+        }
+
+        /**
+         * Android stopped "Hey NOVA" (restart after the system closed NOVA X,
+         * phone restart, microphone silenced in the background). Android only
+         * lets NOVA X open the microphone again after the user does something,
+         * so this notification turns it back on in one tap (the tap starts the
+         * service directly — the app doesn't need to open).
+         */
+        fun showResumeNotice(context: Context) {
+            if (!NovaWakePrefs.isEnabled(context) || running) return
+            val nm = context.getSystemService(NOTIFICATION_SERVICE) as? NotificationManager ?: return
+            createChannels(context)
+            val start = Intent(context, NovaWakeService::class.java).setAction(ACTION_START)
+            val pi = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                PendingIntent.getForegroundService(
+                    context, 4, start, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                )
+            } else {
+                PendingIntent.getService(
+                    context, 4, start, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                )
+            }
+            val n = NotificationCompat.Builder(context, CHANNEL_LISTEN)
+                .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+                .setContentTitle("“Hey NOVA” is paused")
+                .setContentText("Android paused NOVA's microphone. Tap to turn “Hey NOVA” back on.")
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setCategory(NotificationCompat.CATEGORY_STATUS)
+                .setAutoCancel(true)
+                .setContentIntent(pi)
+                .build()
+            try { nm.notify(RESUME_NOTIFICATION_ID, n) } catch (ignored: Exception) { }
+        }
+
+        private fun createChannels(context: Context) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+            val nm = context.getSystemService(NOTIFICATION_SERVICE) as? NotificationManager ?: return
+            nm.createNotificationChannel(
+                NotificationChannel(CHANNEL_LISTEN, "Hey NOVA listening", NotificationManager.IMPORTANCE_LOW).apply {
+                    description = "Shown while NOVA listens for “Hey NOVA” on this phone."
+                    setShowBadge(false)
+                },
+            )
+            nm.createNotificationChannel(
+                NotificationChannel(CHANNEL_ALERT, "Hey NOVA heard", NotificationManager.IMPORTANCE_HIGH).apply {
+                    description = "Tap to talk after saying “Hey NOVA” in another app."
+                    setShowBadge(false)
+                },
+            )
         }
     }
 
@@ -152,12 +230,19 @@ class NovaWakeService : Service() {
     private var worker: Thread? = null
     private var cpuLock: PowerManager.WakeLock? = null
     private var cpuLockRenewedAt = 0L
+    private val route by lazy { NovaAudioRoute.Session(this) }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             NovaWakePrefs.setEnabled(this, false)
+            cancelResumeNotice(this)
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        // intent == null: Android restarted the service after closing NOVA X.
+        if (!NovaWakePrefs.isEnabled(this)) {
             stopSelf()
             return START_NOT_STICKY
         }
@@ -167,7 +252,7 @@ class NovaWakeService : Service() {
             return START_NOT_STICKY
         }
         try {
-            createChannels()
+            createChannels(this)
             val notification = listeningNotification()
             // The "microphone" service type exists from Android 11.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -176,19 +261,27 @@ class NovaWakeService : Service() {
                 startForeground(LISTEN_NOTIFICATION_ID, notification)
             }
         } catch (e: Exception) {
+            // Android 14+: a microphone service can't start while NOVA X is in
+            // the background (e.g. Android restarting it after closing the app).
             lastError = "start_not_allowed"
+            showResumeNotice(this)
             stopSelf()
             return START_NOT_STICKY
         }
+        cancelResumeNotice(this)
+        // NOVA's window opens much faster when its engine is already running.
+        main.post { NovaAssistEngine.prewarm(applicationContext) }
         if (worker == null) {
             active = true
             running = true
             lastError = null
             worker = Thread({ listenLoop() }, "nova-wake").also { it.start() }
         }
-        // Not sticky: Android may not restart a microphone service from the
-        // background, so it resumes the next time NOVA X is opened instead.
-        return START_NOT_STICKY
+        // Sticky: if Android closes NOVA X to free memory it restarts this
+        // service; when the microphone may not be used then, the user gets the
+        // one-tap "turn it back on" notification instead of silently losing
+        // "Hey NOVA".
+        return START_STICKY
     }
 
     override fun onDestroy() {
@@ -198,43 +291,69 @@ class NovaWakeService : Service() {
         worker = null
         NovaMicArbiter.wakeMicOpen = false
         setCpuAwake(false)
+        try { route.end() } catch (ignored: Exception) { }
+        if (!NovaWakePrefs.isEnabled(this)) NovaAssistEngine.releaseIfIdle()
         super.onDestroy()
     }
 
     // ── Listening ──────────────────────────────────────────────────────────
 
     private fun listenLoop() {
-        val engine = NovaWakeEngine.create(applicationContext)
+        var engine: NovaWakeEngine? = NovaWakeEngine.create(applicationContext)
         if (engine == null) {
             lastError = "unsupported"
             main.post { stopSelf() }
             return
         }
         var record: AudioRecord? = null
+        var routeKey = ""
+        var routeCheckedAt = 0L
+        val gain = NovaMicGain()
         val pcm = ShortArray(CHUNK)
         var failures = 0
+        var engineErrors = 0
+        var silentChunks = 0
+        var stoppedBySilence = false
         try {
             while (active) {
+                val det = engine ?: break
                 if (shouldPause()) {
                     if (record != null) {
                         closeRecord(record)
                         record = null
-                        engine.restart()
+                        det.restart()
                     }
+                    route.end()
+                    routeKey = ""
                     setCpuAwake(false)
                     sleep(150)
                     continue
                 }
                 // Screen off (option on): keep the processor awake so listening continues.
                 setCpuAwake(!screenIsOn())
+
+                // Headset plugged in / unplugged, music started / stopped: re-pick the microphone.
+                val now = SystemClock.elapsedRealtime()
+                if (record != null && now - routeCheckedAt >= ROUTE_CHECK_MS) {
+                    routeCheckedAt = now
+                    if (wantedRouteKey() != routeKey) {
+                        closeRecord(record)
+                        record = null
+                        det.restart()
+                    }
+                }
                 if (record == null) {
-                    record = openRecord()
+                    routeKey = wantedRouteKey()
+                    routeCheckedAt = now
+                    record = openRecord(routeKey)
                     if (record == null) {
                         failures++
                         sleep(if (failures < 5) 1000L else 5000L)
                         continue
                     }
                     failures = 0
+                    silentChunks = 0
+                    gain.reset()
                     NovaMicArbiter.wakeMicOpen = true
                 }
                 val n = record.read(pcm, 0, CHUNK)
@@ -245,13 +364,44 @@ class NovaWakeService : Service() {
                     sleep(300)
                     continue
                 }
-                val samples = FloatArray(n)
-                for (i in 0 until n) samples[i] = pcm[i] / 32768f
-                if (engine.accept(samples)) {
+                // Android delivers exact silence when it blocks a background
+                // microphone (or the privacy switch is off): tell the user
+                // instead of pretending to listen.
+                var allZero = true
+                for (i in 0 until n) {
+                    if (pcm[i].toInt() != 0) { allZero = false; break }
+                }
+                silentChunks = if (allZero) silentChunks + 1 else 0
+                if (silentChunks >= SILENT_CHUNKS_LIMIT && !NovaMicArbiter.appVisible()) {
+                    if (othersRecording(record)) {
+                        // Another app is recording (voice note, call): Android
+                        // gives NOVA silence until it finishes — just wait.
+                        silentChunks = 0
+                    } else {
+                        lastError = "mic_blocked"
+                        stoppedBySilence = true
+                        break
+                    }
+                }
+                // Lift far / quiet voices before the detector hears them.
+                val samples = gain.process(pcm, n)
+                val heard = try {
+                    det.accept(samples)
+                } catch (t: Throwable) {
+                    // Detector error: load a fresh detector instead of stopping.
+                    engineErrors++
+                    try { det.release() } catch (ignored: Throwable) { }
+                    engine = if (engineErrors <= 3) NovaWakeEngine.create(applicationContext) else null
+                    if (engine == null) throw t
+                    false
+                }
+                if (heard) {
                     NovaMicArbiter.pauseFor(AFTER_DETECTION_PAUSE_MS)
                     closeRecord(record)
                     record = null
-                    engine.restart()
+                    route.end()
+                    routeKey = ""
+                    det.restart()
                     main.post { onWakeWord() }
                 }
             }
@@ -259,16 +409,45 @@ class NovaWakeService : Service() {
             lastError = "engine_error"
         } finally {
             record?.let { closeRecord(it) }
+            try { route.end() } catch (ignored: Exception) { }
             NovaMicArbiter.wakeMicOpen = false
             setCpuAwake(false)
-            engine.release()
+            engine?.release()
             // Ended without being asked to (engine/microphone failure): never
             // leave a "listening" notification up while nothing listens.
             if (active) {
                 active = false
                 running = false
-                main.post { stopSelf() }
+                main.post {
+                    stopSelf()
+                    if (stoppedBySilence) showResumeNotice(this)
+                }
             }
+        }
+    }
+
+    /**
+     * Which microphone "Hey NOVA" should use now: a wired headset, a
+     * Bluetooth headset (when allowed and nothing is playing), or the
+     * phone's own microphone ("").
+     */
+    private fun wantedRouteKey(): String {
+        val d = NovaAudioRoute.headsetInput(this) ?: return ""
+        if (!NovaAudioRoute.isBluetooth(d)) return "wired:${d.id}"
+        if (!NovaAudioRoute.headsetEnabled(this)) return ""
+        if (NovaAudioRoute.musicActive(this) || NovaAudioRoute.inCall(this)) return ""
+        return "bt:${d.id}"
+    }
+
+    /** True when some other app is recording too (Android 10+ can tell). */
+    private fun othersRecording(record: AudioRecord): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+        val am = getSystemService(AUDIO_SERVICE) as? AudioManager ?: return false
+        return try {
+            val mine = record.audioSessionId
+            am.activeRecordingConfigurations.any { it.clientAudioSessionId != mine }
+        } catch (e: Exception) {
+            false
         }
     }
 
@@ -307,12 +486,18 @@ class NovaWakeService : Service() {
     }
 
     @SuppressLint("MissingPermission") // checked in micGranted()
-    private fun openRecord(): AudioRecord? {
+    private fun openRecord(routeKey: String): AudioRecord? {
         if (!micGranted(this)) return null
         val min = AudioRecord.getMinBufferSize(
             NovaWakeEngine.SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
         )
         if (min <= 0) return null
+        val device = when {
+            routeKey.isEmpty() -> { route.end(); null }
+            // Waits up to 1.5 s for the Bluetooth link (on this worker thread).
+            routeKey.startsWith("bt:") -> route.begin(allowBluetooth = true, waitMs = 1500L)
+            else -> route.begin(allowBluetooth = false)
+        }
         return try {
             val r = AudioRecord(
                 MediaRecorder.AudioSource.VOICE_RECOGNITION,
@@ -324,6 +509,9 @@ class NovaWakeService : Service() {
             if (r.state != AudioRecord.STATE_INITIALIZED) {
                 r.release()
                 return null
+            }
+            if (device != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                try { r.setPreferredDevice(device) } catch (ignored: Exception) { }
             }
             r.startRecording()
             if (r.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
@@ -446,23 +634,6 @@ class NovaWakeService : Service() {
     }
 
     // ── Notifications ──────────────────────────────────────────────────────
-
-    private fun createChannels() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val nm = getSystemService(NOTIFICATION_SERVICE) as? NotificationManager ?: return
-        nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_LISTEN, "Hey NOVA listening", NotificationManager.IMPORTANCE_LOW).apply {
-                description = "Shown while NOVA listens for “Hey NOVA” on this phone."
-                setShowBadge(false)
-            },
-        )
-        nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_ALERT, "Hey NOVA heard", NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "Tap to talk after saying “Hey NOVA” in another app."
-                setShowBadge(false)
-            },
-        )
-    }
 
     private fun listeningNotification(): Notification {
         val open = PendingIntent.getActivity(

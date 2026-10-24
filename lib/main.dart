@@ -9,6 +9,7 @@ import 'package:nova_x/core/services/nova_shield_service.dart';
 import 'package:nova_x/core/services/api_service.dart';
 import 'package:nova_x/core/services/rewards_entitlements.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
+import 'package:nova_x/core/widgets/nova_toast.dart';
 import 'features/auth/screens/auth_gate.dart';
 import 'features/business/screens/business_screen.dart';
 import 'features/notifications/screens/notifications_screen.dart';
@@ -38,6 +39,7 @@ void main() async {
   await RewardsEntitlements.loadCache();
   await Firebase.initializeApp();
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  NovaToast.navigatorKey = navigatorKey; // app-wide bottom toasts (rewards, limits)
   runApp(const ProviderScope(child: NovaXApp()));
 }
 

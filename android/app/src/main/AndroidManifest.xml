@@ -43,6 +43,16 @@
          agrees in Android's screen-capture dialog (NovaScreenCapture). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
+    <!-- "Hey NOVA" after a phone restart / app update: offers the one-tap
+         "turn Hey NOVA back on" notification (only if the user had it on). -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Bluetooth headset microphone for NOVA on Android 7–11 (normal,
+         install-time permission; Android 12+ needs nothing extra). -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <!-- Saving NOVA AI images to Pictures/NOVA X on Android 9 and older only
+         (asked when the user taps Download; Android 10+ needs nothing). -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+
     <!-- See installed browsers / be eligible as default browser (Android 11+ visibility) -->
     <queries>
         <intent>
@@ -169,11 +179,22 @@
             </intent-filter>
         </activity>
 
-        <!-- NOVA wake word listener (started only while NOVA X is visible). -->
+        <!-- NOVA wake word listener (started while NOVA X is visible, or from
+             the user's tap on the "turn Hey NOVA back on" notification). -->
         <service
             android:name=".nova.NovaWakeService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- "Hey NOVA" after a restart/update: resume or offer the one-tap notification. -->
+        <receiver
+            android:name=".nova.NovaBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!-- NOVA "Read my screen": runs only while taking the one screenshot the
              user agreed to in Android's screen-capture dialog. -->

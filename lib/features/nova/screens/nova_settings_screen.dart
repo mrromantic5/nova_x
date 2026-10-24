@@ -147,9 +147,13 @@ class _NovaSettingsScreenState extends State<NovaSettingsScreen> with WidgetsBin
       _ => '',
     };
     return w.headsetMic
-        ? 'NOVA hears you through wired and Bluetooth earphones/headsets. While music plays, '
-            '"Hey NOVA" uses the phone\'s mic so the music keeps full quality.$now'
+        ? 'Your requests to NOVA are recorded through wired and Bluetooth earphones/headsets.$now'
         : 'Off — NOVA always uses the phone\'s own microphone.$now';
+  }
+
+  Future<void> _setBluetoothWake(bool on) async {
+    await NovaWake.setBluetoothWake(on);
+    await _refresh();
   }
 
   /// "Listen when the screen is off" (off by default; explained before it turns on).
@@ -530,6 +534,24 @@ class _NovaSettingsScreenState extends State<NovaSettingsScreen> with WidgetsBin
             value: w.headsetMic,
             activeColor: AppTheme.accentCyan,
             onChanged: _wakeBusy ? null : _setHeadsetMic,
+          ),
+        if (w.enabled && w.headsetMic)
+          SwitchListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+            secondary: _leading(Icons.bluetooth_audio_rounded, AppTheme.accentCyan),
+            title: Text('Listen for "Hey NOVA" through Bluetooth',
+                style: GoogleFonts.inter(
+                    color: AppTheme.textPrimary, fontSize: 14, fontWeight: FontWeight.w500)),
+            subtitle: Text(
+                w.btWake
+                    ? 'On — your Bluetooth headset hears "Hey NOVA". It stays in call mode while '
+                        'NOVA listens (uses its battery); the phone listens while music plays'
+                    : 'Off (recommended) — the phone listens for "Hey NOVA"; your request '
+                        'is still recorded through the headset',
+                style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11.5)),
+            value: w.btWake,
+            activeColor: AppTheme.accentCyan,
+            onChanged: _wakeBusy ? null : _setBluetoothWake,
           ),
         if (w.enabled && w.background)
           _permissionTile(

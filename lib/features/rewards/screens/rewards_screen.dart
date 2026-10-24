@@ -6,11 +6,16 @@
 //   • 9 task cards (state-aware claim buttons)
 //   • 7 redeemable feature cards (Unlock / Active · Nd left)
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/services/default_browser_service.dart';
+import '../../../core/services/reward_device_sync.dart';
 import '../../../core/services/rewards_service.dart';
 import '../../../core/services/rewards_entitlements.dart';
+import '../../nova/screens/nova_settings_screen.dart';
 
 const Color _gold     = Color(0xFFFFC83D);
 const Color _goldDeep = Color(0xFFFFA000);
@@ -23,27 +28,50 @@ class RewardsScreen extends StatefulWidget {
 }
 
 class _RewardsScreenState extends State<RewardsScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   RewardsState? _state;
   bool _loading = true;
   bool _earnTab = true;
   String? _busyKey; // task/feature currently being claimed/redeemed
+  NovaSetupStatus _setup = const NovaSetupStatus({});
+  StreamSubscription<List<RewardSyncEvent>>? _syncSub;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    // A tracked reward was credited / taken back: show the new balance.
+    _syncSub = RewardDeviceSync.events.listen((_) => _load(sync: false));
     _load();
   }
 
-  Future<void> _load() async {
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _syncSub?.cancel();
+    super.dispose();
+  }
+
+  // Back from Android settings (default browser, permissions…): re-check.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _load();
+  }
+
+  Future<void> _load({bool sync = true}) async {
+    // Report the phone's settings first, so tracked rewards are up to date.
+    if (sync) await RewardDeviceSync.sync(force: true);
+    final setup = await RewardDeviceSync.setupStatus();
     final s = await RewardsService.fetchState();
     if (!mounted) return;
-    setState(() { _state = s; _loading = false; });
+    setState(() { _state = s ?? _state; _setup = setup; _loading = false; });
   }
 
   // ── Task ordering for the Earn tab ──────────────────────────────────────
   static const _taskOrder = [
     RewardTaskKey.dailyClaim,
+    RewardTaskKey.novaSetup,
+    RewardTaskKey.defaultBrowser,
     RewardTaskKey.dailyStreak,
     RewardTaskKey.browse10min,
     RewardTaskKey.businessClicks,
@@ -51,9 +79,11 @@ class _RewardsScreenState extends State<RewardsScreen>
     RewardTaskKey.openNotifications,
     RewardTaskKey.useAi,
     RewardTaskKey.visualSearch,
-    RewardTaskKey.defaultBrowser,
     RewardTaskKey.completeProfile,
   ];
+
+  /// Held only while the phone setting stays on (credited / taken back).
+  static const _trackedTasks = {RewardTaskKey.defaultBrowser, RewardTaskKey.novaSetup};
 
   static const _featureOrder = [
     RewardFeature.customization, RewardFeature.shield, RewardFeature.cyber,
@@ -67,9 +97,25 @@ class _RewardsScreenState extends State<RewardsScreen>
     RewardTaskKey.readNews,
     RewardTaskKey.useAi,
     RewardTaskKey.visualSearch,
-    RewardTaskKey.defaultBrowser,
     RewardTaskKey.completeProfile,
   };
+
+  // ── Tracked rewards: send the user to the setting ───────────────────────
+  Future<void> _setUp(String key) async {
+    if (_busyKey != null) return;
+    setState(() => _busyKey = key);
+    try {
+      if (key == RewardTaskKey.defaultBrowser) {
+        await DefaultBrowserService.request();
+      } else {
+        await Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const NovaSettingsScreen()));
+      }
+    } finally {
+      if (mounted) setState(() => _busyKey = null);
+    }
+    await _load();
+  }
 
   // ── Claim / redeem ──────────────────────────────────────────────────────
   Future<void> _doClaim(String taskKey) async {
@@ -120,7 +166,7 @@ class _RewardsScreenState extends State<RewardsScreen>
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             const Text('🎉', style: TextStyle(fontSize: 56)),
             const SizedBox(height: 12),
-            Text('+$pts points!',
+            Text('+$pts coins!',
                 style: GoogleFonts.spaceGrotesk(
                     color: _gold, fontSize: 26, fontWeight: FontWeight.w800)),
             const SizedBox(height: 6),
@@ -202,7 +248,7 @@ class _RewardsScreenState extends State<RewardsScreen>
           const SizedBox(width: 16),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Total points',
+              Text('Total coins',
                   style: GoogleFonts.inter(
                       color: AppTheme.textSecondary, fontSize: 12.5)),
               const SizedBox(height: 2),
@@ -305,7 +351,10 @@ class _RewardsScreenState extends State<RewardsScreen>
     switch (key) {
       case RewardTaskKey.dailyClaim:
         return {'icon': Icons.bolt_rounded, 'title': 'Daily reward',
-          'sub': 'First 5 people each day win 5 points'};
+          'sub': 'First 5 people each day win ${_state?.tasks[key]?.points ?? 30} coins'};
+      case RewardTaskKey.novaSetup:
+        return {'icon': Icons.assistant_rounded, 'title': 'Set up NOVA assistant',
+          'sub': 'Digital assistant + all NOVA permissions. Kept while everything stays on'};
       case RewardTaskKey.dailyStreak:
         return {'icon': Icons.local_fire_department_rounded, 'title': 'Daily streak',
           'sub': 'Finish all daily tasks for a bonus'};
@@ -317,7 +366,7 @@ class _RewardsScreenState extends State<RewardsScreen>
           'sub': 'Open 3 different businesses'};
       case RewardTaskKey.readNews:
         return {'icon': Icons.article_rounded, 'title': 'Read the news',
-          'sub': 'Read up to 3 articles (1 pt each)'};
+          'sub': 'Read up to 3 articles (${_state?.tasks[key]?.points ?? 1} each)'};
       case RewardTaskKey.openNotifications:
         return {'icon': Icons.notifications_rounded, 'title': 'Check notifications',
           'sub': 'Open 5 notifications'};
@@ -331,8 +380,8 @@ class _RewardsScreenState extends State<RewardsScreen>
         return {'icon': Icons.person_rounded, 'title': 'Complete your profile',
           'sub': 'One-time reward'};
       case RewardTaskKey.defaultBrowser:
-        return {'icon': Icons.public_rounded, 'title': 'Make NOVA X your default browser',
-          'sub': 'One-time reward — set it in the popup or Settings'};
+        return {'icon': Icons.language_rounded, 'title': 'Make NOVA X your default browser',
+          'sub': 'Kept while NOVA X stays your default browser'};
       default:
         return {'icon': Icons.star_rounded, 'title': key, 'sub': ''};
     }
@@ -357,6 +406,11 @@ class _RewardsScreenState extends State<RewardsScreen>
       progress = '${t.i('count')}/${t.i('max', 3)} read today';
     } else if (key == RewardTaskKey.openNotifications) {
       progress = '${t.i('count')}/${t.i('target', 5)} opened';
+    } else if (key == RewardTaskKey.novaSetup) {
+      progress = '${_setup.doneCount}/${NovaSetupStatus.keys.length} done';
+      bar = _setup.doneCount / NovaSetupStatus.keys.length;
+    } else if (key == RewardTaskKey.defaultBrowser) {
+      progress = t.done ? 'Active — keep it set' : 'Not set';
     }
 
     final done = t.done;
@@ -411,6 +465,10 @@ class _RewardsScreenState extends State<RewardsScreen>
             ),
           ),
         ],
+        if (key == RewardTaskKey.novaSetup) ...[
+          const SizedBox(height: 10),
+          _setupChecklist(),
+        ],
         const SizedBox(height: 12),
         Row(children: [
           if (progress != null)
@@ -421,12 +479,88 @@ class _RewardsScreenState extends State<RewardsScreen>
             )
           else
             const Spacer(),
-          if (_autoTasks.contains(key))
+          if (_trackedTasks.contains(key))
+            _trackedStatus(key, done, busy)
+          else if (_autoTasks.contains(key))
             _autoStatus(done)
           else
             _claimButton(key, done, claimable, busy),
         ]),
+        if (_trackedTasks.contains(key)) ...[
+          const SizedBox(height: 8),
+          Row(children: [
+            const Icon(Icons.info_outline_rounded, size: 13, color: AppTheme.textHint),
+            const SizedBox(width: 5),
+            Expanded(
+              child: Text('Turning it off later takes these coins back.',
+                  style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11)),
+            ),
+          ]),
+        ],
       ]),
+    );
+  }
+
+  /// The six NOVA settings, ticked when on.
+  Widget _setupChecklist() {
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        for (final k in NovaSetupStatus.keys)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+            decoration: BoxDecoration(
+              color: (_setup.items[k] == true ? AppTheme.success : AppTheme.textHint).withOpacity(.12),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(_setup.items[k] == true ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
+                  size: 13, color: _setup.items[k] == true ? AppTheme.success : AppTheme.textHint),
+              const SizedBox(width: 4),
+              Text(NovaSetupStatus.label(k),
+                  style: GoogleFonts.inter(
+                      color: _setup.items[k] == true ? AppTheme.textSecondary : AppTheme.textHint,
+                      fontSize: 11)),
+            ]),
+          ),
+      ],
+    );
+  }
+
+  /// Tracked rewards: "Active" while held, otherwise a button to the setting.
+  Widget _trackedStatus(String key, bool active, bool busy) {
+    if (active) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+        decoration: BoxDecoration(
+          color: AppTheme.success.withOpacity(.15),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.verified_rounded, color: AppTheme.success, size: 16),
+          const SizedBox(width: 5),
+          Text('Earned',
+              style: GoogleFonts.spaceGrotesk(
+                  color: AppTheme.success, fontWeight: FontWeight.w700, fontSize: 13)),
+        ]),
+      );
+    }
+    return GestureDetector(
+      onTap: busy ? null : () => _setUp(key),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(colors: [_gold, _goldDeep]),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: busy
+            ? const SizedBox(width: 15, height: 15,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black54))
+            : Text(key == RewardTaskKey.defaultBrowser ? 'Set default' : 'Set up',
+                style: GoogleFonts.spaceGrotesk(
+                    color: Colors.black87, fontWeight: FontWeight.w700, fontSize: 13.5)),
+      ),
     );
   }
 
@@ -508,7 +642,7 @@ class _RewardsScreenState extends State<RewardsScreen>
     final out = <Widget>[
       Padding(
         padding: const EdgeInsets.only(bottom: 6, left: 4),
-        child: Text('Unlock premium features with your points.',
+        child: Text('Unlock premium features with your coins.',
             style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 13)),
       ),
     ];

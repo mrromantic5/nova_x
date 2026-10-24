@@ -12,11 +12,11 @@ import android.os.SystemClock
  *  - Wired / USB-C earphones and headsets with a microphone: used whenever
  *    they are plugged in (no side effects).
  *  - Bluetooth headsets and earbuds: their microphone only works over the
- *    Bluetooth "call" link (SCO). NOVA opens that link while it records a
- *    command, and — when "Use headset microphone" is on — while it listens
- *    for "Hey NOVA". Music cannot play in full quality over that link, so
- *    "Hey NOVA" falls back to the phone's microphone while music or video is
- *    playing and returns to the headset when it stops.
+ *    Bluetooth "call" link (SCO). NOVA opens that link only while it records
+ *    your request, and only uses it once the link is really up (otherwise the
+ *    phone's microphone records). Listening for "Hey NOVA" through Bluetooth
+ *    is a separate opt-in (off by default); even then the phone's microphone
+ *    is used while music or video is playing.
  *
  * NOVA never takes the link from a call: nothing is changed while a call or
  * VoIP app is using audio, and NOVA only undoes what it set itself.
@@ -25,13 +25,33 @@ object NovaAudioRoute {
 
     private const val FILE = "nova_wake"
     private const val KEY_HEADSET = "headset_mic"
+    private const val KEY_BT_WAKE = "bt_wake"
 
-    /** "Use headset microphone" (on by default). */
+    /**
+     * "Use headset microphone" (on by default): NOVA records your request
+     * through wired and Bluetooth earphones/headsets.
+     */
     fun headsetEnabled(context: Context): Boolean =
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean(KEY_HEADSET, true)
 
     fun setHeadsetEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(KEY_HEADSET, enabled).apply()
+    }
+
+    /**
+     * "Listen for Hey NOVA through Bluetooth" (OFF by default, 3.8.1).
+     * Keeping a Bluetooth microphone open all the time holds the headset in
+     * call mode, and a connected watch or car kit is also a "Bluetooth
+     * microphone" — listening through it made "Hey NOVA" deaf in 3.8.0. Off:
+     * the phone's own microphone listens for "Hey NOVA"; the request after it
+     * is still recorded through the headset.
+     */
+    fun bluetoothWakeEnabled(context: Context): Boolean =
+        headsetEnabled(context) &&
+            context.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean(KEY_BT_WAKE, false)
+
+    fun setBluetoothWakeEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(KEY_BT_WAKE, enabled).apply()
     }
 
     /** Kind of the best headset microphone connected now: "wired", "bluetooth" or null. */
@@ -140,6 +160,12 @@ object NovaAudioRoute {
                 if (linkUp()) return
                 try { Thread.sleep(40) } catch (e: InterruptedException) { Thread.currentThread().interrupt(); return }
             }
+        }
+
+        /** The Bluetooth link is up (always true for a wired headset). */
+        fun isReady(): Boolean {
+            val d = device ?: return false
+            return !isBluetooth(d) || linkUp()
         }
 
         @Suppress("DEPRECATION")

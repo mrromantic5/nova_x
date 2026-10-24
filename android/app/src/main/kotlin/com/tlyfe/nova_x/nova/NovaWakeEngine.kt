@@ -27,7 +27,12 @@ class NovaWakeEngine private constructor(private val spotter: KeywordSpotter) {
         // noise): see NOVA_IMPLEMENTATION_REPORT.md. "Hi NOVA" and "OK NOVA"
         // are deliberately not wake phrases: NOVA's own greeting starts with
         // "Hi, NOVA…" and "OK NOVA" fired on "open NOVA X".
-        private const val THRESHOLD = 0.20f
+        // 3.8.1: 0.15 (was 0.20). Measured with NovaMicGain in front, on
+        // 192 "Hey/Hello/Okay NOVA" clips in a simulated echoey room:
+        // normal distance 72.9 → 77.6 %, 24 dB quieter (across a room)
+        // 55.2 → 62.0 %, 32 dB quieter 36.5 → 42.2 %, with no more false
+        // wake-ups (7/448 "nova"-like sentences, 0/180 everyday sentences).
+        private const val THRESHOLD = 0.15f
         private const val BOOST = 2.5f
         private const val ACTIVE_PATHS = 8
 

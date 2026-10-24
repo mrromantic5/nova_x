@@ -34,17 +34,6 @@ class NovaRecorder(
 ) {
     private companion object {
         const val METER_INTERVAL_MS = 60L
-        const val CALIBRATION_MS = 240L
-
-        // 3.8.0: NOVA answers sooner — the command ends 1 s after the user
-        // stops talking (was 1.5 s), still long enough for a short pause.
-        const val SILENCE_AFTER_SPEECH_MS = 1000L
-        const val NO_SPEECH_TIMEOUT_MS = 7000L
-
-        // 3.8.0: a voice from across the room peaks far below the old 1200
-        // (≈ −29 dBFS) and was treated as "no speech". The threshold now
-        // starts at ≈ −37 dBFS and rises with the room's background noise.
-        const val MIN_SPEECH_AMPLITUDE = 450
         const val MAX_AMPLITUDE = 32767.0
     }
 
@@ -57,14 +46,13 @@ class NovaRecorder(
     private var recorder: MediaRecorder? = null
     private var file: File? = null
     private var startedAt = 0L
-    private var lastLoudAt = 0L
-    private var heardSpeech = false
     private var peak = 0
-    private var ambientSum = 0L
-    private var ambientSamples = 0
-    private var speechThreshold = MIN_SPEECH_AMPLITUDE
+    private var endpointer = NovaEndpointer()
     private var autoStop = true
     private var maxDurationMs = 30_000L
+
+    /** A start is waiting for the Bluetooth link (startAsync). */
+    private var starting = false
 
     /** Result of a recording that ended automatically, waiting for stop(). */
     private var finishedResult: Map<String, Any?>? = null
@@ -85,45 +73,67 @@ class NovaRecorder(
             val now = SystemClock.elapsedRealtime()
             val elapsed = now - startedAt
             peak = max(peak, amp)
-
-            if (elapsed < CALIBRATION_MS) {
-                ambientSum += amp
-                ambientSamples++
-            } else if (ambientSamples > 0) {
-                val ambient = (ambientSum / ambientSamples).toInt()
-                speechThreshold = max(MIN_SPEECH_AMPLITUDE, (ambient * 2.5).toInt())
-                ambientSamples = 0
-            }
-
-            if (amp >= speechThreshold && elapsed >= CALIBRATION_MS) {
-                heardSpeech = true
-                lastLoudAt = now
-            }
+            val decision = endpointer.feed(elapsed, amp)
 
             emit("onAmplitude", min(1.0, sqrt(amp / MAX_AMPLITUDE)))
 
             when {
                 elapsed >= maxDurationMs -> { autoFinish("max_duration"); return }
-                autoStop && heardSpeech && now - lastLoudAt >= SILENCE_AFTER_SPEECH_MS -> {
-                    autoFinish("silence"); return
-                }
-                autoStop && !heardSpeech && elapsed >= NO_SPEECH_TIMEOUT_MS -> {
-                    autoFinish("no_speech"); return
-                }
+                autoStop && decision == NovaEndpointer.Decision.SILENCE -> { autoFinish("silence"); return }
+                autoStop && decision == NovaEndpointer.Decision.NO_SPEECH -> { autoFinish("no_speech"); return }
             }
             handler.postDelayed(this, METER_INTERVAL_MS)
         }
     }
 
     /** True while the microphone is open. */
-    fun isActive(): Boolean = recorder != null
+    fun isActive(): Boolean = recorder != null || starting
 
     /** This recorder's name in NovaMicArbiter ("Hey NOVA" pauses while it records). */
     private val holdKey = "recorder@" + System.identityHashCode(this)
 
-    fun start(maxSeconds: Int, autoStopOnSilence: Boolean): Map<String, Any?> {
-        if (recorder != null) return mapOf("status" to "busy")
+    private var startCancelled = false
+
+    /**
+     * Starts recording and calls [done] with the status. With a Bluetooth
+     * headset (and "Use headset microphone" on) NOVA first waits up to 1.5 s,
+     * off the UI thread, for the headset's microphone link; if it doesn't come
+     * up, the phone's microphone records instead — never silence.
+     */
+    fun startAsync(maxSeconds: Int, autoStopOnSilence: Boolean, done: (Map<String, Any?>) -> Unit) {
+        if (recorder != null || starting) {
+            done(mapOf("status" to "busy"))
+            return
+        }
         discardFinished()
+        val headset = NovaAudioRoute.headsetInput(context)
+        val useBluetooth = headset != null && NovaAudioRoute.isBluetooth(headset) &&
+            NovaAudioRoute.headsetEnabled(context) && !NovaAudioRoute.inCall(context)
+        if (!useBluetooth) {
+            done(start(maxSeconds, autoStopOnSilence, route.begin(allowBluetooth = false)))
+            return
+        }
+        starting = true
+        startCancelled = false
+        Thread({
+            route.begin(allowBluetooth = true, waitMs = 1500L)
+            val ready = route.isReady()
+            val device = if (ready) route.device else null
+            if (!ready) route.end()
+            handler.post {
+                starting = false
+                if (startCancelled) {
+                    route.end()
+                    done(mapOf("status" to "idle"))
+                } else {
+                    done(start(maxSeconds, autoStopOnSilence, device))
+                }
+            }
+        }, "nova-mic-route").start()
+    }
+
+    private fun start(maxSeconds: Int, autoStopOnSilence: Boolean, headset: android.media.AudioDeviceInfo?): Map<String, Any?> {
+        if (recorder != null) return mapOf("status" to "busy")
         // Let the "Hey NOVA" listener release the microphone first.
         NovaMicArbiter.hold(holdKey, true)
         NovaMicArbiter.awaitWakeMicReleased()
@@ -135,12 +145,12 @@ class NovaRecorder(
             @Suppress("DEPRECATION")
             MediaRecorder()
         }
-        // Earphones / headset plugged in or connected: listen through their
-        // microphone (the Bluetooth link comes up within a moment; the
-        // recording follows it automatically).
-        val headset = route.begin(allowBluetooth = NovaAudioRoute.headsetEnabled(context), waitMs = 0L)
         try {
-            r.setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
+            // 3.8.1: the regular MIC source. Android requires VOICE_RECOGNITION
+            // to be unprocessed (no automatic gain), so a voice from across
+            // the room was recorded very quietly; MIC applies the phone's own
+            // gain control, which the speech recogniser handles much better.
+            r.setAudioSource(MediaRecorder.AudioSource.MIC)
             r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
             r.setAudioChannels(1)
@@ -165,12 +175,8 @@ class NovaRecorder(
         recorder = r
         file = out
         startedAt = SystemClock.elapsedRealtime()
-        lastLoudAt = startedAt
-        heardSpeech = false
         peak = 0
-        ambientSum = 0L
-        ambientSamples = 0
-        speechThreshold = MIN_SPEECH_AMPLITUDE
+        endpointer = NovaEndpointer()
         autoStop = autoStopOnSilence
         maxDurationMs = maxSeconds.coerceIn(3, 60) * 1000L
         handler.postDelayed(meter, METER_INTERVAL_MS)
@@ -189,6 +195,7 @@ class NovaRecorder(
 
     /** Stops and deletes the recording; nothing is returned or uploaded. */
     fun cancel() {
+        if (starting) startCancelled = true
         handler.removeCallbacks(meter)
         val r = recorder
         recorder = null
@@ -237,7 +244,7 @@ class NovaRecorder(
             "status" to "ok",
             "path" to out.absolutePath,
             "durationMs" to durationMs,
-            "hadSpeech" to heardSpeech,
+            "hadSpeech" to endpointer.heardSpeech,
             "peak" to peak / MAX_AMPLITUDE,
         )
     }

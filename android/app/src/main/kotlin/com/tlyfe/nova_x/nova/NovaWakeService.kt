@@ -61,18 +61,19 @@ object NovaWakePrefs {
  * word detector (NovaWakeEngine). Nothing is recorded, stored or uploaded
  * while it listens; audio is analysed in memory, 0.1 s at a time.
  *
- * 3.8.0:
+ * 3.8.1:
  *  - Far voices: the audio passes through NovaMicGain (automatic gain with a
  *    noise ceiling) before the detector.
- *  - Headsets: wired/USB headset microphones are used when plugged in;
- *    Bluetooth headset microphones too (NovaAudioRoute), except while music
- *    or video plays (that would drop the headset to call quality).
+ *  - Headsets: wired/USB headset microphones are used when plugged in.
+ *    Bluetooth microphones only when the user turns on "Listen for Hey NOVA
+ *    through Bluetooth" (off by default) and the link is really up — a
+ *    connected watch or car kit must never take "Hey NOVA"'s ears.
  *  - Staying on: the service is sticky. When Android closes NOVA X and may
- *    not give the microphone back (Android 14+ background rules), when the
- *    phone restarts, or when Android silences the microphone, NOVA shows a
- *    one-tap "turn Hey NOVA back on" notification instead of failing quietly.
- *  - Faster replies: the floating window's Flutter engine is started in
- *    advance (NovaAssistEngine), so NOVA opens almost instantly.
+ *    not give the microphone back (Android 14+ background rules) or the phone
+ *    restarts, NOVA shows a one-tap "turn Hey NOVA back on" notification.
+ *    A service the user started is never stopped by NOVA itself.
+ *  - 3.8.0's pre-started window engine is removed: keeping a second Flutter
+ *    engine in memory made phones close NOVA X while locked.
  *
  * Android rules this follows:
  *  - It can only be started while NOVA X is on screen or from a notification
@@ -103,7 +104,9 @@ class NovaWakeService : Service() {
         private const val CHANNEL_LISTEN = "nova_wake"
         private const val CHANNEL_ALERT = "nova_wake_alert"
         private const val CHUNK = 1600 // 0.1 s at 16 kHz
-        private const val AFTER_DETECTION_PAUSE_MS = 8000L
+        // 3.8.1: 2.5 s (was 8 s) — if the window didn't appear, saying "Hey NOVA"
+        // again works almost at once (the open window pauses listening itself).
+        private const val AFTER_DETECTION_PAUSE_MS = 2500L
 
         /** How often the microphone choice (headset plugged in, music…) is re-checked. */
         private const val ROUTE_CHECK_MS = 2000L
@@ -141,13 +144,20 @@ class NovaWakeService : Service() {
             if (NovaWakePrefs.isEnabled(context) && !running) start(context)
         }
 
-        /** Returns false when Android refused the start. Call while NOVA X is visible. */
-        fun start(context: Context): Boolean {
+        /** Set when Android (not the user) started the service, e.g. after a restart. */
+        private const val EXTRA_BACKGROUND = "com.tlyfe.nova_x.nova.WAKE_BACKGROUND"
+
+        /**
+         * Returns false when Android refused the start. Call while NOVA X is
+         * visible ([fromBackground] = true only for the restart/boot receiver).
+         */
+        fun start(context: Context, fromBackground: Boolean = false): Boolean {
             if (!micGranted(context)) {
                 lastError = "microphone"
                 return false
             }
             val intent = Intent(context, NovaWakeService::class.java).setAction(ACTION_START)
+                .putExtra(EXTRA_BACKGROUND, fromBackground)
             cancelResumeNotice(context)
             return try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -231,6 +241,7 @@ class NovaWakeService : Service() {
     private var cpuLock: PowerManager.WakeLock? = null
     private var cpuLockRenewedAt = 0L
     private val route by lazy { NovaAudioRoute.Session(this) }
+    @Volatile private var startedInBackground = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -269,8 +280,9 @@ class NovaWakeService : Service() {
             return START_NOT_STICKY
         }
         cancelResumeNotice(this)
-        // NOVA's window opens much faster when its engine is already running.
-        main.post { NovaAssistEngine.prewarm(applicationContext) }
+        // Started by Android (restart after closing NOVA X, phone restart) —
+        // only then may NOVA stop itself if Android keeps the mic silenced.
+        startedInBackground = intent == null || intent.getBooleanExtra(EXTRA_BACKGROUND, false)
         if (worker == null) {
             active = true
             running = true
@@ -292,7 +304,6 @@ class NovaWakeService : Service() {
         NovaMicArbiter.wakeMicOpen = false
         setCpuAwake(false)
         try { route.end() } catch (ignored: Exception) { }
-        if (!NovaWakePrefs.isEnabled(this)) NovaAssistEngine.releaseIfIdle()
         super.onDestroy()
     }
 
@@ -372,7 +383,8 @@ class NovaWakeService : Service() {
                     if (pcm[i].toInt() != 0) { allZero = false; break }
                 }
                 silentChunks = if (allZero) silentChunks + 1 else 0
-                if (silentChunks >= SILENT_CHUNKS_LIMIT && !NovaMicArbiter.appVisible()) {
+                if (startedInBackground && routeKey.isEmpty() &&
+                    silentChunks >= SILENT_CHUNKS_LIMIT && !NovaMicArbiter.appVisible()) {
                     if (othersRecording(record)) {
                         // Another app is recording (voice note, call): Android
                         // gives NOVA silence until it finishes — just wait.
@@ -434,7 +446,7 @@ class NovaWakeService : Service() {
     private fun wantedRouteKey(): String {
         val d = NovaAudioRoute.headsetInput(this) ?: return ""
         if (!NovaAudioRoute.isBluetooth(d)) return "wired:${d.id}"
-        if (!NovaAudioRoute.headsetEnabled(this)) return ""
+        if (!NovaAudioRoute.bluetoothWakeEnabled(this)) return ""
         if (NovaAudioRoute.musicActive(this) || NovaAudioRoute.inCall(this)) return ""
         return "bt:${d.id}"
     }
@@ -495,7 +507,12 @@ class NovaWakeService : Service() {
         val device = when {
             routeKey.isEmpty() -> { route.end(); null }
             // Waits up to 1.5 s for the Bluetooth link (on this worker thread).
-            routeKey.startsWith("bt:") -> route.begin(allowBluetooth = true, waitMs = 1500L)
+            routeKey.startsWith("bt:") -> {
+                // Only if the Bluetooth link really comes up; otherwise the
+                // phone's own microphone keeps listening.
+                route.begin(allowBluetooth = true, waitMs = 1500L)
+                if (route.isReady()) route.device else { route.end(); null }
+            }
             else -> route.begin(allowBluetooth = false)
         }
         return try {

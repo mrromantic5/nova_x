@@ -64,10 +64,8 @@ class NovaBridge(
         const val REQ_PERMISSION = 9310
 
         /**
-         * The bridge currently serving each engine. NOVA's floating window can
-         * reuse a warm engine (NovaAssistEngine): when a new window attaches
-         * before the old one is destroyed, the old bridge must not unregister
-         * the new one's channel handlers.
+         * The bridge currently serving each engine: an old bridge being
+         * disposed late must never unregister a newer one's channel handlers.
          */
         private val owners = java.util.WeakHashMap<BinaryMessenger, NovaBridge>()
 
@@ -110,8 +108,7 @@ class NovaBridge(
 
     /**
      * Why this window opened: "assist" (gesture) or "wake" ("Hey NOVA").
-     * Handed to Dart once; null when there is nothing to start (main app,
-     * or a warm engine that is told through onAssistInvoked instead).
+     * Handed to Dart once; null when there is nothing to start (main app).
      */
     var launchReason: String? = null
 
@@ -135,7 +132,9 @@ class NovaBridge(
                     } else {
                         val maxSeconds = call.argument<Int>("maxSeconds") ?: 30
                         val autoStop = call.argument<Boolean>("autoStop") ?: true
-                        result.success(recorder.start(maxSeconds, autoStop))
+                        recorder.startAsync(maxSeconds, autoStop) { status ->
+                            if (!disposed) result.success(status)
+                        }
                     }
                 }
                 "stopRecording" -> result.success(recorder.stop())
@@ -264,6 +263,10 @@ class NovaBridge(
                     ))
                 }
                 "installId" -> result.success(installId(activity.applicationContext))
+                "setBluetoothWake" -> {
+                    NovaAudioRoute.setBluetoothWakeEnabled(activity.applicationContext, call.argument<Boolean>("enabled") ?: false)
+                    result.success(true)
+                }
                 "setHeadsetMic" -> {
                     NovaAudioRoute.setHeadsetEnabled(activity.applicationContext, call.argument<Boolean>("enabled") ?: true)
                     result.success(true)
@@ -465,6 +468,7 @@ class NovaBridge(
                 "screenOff" to NovaWakePrefs.screenOffEnabled(ctx),
                 "batteryUnrestricted" to batteryUnrestricted(ctx),
                 "headsetMic" to NovaAudioRoute.headsetEnabled(ctx),
+                "btWake" to NovaAudioRoute.bluetoothWakeEnabled(ctx),
                 "headset" to NovaAudioRoute.headsetKind(ctx),
             )
             main.post { if (!disposed) result.success(status) }

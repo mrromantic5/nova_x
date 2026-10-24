@@ -17,6 +17,6 @@ class NovaBootReceiver : BroadcastReceiver() {
         if (action != Intent.ACTION_BOOT_COMPLETED && action != Intent.ACTION_MY_PACKAGE_REPLACED) return
         val app = context.applicationContext
         if (!NovaWakePrefs.isEnabled(app)) return
-        if (!NovaWakeService.start(app)) NovaWakeService.showResumeNotice(app)
+        if (!NovaWakeService.start(app, fromBackground = true)) NovaWakeService.showResumeNotice(app)
     }
 }

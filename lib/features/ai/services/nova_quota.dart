@@ -1,15 +1,15 @@
 // lib/features/ai/services/nova_quota.dart
 //
-// Fair-use limits for NOVA AI (3.8.0), shared by the NOVA AI chat and the
-// "Hey NOVA" assistant panel (both Flutter engines read the same stored
-// counts):
+// Fair-use limits for NOVA AI, shared by the NOVA AI chat and the "Hey NOVA"
+// assistant panel (both Flutter engines read the same stored counts):
 //
 //   • photo uploads (photos, screenshots, "Read my screen", "Ask NOVA about
-//     this page"): 5 per 2 hours
-//   • image generation (/image …): 5 per 2 hours
+//     this page"): 5 per 24 hours
+//   • image generation (/image …): 5 per 24 hours
 //
-// The 2-hour window starts with the first use; when it ends the count goes
-// back to 0. The window maths is pure (NovaQuotaWindow) and unit-tested.
+// 3.8.1: the limits reset 24 hours after the first use (3.8.0: 2 hours).
+// The window starts with the first use; when it ends the count goes back to
+// 0. The window maths is pure (NovaQuotaWindow) and unit-tested.
 
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -18,7 +18,7 @@ enum NovaQuotaKind { upload, image }
 class NovaQuotaRules {
   NovaQuotaRules._();
   static const int limit = 5;
-  static const Duration window = Duration(hours: 2);
+  static const Duration window = Duration(hours: 24);
 }
 
 /// What the user has left right now.

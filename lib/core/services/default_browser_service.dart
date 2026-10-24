@@ -10,11 +10,12 @@
 //   • initialFeature() / onOpenFeature — a NOVA X page the floating NOVA
 //                     assistant asked to open (same one-shot hand-over).
 //
-// Also awards the one-time 5-point reward when NOVA X becomes the default.
+// Also keeps the tracked default-browser reward (50 coins while NOVA X stays
+// the default browser) in step with the phone — RewardDeviceSync.
 
 import 'dart:async';
 import 'package:flutter/services.dart';
-import 'rewards_service.dart';
+import 'reward_device_sync.dart';
 
 class DefaultBrowserService {
   static const _ch = MethodChannel('com.tlyfe.nova_x/default_browser');
@@ -84,10 +85,8 @@ class DefaultBrowserService {
     } catch (_) {
       granted = false;
     }
-    if (granted) {
-      // Server enforces once-ever; safe to call repeatedly.
-      RewardsService.earn(RewardTaskKey.defaultBrowser);
-    }
+    // Tracked reward (50 coins while NOVA X stays the default browser).
+    RewardDeviceSync.sync(force: true);
     return granted;
   }
 
@@ -122,12 +121,12 @@ class DefaultBrowserService {
     }
   }
 
-  /// If NOVA X is now the default browser, claim the one-time 5-point reward.
-  static Future<bool> checkAndAward() async {
+  /// Returns whether NOVA X is the default browser, and keeps the tracked
+  /// rewards in step with the phone (credited while the setting is on, taken
+  /// back when it's turned off — see RewardDeviceSync).
+  static Future<bool> checkAndAward({bool force = false}) async {
     final def = await isDefault();
-    if (def) {
-      RewardsService.earn(RewardTaskKey.defaultBrowser);
-    }
+    RewardDeviceSync.sync(force: force);
     return def;
   }
 }

@@ -47,6 +47,7 @@ class RewardTaskKey {
   static const openNotifications= 'open_notifications';
   static const visualSearch     = 'visual_search';
   static const defaultBrowser   = 'default_browser';
+  static const novaSetup        = 'nova_setup';
   static const dailyStreak      = 'daily_streak';
 }
 
@@ -229,6 +230,14 @@ class RewardsService {
 
   static Future<RewardResult> trackNotif(int advertId) async =>
       _post('track-notif', {'advert_id': advertId});
+
+  /// Tracked rewards (3.8.0): the phone's current settings; the server
+  /// credits or takes back coins and returns `events`.
+  static Future<RewardResult> syncDevice(Map<String, bool> states, String? device) async =>
+      _post('sync-device', {
+        'states': states,
+        if (device != null && RegExp(r'^[a-f0-9]{64}$').hasMatch(device)) 'device': device,
+      });
 
   static Future<RewardResult> _post(String action, [Map<String, dynamic>? body]) async {
     try {

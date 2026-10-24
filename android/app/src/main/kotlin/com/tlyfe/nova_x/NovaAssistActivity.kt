@@ -6,7 +6,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.WindowManager
-import com.tlyfe.nova_x.nova.NovaAssistEngine
 import com.tlyfe.nova_x.nova.NovaBridge
 import com.tlyfe.nova_x.nova.NovaMicArbiter
 import com.tlyfe.nova_x.nova.NovaScreenCapture
@@ -53,13 +52,6 @@ class NovaAssistActivity : FlutterFragmentActivity() {
     /** True while the photo picker / camera (opened from the panel) is in front. */
     private var keepOpen = false
 
-    /** This window uses the warm engine (NovaAssistEngine). */
-    private var warm = false
-    private var attachedToWarm = false
-
-    /** Warm engine: the reason to tell Dart once the window is in front. */
-    private var pendingWarmReason: String? = null
-
     override fun onCreate(savedInstanceState: Bundle?) {
         lastStartedAt = SystemClock.elapsedRealtime()
         clearWakeAlert()
@@ -67,31 +59,14 @@ class NovaAssistActivity : FlutterFragmentActivity() {
         // Ask the Flutter embedding for a transparent surface
         // (FlutterActivityLaunchConfigs.EXTRA_BACKGROUND_MODE).
         intent.putExtra("background_mode", "transparent")
-        // Use the engine "Hey NOVA" keeps ready, when there is one: the window
-        // then opens without starting Flutter again
-        // (EXTRA_CACHED_ENGINE_ID / EXTRA_DESTROY_ENGINE_WITH_ACTIVITY).
-        warm = NovaAssistEngine.isWarm()
-        if (warm) {
-            intent.putExtra("cached_engine_id", NovaAssistEngine.ID)
-            intent.putExtra("destroy_engine_with_activity", false)
-        } else {
-            intent.removeExtra("cached_engine_id")
-        }
         super.onCreate(savedInstanceState)
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        val reason = reasonOf(intent)
         bridge = NovaBridge(this, flutterEngine.dartExecutor.binaryMessenger) { closeAssistant() }.also {
-            // A fresh engine asks for the reason when its Dart code starts; a
-            // warm one is already running and is told in onResume.
-            if (warm) pendingWarmReason = reason else it.launchReason = reason
+            it.launchReason = reasonOf(intent)
             it.keepOpenHandler = { open -> keepOpen = open }
-        }
-        if (warm && !attachedToWarm) {
-            attachedToWarm = true
-            NovaAssistEngine.windowAttached()
         }
     }
 
@@ -154,10 +129,6 @@ class NovaAssistActivity : FlutterFragmentActivity() {
         super.onResume()
         // Back from the photo picker / camera / screen-capture dialog.
         keepOpen = false
-        pendingWarmReason?.let {
-            pendingWarmReason = null
-            bridge?.emitAssistInvoked(it)
-        }
     }
 
     @Suppress("DEPRECATION")
@@ -179,12 +150,6 @@ class NovaAssistActivity : FlutterFragmentActivity() {
         bridge?.dispose()
         bridge = null
         super.onDestroy()
-        if (attachedToWarm) {
-            attachedToWarm = false
-            NovaAssistEngine.windowDetached()
-            // "Hey NOVA" was turned off meanwhile: free the engine.
-            if (!NovaWakePrefs.isEnabled(this)) NovaAssistEngine.releaseIfIdle()
-        }
     }
 
     private fun closeAssistant() {

@@ -22,7 +22,15 @@ class NovaWakeStatus {
     this.error,
     this.screenOff = false,
     this.batteryUnrestricted = false,
+    this.headsetMic = true,
+    this.headset,
   });
+
+  /// "Use headset microphone" (on by default): wired and Bluetooth headsets.
+  final bool headsetMic;
+
+  /// Headset with a microphone connected now: "wired", "bluetooth" or null.
+  final String? headset;
 
   /// The detector can run on this phone (model present, CPU supported).
   final bool supported;
@@ -64,6 +72,8 @@ class NovaWakeStatus {
         error: m['error'] is String ? m['error'] as String : null,
         screenOff: m['screenOff'] == true,
         batteryUnrestricted: m['batteryUnrestricted'] == true,
+        headsetMic: m['headsetMic'] != false,
+        headset: m['headset'] is String ? m['headset'] as String : null,
       );
 }
 
@@ -131,6 +141,16 @@ class NovaWake {
     }
   }
 
+  /// "Use headset microphone": NOVA hears you through wired and Bluetooth
+  /// headsets / earbuds (Bluetooth: not while music is playing, for "Hey NOVA").
+  static Future<void> setHeadsetMic(bool enabled) async {
+    try {
+      await _channel.invokeMethod<bool>('setHeadsetMic', {'enabled': enabled});
+    } catch (_) {
+      // best effort (no channel in tests)
+    }
+  }
+
   /// Android's battery-optimisation settings (to choose "Unrestricted").
   static Future<void> openBatterySettings() async {
     try {
@@ -149,11 +169,14 @@ class NovaWake {
   }
 
   /// Why the floating NOVA window opened: 'wake' ("Hey NOVA") or 'assist'.
-  static Future<String> launchReason() async {
+  /// Why the floating window opened ("assist" or "wake"), handed over once.
+  /// Null when there is nothing to start: the engine was started in advance
+  /// with no window yet (NOVA is then told through onAssistInvoked).
+  static Future<String?> launchReason() async {
     try {
-      return await _channel.invokeMethod<String>('launchReason') ?? 'assist';
+      return await _channel.invokeMethod<String>('launchReason');
     } catch (_) {
-      return 'assist';
+      return null;
     }
   }
 }

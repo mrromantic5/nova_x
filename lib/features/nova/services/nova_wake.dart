@@ -23,8 +23,12 @@ class NovaWakeStatus {
     this.screenOff = false,
     this.batteryUnrestricted = false,
     this.headsetMic = true,
+    this.btWake = false,
     this.headset,
   });
+
+  /// "Listen for Hey NOVA through Bluetooth" (off by default).
+  final bool btWake;
 
   /// "Use headset microphone" (on by default): wired and Bluetooth headsets.
   final bool headsetMic;
@@ -73,6 +77,7 @@ class NovaWakeStatus {
         screenOff: m['screenOff'] == true,
         batteryUnrestricted: m['batteryUnrestricted'] == true,
         headsetMic: m['headsetMic'] != false,
+        btWake: m['btWake'] == true,
         headset: m['headset'] is String ? m['headset'] as String : null,
       );
 }
@@ -146,6 +151,17 @@ class NovaWake {
   static Future<void> setHeadsetMic(bool enabled) async {
     try {
       await _channel.invokeMethod<bool>('setHeadsetMic', {'enabled': enabled});
+    } catch (_) {
+      // best effort (no channel in tests)
+    }
+  }
+
+  /// "Listen for Hey NOVA through Bluetooth": keeps the Bluetooth headset's
+  /// microphone open while listening (headset in call mode; not while music
+  /// plays). Off by default.
+  static Future<void> setBluetoothWake(bool enabled) async {
+    try {
+      await _channel.invokeMethod<bool>('setBluetoothWake', {'enabled': enabled});
     } catch (_) {
       // best effort (no channel in tests)
     }

@@ -37,6 +37,7 @@ import 'package:nova_x/features/ai/widgets/ai_flag_sheet.dart';
 import 'package:nova_x/features/ai/widgets/nova_chat_drawer.dart';
 import 'package:nova_x/features/ai/widgets/nova_image_generating.dart';
 import 'package:nova_x/features/ai/widgets/nova_limit_sheet.dart';
+import 'package:nova_x/features/ai/widgets/nova_opening_card.dart';
 import 'package:nova_x/features/ai/widgets/nova_markdown_view.dart';
 import 'package:nova_x/features/browser/screens/browser_view.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
@@ -237,7 +238,8 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
       if (id == 'welcome' || id == 'cleared' || content.trim().isEmpty) continue;
       if (role != 'user' && role != 'assistant') continue;
       if (m['error'] == 'true') continue;
-      if (content.startsWith('[LOADING_VIDEO]') || content.startsWith('[GENERATING_IMAGE]')) continue;
+      if (content.startsWith('[LOADING_VIDEO]') || content.startsWith('[GENERATING_IMAGE]') ||
+          content.startsWith('[OPENING]')) continue;
       out.add({'id': id, 'role': role, 'content': content});
     }
     return out;
@@ -471,7 +473,8 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
       if (role != 'user' && role != 'assistant') continue;
       if (m['error'] == 'true') continue;
       if (content.startsWith('[IMAGE]') || content.startsWith('[VIDEO]') ||
-          content.startsWith('[LOADING_VIDEO]') || content.startsWith('[GENERATING_IMAGE]')) {
+          content.startsWith('[LOADING_VIDEO]') || content.startsWith('[GENERATING_IMAGE]') ||
+          content.startsWith('[OPENING]')) {
         continue;
       }
       final lower = content.toLowerCase();
@@ -527,7 +530,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
     _persist();
     _scrollEnd();
 
-    // Image generation: 5 per 2 hours, a "creating" card while it works,
+    // Image generation: 5 per 24 hours, a "creating" card while it works,
     // and the result kept on the phone (shown and saved from that file).
     if (t.toLowerCase().startsWith('/image ')) {
       final prompt =
@@ -593,6 +596,9 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
 
   // ── NOVA commands in the chat ──────────────────────────────────────────────
 
+  /// How long the in-chat "Opening …" card shows before the page opens.
+  static const Duration _openingTime = Duration(milliseconds: 1500);
+
   /// Runs [t] as a NOVA command when it is one. Returns false to let NOVA AI
   /// answer instead.
   Future<bool> _runCommand(String t) async {
@@ -606,9 +612,11 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
 
     final chatId = _chatId;
     final openToken = _openToken;
+    // Pages open straight away: the "Opening …" animation is shown here in
+    // the conversation, not as an extra screen.
     final executor = NovaExecutor(
       native: _native,
-      host: NovaInAppHost(Navigator.of(context), () {}),
+      host: NovaInAppHost(Navigator.of(context), () {}, animate: false),
     );
     final said = <String>[];
     var choices = const <NovaChoice>[];
@@ -619,24 +627,27 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
         said.add("You're already in NOVA AI — ask me anything.");
         continue;
       }
-      // A NOVA X page: say so first, then NOVA's "Opening …" transition.
+      // A NOVA X page: an "Opening …" card animates in the chat, then the
+      // page opens; the card then becomes a short "Opened …" note.
       if (page != null && actions.length == 1) {
-        final text = page == 'home'
-            ? 'Sure — taking you home.'
-            : 'Sure — opening ${NovaFeatures.label(page)}…';
+        final label = NovaFeatures.label(page);
+        final cardId = _newId();
         setState(() {
-          _msgs.add({'id': _newId(), 'role': 'assistant', 'content': text});
+          _msgs.add({'id': cardId, 'role': 'assistant', 'content': '[OPENING]$page'});
           _loading = false;
         });
-        _persist();
         _scrollEnd();
-        await Future<void>.delayed(const Duration(milliseconds: 550));
+        await Future<void>.delayed(_openingTime);
         if (!mounted || chatId != _chatId || openToken != _openToken) return true;
         final opened = await executor.execute(a);
-        if (!opened.ok && mounted) {
-          setState(() => _msgs.add({'id': _newId(), 'role': 'assistant', 'content': opened.message}));
-          _persist();
-        }
+        if (!mounted) return true;
+        _updateMsg(
+          cardId,
+          opened.ok
+              ? (page == 'home' ? 'Done — you\'re on the home page.' : 'Opened **$label** ✓')
+              : opened.message,
+        );
+        _persist();
         return true;
       }
       var r = await executor.execute(a);
@@ -838,7 +849,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
       _snack('These photos are too large together. Remove one and try again.');
       return;
     }
-    // Fair use: count the photos now (5 every 2 hours, chat + NOVA panel).
+    // Fair use: count the photos now (5 every 24 hours, chat + NOVA panel).
     final blocked = await NovaQuota.tryUse(NovaQuotaKind.upload, _pending.length);
     if (!mounted) return;
     if (blocked != null) {
@@ -1225,6 +1236,14 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
 
     if (id == 'welcome') return _buildWelcome();
     if (isUser && NovaMediaStore.hasPhotos(content)) return _buildPhotoMessage(content);
+    if (content.startsWith('[OPENING]')) {
+      final page = content.replaceFirst('[OPENING]', '');
+      return NovaOpeningCard(
+        label: NovaFeatures.label(page),
+        icon: NovaFeatures.icon(page),
+        duration: _openingTime,
+      );
+    }
     if (content.startsWith('[GENERATING_IMAGE]')) {
       return NovaImageGenerating(prompt: content.replaceFirst('[GENERATING_IMAGE]', ''));
     }
@@ -1732,7 +1751,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
       _snack('You can add up to ${NovaMediaStore.maxPhotos} photos to one message.');
       return;
     }
-    // Fair use: 5 photo uploads every 2 hours (shared with the NOVA panel).
+    // Fair use: 5 photo uploads every 24 hours (shared with the NOVA panel).
     final quota = await NovaQuota.status(NovaQuotaKind.upload);
     if (!mounted) return;
     if (quota.exhausted) {

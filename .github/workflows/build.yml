@@ -51,6 +51,10 @@ jobs:
             lib/features/auth \
             lib/core/services/api_service.dart \
             lib/core/services/default_browser_service.dart \
+            lib/core/services/reward_device_sync.dart \
+            lib/core/services/rewards_service.dart \
+            lib/core/widgets/nova_toast.dart \
+            lib/features/rewards \
             test/nova \
             test/auth
 

@@ -1,6 +1,6 @@
 // test/nova/nova_quota_test.dart
 //
-// 3.8.0: fair-use limits (5 photo uploads / 5 images every 2 hours), the
+// Fair-use limits (5 photo uploads / 5 images every 24 hours), the
 // tracked-reward setup checklist, and the NOVA X page labels.
 
 import 'package:flutter_test/flutter_test.dart';
@@ -10,6 +10,7 @@ import 'package:nova_x/features/nova/nova_features.dart';
 
 void main() {
   const h = 3600 * 1000;
+  const day = 24 * h;
   final t0 = DateTime(2026, 10, 24, 9).millisecondsSinceEpoch;
 
   group('NovaQuotaWindow', () {
@@ -32,11 +33,13 @@ void main() {
       expect(NovaQuotaWindow.use(a.$1, a.$2, t0 + 1000, 2), (5, t0));
     });
 
-    test('the count resets 2 hours after the first use', () {
-      expect(NovaQuotaWindow.current(5, t0, t0 + 2 * h - 1), (5, t0));
-      expect(NovaQuotaWindow.current(5, t0, t0 + 2 * h), (0, 0));
-      expect(NovaQuotaWindow.use(5, t0, t0 + 2 * h + 5, 1), (1, t0 + 2 * h + 5));
-      expect(NovaQuotaWindow.resetAt(5, t0), DateTime.fromMillisecondsSinceEpoch(t0 + 2 * h));
+    test('the count resets 24 hours after the first use', () {
+      expect(NovaQuotaRules.window, const Duration(hours: 24));
+      expect(NovaQuotaWindow.current(5, t0, t0 + 2 * h), (5, t0)); // not after 2 hours any more
+      expect(NovaQuotaWindow.current(5, t0, t0 + day - 1), (5, t0));
+      expect(NovaQuotaWindow.current(5, t0, t0 + day), (0, 0));
+      expect(NovaQuotaWindow.use(5, t0, t0 + day + 5, 1), (1, t0 + day + 5));
+      expect(NovaQuotaWindow.resetAt(5, t0), DateTime.fromMillisecondsSinceEpoch(t0 + day));
       expect(NovaQuotaWindow.resetAt(0, 0), isNull);
     });
 
@@ -52,12 +55,12 @@ void main() {
       final st = NovaQuotaStatus(
         kind: NovaQuotaKind.image,
         used: 5,
-        resetAt: DateTime.fromMillisecondsSinceEpoch(t0 + 2 * h),
+        resetAt: DateTime.fromMillisecondsSinceEpoch(t0 + day),
       );
       expect(st.exhausted, isTrue);
       expect(st.remaining, 0);
-      expect(st.leftAt(DateTime.fromMillisecondsSinceEpoch(t0 + h)), const Duration(hours: 1));
-      expect(st.leftAt(DateTime.fromMillisecondsSinceEpoch(t0 + 3 * h)), Duration.zero);
+      expect(st.leftAt(DateTime.fromMillisecondsSinceEpoch(t0 + h)), const Duration(hours: 23));
+      expect(st.leftAt(DateTime.fromMillisecondsSinceEpoch(t0 + day + h)), Duration.zero);
     });
   });
 

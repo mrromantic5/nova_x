@@ -57,10 +57,14 @@ Future<void> showNovaAssistant(
 
 /// Navigation for NOVA running inside NOVA X.
 class NovaInAppHost implements NovaHost {
-  NovaInAppHost(this._navigator, this._closeSheet);
+  NovaInAppHost(this._navigator, this._closeSheet, {this.animate = true});
 
   final NavigatorState _navigator;
   final VoidCallback _closeSheet;
+
+  /// Show NOVA's "Opening …" screen before a page. The NOVA AI chat turns
+  /// this off: it shows the opening animation in the conversation instead.
+  final bool animate;
   bool _closed = false;
 
   @override
@@ -80,7 +84,7 @@ class NovaInAppHost implements NovaHost {
   Future<bool> openFeature(String featureId) async {
     if (!NovaFeatures.isValid(featureId)) return false;
     close();
-    return NovaFeatures.open(_navigator, featureId);
+    return NovaFeatures.open(_navigator, featureId, animate: animate);
   }
 
   @override
@@ -161,7 +165,7 @@ class _NovaSheetState extends State<_NovaSheet> {
       messenger?.showSnackBar(const SnackBar(content: Text('You can add up to 3 photos.')));
       return;
     }
-    // Fair use: 5 photo uploads every 2 hours (shared with NOVA AI chat).
+    // Fair use: 5 photo uploads every 24 hours (shared with NOVA AI chat).
     final room = await novaPhotoRoom(context, 3 - _controller.pendingImages.length);
     if (room <= 0 || !mounted) return;
     final camera = await showModalBottomSheet<bool>(

@@ -168,7 +168,7 @@ class _NovaOverlayScreenState extends State<NovaOverlayScreen> {
       _say('You can add up to 3 photos.');
       return;
     }
-    // Fair use: 5 photo uploads every 2 hours (shared with NOVA AI chat).
+    // Fair use: 5 photo uploads every 24 hours (shared with NOVA AI chat).
     final room = await novaPhotoRoom(context, 3 - _controller.pendingImages.length);
     if (room <= 0 || !mounted) return;
     final camera = await showModalBottomSheet<bool>(

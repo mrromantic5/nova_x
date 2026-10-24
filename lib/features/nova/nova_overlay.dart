@@ -20,6 +20,7 @@ import 'package:flutter/material.dart';
 import '../../core/database/local_db.dart';
 import '../../core/theme/app_theme.dart';
 import '../ai/services/nova_media_store.dart';
+import '../ai/widgets/nova_limit_sheet.dart';
 import 'controller/nova_controller.dart';
 import 'models/nova_models.dart';
 import 'services/nova_api.dart';
@@ -127,14 +128,23 @@ class _NovaOverlayScreenState extends State<NovaOverlayScreen> {
     });
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final reason = await NovaWake.launchReason();
-      if (mounted) _activate(reason);
+      if (mounted && reason != null) _activate(reason);
     });
   }
+
+  /// Each opening of the window (also on a reused, warm engine).
+  int _openings = 0;
 
   /// After "Hey NOVA" the user usually keeps talking ("Hey NOVA, open
   /// YouTube"), so NOVA listens straight away instead of greeting first.
   void _activate(String reason) {
+    if (mounted) setState(() => _openings++); // replays the slide-in
     _controller.activate(greet: reason == 'wake' ? false : null);
+    // The engine may have been started long ago: pick up settings changed
+    // in the app since (voice, speak replies, greeting).
+    NovaPrefs.load().then((s) {
+      if (mounted) _controller.updateSettings(s);
+    }).catchError((Object _) {});
   }
 
   void _close() {
@@ -154,11 +164,13 @@ class _NovaOverlayScreenState extends State<NovaOverlayScreen> {
       return;
     }
     if (!mounted) return;
-    final room = 3 - _controller.pendingImages.length;
-    if (room <= 0) {
+    if (3 - _controller.pendingImages.length <= 0) {
       _say('You can add up to 3 photos.');
       return;
     }
+    // Fair use: 5 photo uploads every 2 hours (shared with NOVA AI chat).
+    final room = await novaPhotoRoom(context, 3 - _controller.pendingImages.length);
+    if (room <= 0 || !mounted) return;
     final camera = await showModalBottomSheet<bool>(
       context: context,
       backgroundColor: AppTheme.bgCard,
@@ -183,7 +195,7 @@ class _NovaOverlayScreenState extends State<NovaOverlayScreen> {
     await NovaScreen.keepAssistantOpen(true);
     try {
       final photos = await NovaMediaStore.pick(camera: camera, max: room);
-      if (photos.isNotEmpty) {
+      if (photos.isNotEmpty && mounted && await novaCountPhotos(context, photos.length)) {
         _controller.addImages([for (final p in photos) NovaVisionImage(p.bytes, p.mime)]);
       }
     } on NovaPhotoException catch (e) {
@@ -197,6 +209,8 @@ class _NovaOverlayScreenState extends State<NovaOverlayScreen> {
   /// "Read my screen": Android's consent dialog, then one screenshot.
   Future<void> _readScreen() async {
     if (_busyMedia) return;
+    // Fair use: a screenshot counts as one photo upload.
+    if (await novaPhotoRoom(context, 1) <= 0 || !mounted) return;
     _busyMedia = true;
     _controller.cancel();
     try {
@@ -219,7 +233,9 @@ class _NovaOverlayScreenState extends State<NovaOverlayScreen> {
       setState(() => _hidden = false);
       final bytes = shot.bytes;
       if (shot.status == NovaScreenStatus.ok && bytes != null) {
-        _controller.addImages([NovaVisionImage(bytes, 'image/jpeg')], fromScreen: true);
+        if (await novaCountPhotos(context, 1)) {
+          _controller.addImages([NovaVisionImage(bytes, 'image/jpeg')], fromScreen: true);
+        }
       } else {
         _say(NovaScreen.messageFor(shot.status));
       }
@@ -266,6 +282,7 @@ class _NovaOverlayScreenState extends State<NovaOverlayScreen> {
             Align(
               alignment: Alignment.bottomCenter,
               child: TweenAnimationBuilder<double>(
+                key: ValueKey(_openings),
                 tween: Tween(begin: 0, end: 1),
                 duration: const Duration(milliseconds: 320),
                 curve: Curves.easeOutCubic,

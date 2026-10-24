@@ -27,6 +27,7 @@ import '../rewards/screens/rewards_screen.dart';
 import '../settings/screens/settings_screen.dart';
 import '../shield/screens/nova_shield_screen.dart';
 import 'screens/nova_settings_screen.dart';
+import 'widgets/nova_launch_screen.dart';
 
 class NovaFeatures {
   NovaFeatures._();
@@ -81,8 +82,65 @@ class NovaFeatures {
         _ => null,
       };
 
+  /// Display name used by the launch transition ("Opening NOVA Music").
+  static String label(String id) => switch (id) {
+        'bookmarks' => 'Bookmarks',
+        'history' => 'History',
+        'downloads' => 'Downloads',
+        'shield' => 'NOVA Shield',
+        'nova_map' => 'NOVA Map',
+        'rewards' => 'Rewards',
+        'nova_ai' => 'NOVA AI',
+        'nova_settings' => 'NOVA Assistant settings',
+        'browser_settings' => 'Settings',
+        'nova_music' => 'NOVA Music',
+        'nova_network' => 'NOVA Network',
+        'cyber' => 'NOVA Cyber',
+        'dev_tools' => 'Dev Tools',
+        'code_editor' => 'X Coder',
+        'business' => 'NOVA Business',
+        'customize' => 'Customize',
+        'profile' => 'your profile',
+        'offline_pages' => 'Offline Pages',
+        'notifications' => 'Notifications',
+        'premium' => 'NOVA Premium',
+        'incognito' => 'an incognito tab',
+        'new_tab' => 'a new tab',
+        'home' => 'Home',
+        _ => 'NOVA X',
+      };
+
+  static IconData icon(String id) => switch (id) {
+        'bookmarks' => Icons.bookmark_rounded,
+        'history' => Icons.history_rounded,
+        'downloads' => Icons.download_rounded,
+        'shield' => Icons.shield_rounded,
+        'nova_map' => Icons.map_rounded,
+        'rewards' => Icons.monetization_on_rounded,
+        'nova_ai' => Icons.auto_awesome_rounded,
+        'nova_settings' => Icons.tune_rounded,
+        'browser_settings' => Icons.settings_rounded,
+        'nova_music' => Icons.library_music_rounded,
+        'nova_network' => Icons.speed_rounded,
+        'cyber' => Icons.security_rounded,
+        'dev_tools' => Icons.developer_mode_rounded,
+        'code_editor' => Icons.code_rounded,
+        'business' => Icons.storefront_rounded,
+        'customize' => Icons.palette_rounded,
+        'profile' => Icons.person_rounded,
+        'offline_pages' => Icons.offline_pin_rounded,
+        'notifications' => Icons.notifications_rounded,
+        'premium' => Icons.workspace_premium_rounded,
+        'incognito' => Icons.person_off_rounded,
+        'new_tab' => Icons.add_box_rounded,
+        _ => Icons.home_rounded,
+      };
+
   /// Opens [id] on [navigator]. Returns false for an unknown id.
-  static bool open(NavigatorState navigator, String id) {
+  ///
+  /// With [animate] (the default) NOVA shows its short "Opening …"
+  /// transition first, so the user sees NOVA doing it.
+  static bool open(NavigatorState navigator, String id, {bool animate = true}) {
     if (!isValid(id)) return false;
     if (id == 'home') {
       navigator.popUntil((route) => route.isFirst);
@@ -90,9 +148,22 @@ class NovaFeatures {
     }
     final screen = screenFor(id);
     if (screen == null) return false;
-    navigator.push(MaterialPageRoute(
-      builder: (_) => screen,
-      settings: RouteSettings(name: 'nova/$id'),
+    final name = 'nova/$id';
+    if (!animate) {
+      navigator.push(MaterialPageRoute(builder: (_) => screen, settings: RouteSettings(name: name)));
+      return true;
+    }
+    navigator.push(PageRouteBuilder<void>(
+      settings: const RouteSettings(name: 'nova/launch'),
+      transitionDuration: const Duration(milliseconds: 260),
+      reverseTransitionDuration: const Duration(milliseconds: 200),
+      pageBuilder: (_, __, ___) => NovaLaunchScreen(
+        label: label(id),
+        icon: icon(id),
+        routeName: name,
+        builder: (_) => screen,
+      ),
+      transitionsBuilder: (_, a, __, child) => FadeTransition(opacity: a, child: child),
     ));
     return true;
   }

@@ -11,6 +11,7 @@ import '../../core/database/local_db.dart';
 import '../../core/theme/app_theme.dart';
 import '../ai/screens/ai_assistant_screen.dart';
 import '../ai/services/nova_media_store.dart';
+import '../ai/widgets/nova_limit_sheet.dart';
 import '../browser/screens/browser_view.dart';
 import 'controller/nova_controller.dart';
 import 'nova_features.dart';
@@ -155,12 +156,14 @@ class _NovaSheetState extends State<_NovaSheet> {
 
   /// 📷 — a photo or screenshot from the camera or gallery for NOVA to read.
   Future<void> _addPhoto() async {
-    final room = 3 - _controller.pendingImages.length;
     final messenger = ScaffoldMessenger.maybeOf(context);
-    if (room <= 0) {
+    if (3 - _controller.pendingImages.length <= 0) {
       messenger?.showSnackBar(const SnackBar(content: Text('You can add up to 3 photos.')));
       return;
     }
+    // Fair use: 5 photo uploads every 2 hours (shared with NOVA AI chat).
+    final room = await novaPhotoRoom(context, 3 - _controller.pendingImages.length);
+    if (room <= 0 || !mounted) return;
     final camera = await showModalBottomSheet<bool>(
       context: context,
       backgroundColor: AppTheme.bgCard,
@@ -183,7 +186,7 @@ class _NovaSheetState extends State<_NovaSheet> {
     if (camera == null || !mounted) return;
     try {
       final photos = await NovaMediaStore.pick(camera: camera, max: room);
-      if (photos.isNotEmpty && mounted) {
+      if (photos.isNotEmpty && mounted && await novaCountPhotos(context, photos.length)) {
         _controller.addImages([for (final p in photos) NovaVisionImage(p.bytes, p.mime)]);
       }
     } on NovaPhotoException catch (e) {

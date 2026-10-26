@@ -12,6 +12,10 @@ import 'package:nova_x/core/services/subscription_service.dart';
 import 'package:nova_x/core/services/rewards_entitlements.dart';
 import 'package:nova_x/features/premium/screens/subscription_screen.dart';
 import '../../auth/screens/auth_screen.dart';
+import 'package:nova_x/core/services/app_info.dart';
+import '../../support/screens/support_screen.dart';
+import '../../support/screens/issue_report_screen.dart';
+import '../widgets/delete_account_sheet.dart';
 
 const List<String> _bizCategories = [
   'Technology', 'Food & Drinks', 'Fashion', 'Health & Beauty',
@@ -148,42 +152,9 @@ class _ProfileScreenState extends State<ProfileScreen>
 
   // ── Delete account (permanent) ─────────────────────────────────
   Future<void> _deleteAccount() async {
-    // Step 1 — explain exactly what will be removed.
-    final first = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: AppTheme.bgCard,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Row(children: [
-          const Icon(Icons.warning_amber_rounded, color: AppTheme.danger, size: 22),
-          const SizedBox(width: 8),
-          Expanded(child: Text('Delete account?', style: GoogleFonts.spaceGrotesk(
-              color: AppTheme.textPrimary, fontWeight: FontWeight.bold))),
-        ]),
-        content: Text(
-          'This permanently deletes your NOVA X account and everything tied to it:\n\n'
-          '•  Profile and login\n'
-          '•  Your business listings\n'
-          '•  Bookmarks synced to your account\n'
-          '•  Reward points, streaks and unlocks\n'
-          '•  Premium subscription record\n\n'
-          'This cannot be undone.',
-          style: GoogleFonts.inter(color: AppTheme.textSecondary, height: 1.5),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text('Cancel', style: GoogleFonts.inter(color: AppTheme.textHint)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text('Continue', style: GoogleFonts.inter(
-                color: AppTheme.danger, fontWeight: FontWeight.w600)),
-          ),
-        ],
-      ),
-    );
-    if (first != true) return;
+    // Step 1 — why are you leaving? (reasons + message, 3.9.0)
+    final reason = await showDeleteAccountSheet(context);
+    if (reason == null || !mounted) return;
 
     // Step 2 — final, deliberate confirmation.
     final second = await showDialog<bool>(
@@ -224,7 +195,13 @@ class _ProfileScreenState extends State<ProfileScreen>
       );
     }
 
-    final deleted = await ApiService.deleteAccount();
+    await AppInfo.load();
+    final deleted = await ApiService.deleteAccount(
+      reasonCode: reason.code,
+      reasonText: reason.text,
+      appVersion: AppInfo.version,
+      device: AppInfo.installId,
+    );
 
     // Dismiss the progress dialog.
     if (mounted) Navigator.of(context, rootNavigator: true).pop();
@@ -447,6 +424,15 @@ class _ProfileScreenState extends State<ProfileScreen>
                 decoration: TextDecoration.underline,
                 decorationColor: AppTheme.accentCyan)),
       ),
+      const SizedBox(height: 30),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: Text('HELP & SUPPORT', style: GoogleFonts.inter(
+            color: AppTheme.textHint, fontSize: 10,
+            fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+      ),
+      const SizedBox(height: 12),
+      _buildSupportSection(inset: 0),
     ]),
   );
 
@@ -490,10 +476,78 @@ class _ProfileScreenState extends State<ProfileScreen>
       const SizedBox(height: 28),
       _section('NOVA X BUSINESS', _buildBizSection()),
       const SizedBox(height: 28),
+      _section('HELP & SUPPORT', _buildSupportSection()),
+      const SizedBox(height: 28),
       _section('DANGER ZONE', _buildDangerZone()),
       const SizedBox(height: 40),
     ]);
   }
+
+  // ── Help & support (3.9.0): above "Delete account" ─────────────
+  Widget _buildSupportSection({double inset = 20}) => Column(children: [
+    _supportButton(
+      icon: Icons.support_agent_rounded,
+      color: AppTheme.accentCyan,
+      title: 'Contact Support',
+      subtitle: 'Help center, instant answers from NOVA and support tickets',
+      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SupportScreen())),
+      inset: inset,
+    ),
+    const SizedBox(height: 10),
+    _supportButton(
+      icon: Icons.bug_report_rounded,
+      color: AppTheme.warning,
+      title: 'Report an Issue',
+      subtitle: 'Something not working? Tell the NOVA X team',
+      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const IssueReportScreen())),
+      inset: inset,
+    ),
+  ]);
+
+  Widget _supportButton({
+    required IconData icon,
+    required Color color,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+    double inset = 20,
+  }) =>
+      Padding(
+        padding: EdgeInsets.symmetric(horizontal: inset),
+        child: Material(
+          color: AppTheme.bgCard,
+          borderRadius: BorderRadius.circular(16),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: onTap,
+            child: Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: color.withOpacity(0.28)),
+              ),
+              child: Row(children: [
+                Container(
+                  width: 42, height: 42,
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.13),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(icon, color: color, size: 22),
+                ),
+                const SizedBox(width: 13),
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(title, style: GoogleFonts.spaceGrotesk(
+                      color: AppTheme.textPrimary, fontSize: 14.5, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 2),
+                  Text(subtitle, style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11.5)),
+                ])),
+                Icon(Icons.chevron_right_rounded, color: color),
+              ]),
+            ),
+          ),
+        ),
+      );
 
   // ── Danger zone: permanent account deletion ────────────────────
   Widget _buildDangerZone() => Padding(

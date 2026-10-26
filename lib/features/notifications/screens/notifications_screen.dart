@@ -8,6 +8,9 @@ import 'package:nova_x/core/theme/app_theme.dart';
 import 'package:nova_x/features/browser/screens/browser_view.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
+import 'package:nova_x/core/services/api_service.dart';
+import 'package:nova_x/core/services/platform_api.dart';
+import 'package:nova_x/features/support/screens/support_screen.dart';
 
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
@@ -16,6 +19,8 @@ class NotificationsScreen extends StatefulWidget {
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
   List<AdvertModel> _adverts = [];
+  // 3.9.0: personal notifications (replies from NOVA Support).
+  List<InboxItem> _inbox = [];
   bool _loading = true;
   bool _hasError = false;
 
@@ -27,14 +32,117 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   Future<void> _load() async {
     setState(() { _loading = true; _hasError = false; });
+    final inbox = _loadInbox();
     try {
       final ads = await AdvertService.fetchAdverts();
       if (!mounted) return;
       await AdvertService.markAllRead(ads); // clears badge
+      await inbox;
+      if (!mounted) return;
       setState(() { _adverts = ads; _loading = false; });
     } catch (_) {
-      setState(() { _loading = false; _hasError = true; });
+      await inbox;
+      if (!mounted) return;
+      setState(() { _loading = false; _hasError = _inbox.isEmpty; });
     }
+  }
+
+  Future<void> _loadInbox() async {
+    try {
+      if (!await ApiService.isLoggedIn()) return;
+      final r = await PlatformApi.inbox();
+      if (!mounted) return;
+      _inbox = r.items;
+      // Seen here → the badge clears (items stay highlighted this time).
+      if (r.unread > 0) PlatformApi.markInboxRead();
+    } catch (_) {}
+  }
+
+  Future<void> _openInboxItem(InboxItem n) async {
+    await Navigator.push(context, MaterialPageRoute(
+        builder: (_) => SupportScreen(initialTab: 1, openTicketId: n.isSupport ? n.refId : null)));
+    if (!mounted) return;
+    setState(() {
+      _inbox = [
+        for (final x in _inbox)
+          x.id == n.id
+              ? InboxItem(id: x.id, kind: x.kind, title: x.title, body: x.body, isRead: true,
+                  refId: x.refId, createdAt: x.createdAt)
+              : x,
+      ];
+    });
+  }
+
+  Widget _inboxCard(InboxItem n) {
+    final unread = !n.isRead;
+    final closed = n.kind == 'support_closed';
+    final color = closed ? AppTheme.textHint : AppTheme.accentCyan;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+      child: Material(
+        color: AppTheme.bgCard,
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: () => _openInboxItem(n),
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: unread ? color.withOpacity(0.6) : AppTheme.divider),
+            ),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Container(
+                width: 42, height: 42,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: closed ? null : AppTheme.primaryGradient,
+                  color: closed ? AppTheme.bgElevated : null,
+                ),
+                child: Icon(closed ? Icons.lock_outline_rounded : Icons.support_agent_rounded,
+                    color: Colors.white, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(children: [
+                    Expanded(
+                      child: Text(n.title, maxLines: 1, overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.inter(color: Colors.white, fontSize: 13.5,
+                              fontWeight: unread ? FontWeight.w800 : FontWeight.w600)),
+                    ),
+                    if (unread)
+                      Container(
+                        margin: const EdgeInsets.only(left: 6),
+                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                        decoration: BoxDecoration(color: AppTheme.danger, borderRadius: BorderRadius.circular(10)),
+                        child: Text('NEW', style: GoogleFonts.inter(
+                            color: Colors.white, fontSize: 9.5, fontWeight: FontWeight.w800)),
+                      ),
+                  ]),
+                  if (n.body.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(n.body, maxLines: 3, overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 12.5, height: 1.4)),
+                  ],
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    Icon(Icons.forum_outlined, color: color, size: 13),
+                    const SizedBox(width: 5),
+                    Text(closed ? 'View conversation' : 'Open reply in Support inbox',
+                        style: GoogleFonts.inter(color: color, fontSize: 11, fontWeight: FontWeight.w700)),
+                    const Spacer(),
+                    if (n.createdAt != null)
+                      Text(_formatDateLabel(n.createdAt!),
+                          style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 10.5)),
+                  ]),
+                ]),
+              ),
+            ]),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _openUrl(String? url) async {
@@ -60,6 +168,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   // ── Group adverts by date ─────────────────────────────────────────────────
   List<Object> get _grouped {
     final items = <Object>[];
+    if (_inbox.isNotEmpty) {
+      items.add('FOR YOU · NOVA SUPPORT');
+      items.addAll(_inbox.take(20));
+    }
     String? lastDate;
     for (final ad in _adverts) {
       final dateLabel = _formatDateLabel(ad.createdAt);
@@ -121,7 +233,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         title: Text('Notifications', style: GoogleFonts.spaceGrotesk(
             color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800)),
         actions: [
-          if (_adverts.isNotEmpty)
+          if (_adverts.isNotEmpty || _inbox.isNotEmpty)
             IconButton(
               icon: const Icon(Icons.refresh_rounded,
                   color: AppTheme.textHint, size: 20),
@@ -138,7 +250,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               color: AppTheme.accentCyan))
           : _hasError
               ? _errorState()
-              : _adverts.isEmpty
+              : _adverts.isEmpty && _inbox.isEmpty
                   ? _emptyState()
                   : RefreshIndicator(
                       onRefresh: _load,
@@ -150,6 +262,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                         itemBuilder: (_, i) {
                           final item = _grouped[i];
                           if (item is String) return _dateHeader(item);
+                          if (item is InboxItem) return _inboxCard(item);
                           return _advertCard(item as AdvertModel);
                         },
                       ),

@@ -106,7 +106,7 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                               color: Colors.white, fontSize: 32,
                               fontWeight: FontWeight.w900, height: 1.1)),
                       const SizedBox(height: 8),
-                      Text('Effective: October 20, 2026  •  v2.7',
+                      Text('Effective: October 26, 2026  •  v2.8',
                           style: GoogleFonts.inter(
                               color: AppTheme.textHint, fontSize: 12)),
                     ],
@@ -224,12 +224,23 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                     'you upload.'),
                 _sub('Device Information',
                     'We collect your device\'s push notification token (FCM) to '
-                    'deliver notifications. We do not collect device IDs, IMEI, '
-                    'or hardware fingerprints.'),
+                    'deliver notifications, and your phone\'s time zone (for example '
+                    '"Asia/Dubai") so greetings arrive at your local time and NOVA AI '
+                    'knows your local date and time. We do not collect IMEI, phone '
+                    'numbers or hardware fingerprints.'),
                 _sub('Usage Analytics',
-                    'We collect anonymized usage statistics such as feature usage '
-                    'frequency to improve the app experience. This data cannot be '
-                    'used to identify you personally.'),
+                    'NOVA X records which features and pages are used (for example '
+                    '"NOVA Music opened", "NOVA AI answered"), the app version, time '
+                    'zone and an anonymous install identifier (a one-way hash, never '
+                    'your Android ID). We use it to count active users and improve the '
+                    'app. It never includes what you type or say, web addresses, page '
+                    'contents, photos, contacts or location. Usage events are kept for '
+                    'up to 120 days.'),
+                _sub('Support Tickets and Issue Reports',
+                    'When you contact support or report an issue, we store your message, '
+                    'the topic, your account name and email and, if you choose, the app '
+                    'version and time zone, so the NOVA X team can answer and fix '
+                    'problems. Replies are stored with the ticket.'),
               ]),
 
               _section('2.  How We Use Your Data',
@@ -404,8 +415,8 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                     'You can update your profile information at any time in '
                     'Settings → Profile.'),
                 _sub('Deletion',
-                    'You can delete your account and all associated data by '
-                    'contacting us. Account deletion is permanent and irreversible.'),
+                    'You can delete your account in the app (Profile → Delete account) '
+                    'or by contacting us. Account deletion is permanent and irreversible.'),
                 _sub('Opt-Out of Communications',
                     'You can opt out of push notifications and marketing emails '
                     'at any time through app settings or by contacting us.'),
@@ -420,8 +431,11 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                     'We retain your data for as long as your account is active or '
                     'as needed to provide the Service.'),
                 _sub('Deleted Accounts',
-                    'After account deletion, we delete your personal data within '
-                    '30 days, except where retention is required by law.'),
+                    'When you delete your account, your account and its data are removed '
+                    'straight away. For security and fraud prevention we keep a short '
+                    'record of the deletion — username, email, the date, the reason you '
+                    'chose and a summary of recent account activity — for up to 12 months, '
+                    'after which it is erased. Payment records are kept as required by law.'),
                 _sub('Local Data',
                     'Data stored on your device (history, bookmarks, saved '
                     'passwords, NOVA AI chats) remains until you clear it or '

@@ -263,6 +263,32 @@ class NovaBridge(
                     ))
                 }
                 "installId" -> result.success(installId(activity.applicationContext))
+                // 3.9.0: the phone's own time zone (IANA id, e.g. "Asia/Dubai") for
+                // greetings at local time and for NOVA AI's date and time.
+                "deviceClock" -> {
+                    val tz = java.util.TimeZone.getDefault()
+                    val now = System.currentTimeMillis()
+                    result.success(mapOf(
+                        "tz" to tz.id,
+                        "offsetMin" to tz.getOffset(now) / 60_000,
+                        "is24h" to android.text.format.DateFormat.is24HourFormat(activity.applicationContext),
+                    ))
+                }
+                // 3.9.0: the installed version, for the "update available" popup.
+                "appVersion" -> {
+                    val ctx = activity.applicationContext
+                    val info = if (Build.VERSION.SDK_INT >= 33) {
+                        ctx.packageManager.getPackageInfo(ctx.packageName, PackageManager.PackageInfoFlags.of(0))
+                    } else {
+                        @Suppress("DEPRECATION")
+                        ctx.packageManager.getPackageInfo(ctx.packageName, 0)
+                    }
+                    val build = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else {
+                        @Suppress("DEPRECATION")
+                        info.versionCode.toLong()
+                    }
+                    result.success(mapOf("version" to (info.versionName ?: ""), "build" to build))
+                }
                 "setBluetoothWake" -> {
                     NovaAudioRoute.setBluetoothWakeEnabled(activity.applicationContext, call.argument<Boolean>("enabled") ?: false)
                     result.success(true)

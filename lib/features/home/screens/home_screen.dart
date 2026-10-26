@@ -50,6 +50,7 @@ import 'package:nova_x/core/services/business_badge_service.dart';
 import 'package:nova_x/features/notifications/screens/notifications_screen.dart';
 import 'package:nova_x/features/devtools/screens/code_editor_screen.dart';
 import 'package:nova_x/core/services/update_service.dart';
+import 'package:nova_x/core/services/platform_api.dart';
 import 'package:nova_x/features/music/screens/nova_music_screen.dart';
 import 'package:nova_x/features/nova/services/nova_wake.dart';
 import 'package:nova_x/features/nova/nova_features.dart';
@@ -700,10 +701,15 @@ class _HomeScreenState extends State<HomeScreen>
   Future<void> _loadNotifBadge() async {
     await AdvertService.init();
     final ads = await AdvertService.fetchAdverts();
+    // 3.9.0: replies from NOVA Support count too.
+    var inboxUnread = 0;
+    try {
+      if (await ApiService.isLoggedIn()) inboxUnread = (await PlatformApi.inbox()).unread;
+    } catch (_) {}
     if (!mounted) return;
     setState(() {
       _adverts    = ads;
-      _notifBadge = AdvertService.getUnreadCount(ads);
+      _notifBadge = AdvertService.getUnreadCount(ads) + inboxUnread;
     });
   }
 

@@ -88,7 +88,7 @@ class _RewardsScreenState extends State<RewardsScreen>
   static const _featureOrder = [
     RewardFeature.customization, RewardFeature.shield, RewardFeature.cyber,
     RewardFeature.devtools, RewardFeature.speeddial, RewardFeature.cookie,
-    RewardFeature.business,
+    RewardFeature.business, RewardFeature.aiBoost,
   ];
 
   // These tasks cannot be claimed by a button — they auto-award only when the
@@ -655,6 +655,15 @@ class _RewardsScreenState extends State<RewardsScreen>
     return out;
   }
 
+  /// One line on what the unlock adds (3.9.0).
+  String? _featDesc(String key) => switch (key) {
+        RewardFeature.shield => 'Fingerprint, WebRTC & referrer protection, DNS choice',
+        RewardFeature.aiBoost => '2× NOVA AI messages, photo uploads & images for 24 h',
+        RewardFeature.cyber => 'Security scanner & privacy tools',
+        RewardFeature.business => 'Keep your business listed in NOVA Business',
+        _ => null,
+      };
+
   IconData _featIcon(String key) {
     switch (key) {
       case RewardFeature.customization: return Icons.palette_rounded;
@@ -664,6 +673,7 @@ class _RewardsScreenState extends State<RewardsScreen>
       case RewardFeature.speeddial:     return Icons.dashboard_customize_rounded;
       case RewardFeature.cookie:        return Icons.cookie_rounded;
       case RewardFeature.business:      return Icons.storefront_rounded;
+      case RewardFeature.aiBoost:       return Icons.bolt_rounded;
       default:                          return Icons.star_rounded;
     }
   }
@@ -702,9 +712,14 @@ class _RewardsScreenState extends State<RewardsScreen>
               Text('${item.cost}',
                   style: GoogleFonts.spaceGrotesk(
                       color: _gold, fontWeight: FontWeight.w700, fontSize: 13)),
-              Text('  ·  ${item.days} days',
+              Text(item.days == 1 ? '  ·  24 hours' : '  ·  ${item.days} days',
                   style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 12)),
             ]),
+            if (_featDesc(key) != null) ...[
+              const SizedBox(height: 3),
+              Text(_featDesc(key)!,
+                  style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 11.5, height: 1.3)),
+            ],
           ]),
         ),
         const SizedBox(width: 8),

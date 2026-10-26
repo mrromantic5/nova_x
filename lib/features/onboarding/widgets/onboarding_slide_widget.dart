@@ -148,6 +148,8 @@ class _OnboardingSlideWidgetState extends State<OnboardingSlideWidget>
           child: Image.asset(
             widget.slide.assetPath!,
             fit: BoxFit.contain,
+            // A slide image that isn't in the app yet never shows as broken.
+            errorBuilder: (_, __, ___) => NovaEmblem(color: widget.slide.accentColor),
           ),
         ),
       ),
@@ -208,4 +210,41 @@ class _OnboardingSlideWidgetState extends State<OnboardingSlideWidget>
       ],
     );
   }
+}
+
+
+/// Built-in NOVA emblem: shown when a slide image is missing (3.9.0).
+class NovaEmblem extends StatelessWidget {
+  const NovaEmblem({super.key, this.color = const Color(0xFF7C4DFF), this.size = 220});
+  final Color color;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => Center(
+        child: SizedBox(
+          width: size,
+          height: size,
+          child: Stack(alignment: Alignment.center, children: [
+            for (final f in const [1.0, 0.78, 0.56])
+              Container(
+                width: size * f,
+                height: size * f,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: color.withOpacity(0.18 + (1 - f) * 0.4), width: 1.5),
+                ),
+              ),
+            Container(
+              width: size * 0.4,
+              height: size * 0.4,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(colors: [const Color(0xFF00D4FF), color]),
+                boxShadow: [BoxShadow(color: color.withOpacity(0.55), blurRadius: 40)],
+              ),
+              child: Icon(Icons.graphic_eq_rounded, color: Colors.white, size: size * 0.2),
+            ),
+          ]),
+        ),
+      );
 }

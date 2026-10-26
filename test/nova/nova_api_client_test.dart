@@ -43,7 +43,8 @@ ResponseBody _json(int status, Object body) => ResponseBody.fromString(
 (NovaApiClient, _FakeAdapter) _client(ResponseBody Function(RequestOptions o, int attempt) r) {
   final adapter = _FakeAdapter(r);
   final dio = Dio(BaseOptions(baseUrl: 'https://nova.test'))..httpClientAdapter = adapter;
-  return (NovaApiClient(dio: dio), adapter);
+  // No daily-limit metering in these transport tests (see platform_39_test.dart).
+  return (NovaApiClient(dio: dio, meter: (_) async {}), adapter);
 }
 
 void main() {

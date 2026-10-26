@@ -1,7 +1,7 @@
 // lib/features/permissions/screens/permission_slides_screen.dart
 //
 // Opera-style full-screen permission slides shown once after first login/signup.
-// Slides: 1) Notifications  2) Microphone  3) Set as Default Browser
+// Slides: 1) Notifications  2) Microphone  3) NOVA digital assistant (3.9.0)  4) Set as Default Browser
 //
 // NO external permission_handler dependency — uses only:
 //   • firebase_messaging for notifications
@@ -19,6 +19,7 @@ import 'package:nova_x/core/database/local_db.dart';
 import 'package:nova_x/core/services/default_browser_service.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
 import 'package:nova_x/features/home/screens/home_screen.dart';
+import '../../onboarding/widgets/onboarding_slide_widget.dart' show NovaEmblem;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Channel (implemented in MainActivity.kt)
@@ -59,6 +60,17 @@ const _slides = [
     primaryLabel: 'Allow microphone',
     accentColor:  Color(0xFF7C3AED),
   ),
+  // 3.9.0 — NOVA digital assistant.
+  // Image: assets/images/perm_nova_assistant.png (500×500 PNG, transparent
+  // background like the other permission images). Until it is added, a
+  // built-in NOVA emblem is shown instead.
+  _PermSlide(
+    imagePath:    'assets/images/perm_nova_assistant.png',
+    title:        'Meet NOVA',
+    body:         'Make NOVA your digital assistant: hold the\nHome button or say “Hey NOVA” to open pages,\nplay music and get answers hands-free.',
+    primaryLabel: 'Set NOVA as assistant',
+    accentColor:  Color(0xFF7C4DFF),
+  ),
   _PermSlide(
     imagePath:    'assets/images/perm_default_browser.png',
     title:        'Always browse safely',
@@ -81,7 +93,8 @@ class PermissionSlidesScreen extends StatefulWidget {
 class _PermissionSlidesScreenState extends State<PermissionSlidesScreen>
     with TickerProviderStateMixin, WidgetsBindingObserver {
 
-  static const _browserSlide = 2;
+  static const _novaSlide = 2;
+  static const _browserSlide = 3;
 
   final PageController _pageCtrl = PageController();
   int  _currentIndex = 0;
@@ -192,6 +205,7 @@ class _PermissionSlidesScreenState extends State<PermissionSlidesScreen>
       switch (index) {
         case 0: await _requestNotifications(); break;
         case 1: await _requestMicrophone();    break;
+        case _novaSlide: await _setUpNova();   break;
       }
     } catch (_) {
       // Never block the user — if permission call fails just advance
@@ -224,7 +238,20 @@ class _PermissionSlidesScreenState extends State<PermissionSlidesScreen>
     }
   }
 
-  // Slide 3 — Default browser.
+  // Slide 3 — NOVA digital assistant (3.9.0): opens Android's "Default
+  // digital assistant app" screen. Already NOVA → nothing to do.
+  Future<void> _setUpNova() async {
+    const nova = MethodChannel('com.tlyfe.nova_x/nova');
+    try {
+      final st = await nova.invokeMapMethod<String, dynamic>('assistantStatus');
+      if (st != null && (st['held'] == true || st['supported'] == false)) return;
+      await nova.invokeMethod<bool>('openAssistantSettings');
+    } catch (_) {
+      // Never block the user.
+    }
+  }
+
+  // Slide 4 — Default browser.
   // Android 10+: request() completes only after the user answers the system
   // dialog. If NOVA X became the default we continue automatically; otherwise
   // the user can try again or choose "Maybe later".
@@ -340,6 +367,7 @@ class _SlidePage extends StatelessWidget {
               slide.imagePath,
               fit: BoxFit.contain,
               width: double.infinity,
+              errorBuilder: (_, __, ___) => NovaEmblem(color: slide.accentColor),
             ),
           ),
         ),

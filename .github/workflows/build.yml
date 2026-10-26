@@ -55,6 +55,23 @@ jobs:
             lib/core/services/rewards_service.dart \
             lib/core/widgets/nova_toast.dart \
             lib/features/rewards \
+            lib/features/support \
+            lib/features/profile \
+            lib/features/notifications \
+            lib/features/shield \
+            lib/features/onboarding \
+            lib/features/permissions \
+            lib/features/premium \
+            lib/core/services/platform_api.dart \
+            lib/core/services/analytics_service.dart \
+            lib/core/services/app_info.dart \
+            lib/core/services/device_clock.dart \
+            lib/core/services/update_service.dart \
+            lib/core/services/nova_shield_service.dart \
+            lib/core/services/advert_service.dart \
+            lib/core/services/subscription_service.dart \
+            lib/core/services/rewards_entitlements.dart \
+            lib/core/widgets/update_dialog.dart \
             test/nova \
             test/auth
 

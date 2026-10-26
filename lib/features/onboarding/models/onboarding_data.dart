@@ -59,7 +59,18 @@ const List<OnboardingSlide> kOnboardingSlides = [
     subheadline: 'Ask anything, summarize pages\nand browse hands-free with Nova AI.',
     accentColor: Color(0xFF00D4FF),
   ),
-  // Slide 5 — Checkmark
+  // Slide 5 — NOVA digital assistant (3.9.0).
+  // Image: assets/images/slide_nova_assistant.png (1254×1254 PNG, dark
+  // background like the other slides). Until it is added, a built-in NOVA
+  // emblem is shown instead.
+  OnboardingSlide(
+    heroType:    SlideHeroType.image,
+    assetPath:   'assets/images/slide_nova_assistant.png',
+    headline:    'Say “Hey NOVA”',
+    subheadline: 'Your digital assistant opens pages, plays\nmusic, tests your internet and answers — hands-free.',
+    accentColor: Color(0xFF7C4DFF),
+  ),
+  // Slide 6 — Checkmark
   OnboardingSlide(
     heroType:    SlideHeroType.image,
     assetPath:   'assets/images/slide5_trust.png',

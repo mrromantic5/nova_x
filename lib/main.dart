@@ -17,6 +17,10 @@ import 'package:nova_x/core/services/advert_service.dart';
 import 'features/browser/screens/browser_view.dart';
 import 'features/nova/nova_overlay.dart';
 import 'features/nova/services/nova_prefs.dart';
+import 'features/support/screens/support_screen.dart';
+import 'package:nova_x/core/services/analytics_service.dart';
+import 'package:nova_x/core/services/app_info.dart';
+import 'package:nova_x/core/services/device_clock.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -37,6 +41,7 @@ void main() async {
   await NovaShieldService.init();
   await AdvertService.init();
   await RewardsEntitlements.loadCache();
+  await DeviceClock.load(); // phone time zone (NOVA AI date/time, greetings) — 3.9.0
   await Firebase.initializeApp();
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   NovaToast.navigatorKey = navigatorKey; // app-wide bottom toasts (rewards, limits)
@@ -52,6 +57,7 @@ void main() async {
 Future<void> novaAssistantMain() async {
   WidgetsFlutterBinding.ensureInitialized();
   await LocalDB.initialize(); // search engine preference for web searches
+  await DeviceClock.load(); // NOVA's answers use the phone's date and time
   final settings = await NovaPrefs.load();
   runApp(NovaAssistantApp(settings: settings));
 }
@@ -62,12 +68,33 @@ class NovaXApp extends StatefulWidget {
   State<NovaXApp> createState() => _NovaXAppState();
 }
 
-class _NovaXAppState extends State<NovaXApp> {
+class _NovaXAppState extends State<NovaXApp> with WidgetsBindingObserver {
+  final _analyticsObserver = AnalyticsNavigatorObserver();
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initFCM();
     _initShortcuts();
+    // 3.9.0: usage statistics (no personal content) and the phone's time zone.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      AppInfo.load();
+      AnalyticsService.start();
+      ApiService.syncTimeZone();
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Travelled? Greetings follow the new time zone.
+    if (state == AppLifecycleState.resumed) ApiService.syncTimeZone();
   }
 
   // ── Core fix: poll until navigator is mounted, then navigate ───────────────
@@ -110,6 +137,15 @@ class _NovaXAppState extends State<NovaXApp> {
       case 'adverts':
         nav.push(MaterialPageRoute(
             builder: (_) => const NotificationsScreen()));
+        break;
+
+      case 'support':
+        // 3.9.0: a reply from NOVA Support → that ticket (Inbox).
+        nav.push(MaterialPageRoute(
+            builder: (_) => SupportScreen(
+                  initialTab: 1,
+                  openTicketId: int.tryParse('${data['ticket_id'] ?? ''}'),
+                )));
         break;
 
       case 'url':
@@ -221,6 +257,7 @@ class _NovaXAppState extends State<NovaXApp> {
       title:                     'NOVA X',
       debugShowCheckedModeBanner: false,
       navigatorKey:              navigatorKey,
+      navigatorObservers:        [_analyticsObserver],
       theme: ThemeData(
         useMaterial3:            true,
         scaffoldBackgroundColor: AppTheme.bgDark,

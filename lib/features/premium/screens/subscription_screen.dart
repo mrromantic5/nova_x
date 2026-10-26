@@ -255,14 +255,16 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
       Center(child: Text('Go Premium', style: GoogleFonts.spaceGrotesk(
           color: AppTheme.textPrimary, fontSize: 26, fontWeight: FontWeight.w800))),
       const SizedBox(height: 6),
-      Center(child: Text('Unlock every NOVA X feature — no points, no limits',
+      Center(child: Text('Unlock every NOVA X feature — no points, higher AI limits',
           textAlign: TextAlign.center,
           style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 13.5))),
       const SizedBox(height: 22),
 
       // Benefits
       _benefit('All premium features unlocked instantly'),
-      _benefit('NOVA Shield, Cyber, Map, DevTools & more'),
+      _benefit('NOVA Shield Pro, Cyber, NOVA Map, Dev Tools & more'),
+      _benefit('NOVA AI Max: 300 messages, 30 photo uploads & 20 images a day'),
+      _benefit('AI video generation (3 a day)'),
       _benefit('Save projects & files in the Code Editor'),
       _benefit('Premium badge on your profile'),
       const SizedBox(height: 24),

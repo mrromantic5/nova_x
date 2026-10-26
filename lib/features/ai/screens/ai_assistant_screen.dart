@@ -56,6 +56,9 @@ import 'package:nova_x/features/nova/services/nova_native.dart';
 import 'package:nova_x/features/nova/services/nova_prefs.dart';
 import 'package:nova_x/features/nova/services/nova_voice.dart';
 import 'package:nova_x/features/nova/services/nova_wake.dart';
+import 'package:nova_x/features/premium/screens/subscription_screen.dart';
+import 'package:nova_x/features/rewards/screens/rewards_screen.dart';
+import 'package:nova_x/core/services/analytics_service.dart';
 
 class AiAssistantScreen extends StatefulWidget {
   const AiAssistantScreen({super.key, this.pageCapture});
@@ -139,7 +142,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
       '• Ask me anything — including how to use NOVA X\n'
       '• Tell me what to do: "open NOVA Network", "play me a song", "next song", "test my internet speed"\n'
       '• Type /image [description] to generate an image\n'
-      '• Type /video [description] to generate a video\n'
+      '• Type /video [description] to generate a video (Premium)\n'
       '• Tap \u{1F3A4} to talk, or \u{1F50A} on any reply to hear it\n'
       '• Tap \u{1F5BC}\uFE0F to show me a photo or screenshot — I can read and explain it\n'
       '• Tap \u{1F5E3}️ at the top for the NOVA voice assistant\n'
@@ -551,7 +554,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
           _loading = false;
         });
         _scrollEnd();
-        showNovaLimitSheet(context, blocked);
+        showNovaLimitSheet(context, blocked, onUpgrade: () => _openUpgrade(blocked));
         return;
       }
       final genId = _newId();
@@ -568,10 +571,30 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
       return;
     }
 
-    // Video generation (unchanged)
+    // Video generation — Premium only (3 per 24 hours), 3.9.0.
     if (t.toLowerCase().startsWith('/video ')) {
       final prompt =
           t.replaceFirst(RegExp(r'^/video\s+', caseSensitive: false), '');
+      final blocked = await NovaQuota.tryUse(NovaQuotaKind.video);
+      if (!mounted) return;
+      if (blocked != null) {
+        setState(() {
+          _msgs.add({
+            'id':      _newId(),
+            'role':    'assistant',
+            'content': blocked.limit == 0
+                ? 'Video generation is part of NOVA X Premium. Upgrade in Profile → Premium to create '
+                    'up to ${NovaQuotaRules.limitFor(NovaQuotaKind.video, NovaTier.premium)} short videos a day.'
+                : "You've created ${blocked.used} of ${blocked.limit} videos in the last "
+                    '${NovaQuotaRules.window.inHours} hours. Please try again later.',
+            'error':   'true',
+          });
+          _loading = false;
+        });
+        _scrollEnd();
+        showNovaLimitSheet(context, blocked, onUpgrade: () => _openUpgrade(blocked));
+        return;
+      }
       final loadId = _newId();
       if (mounted) setState(() {
         _msgs.add({
@@ -853,7 +876,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
     final blocked = await NovaQuota.tryUse(NovaQuotaKind.upload, _pending.length);
     if (!mounted) return;
     if (blocked != null) {
-      await showNovaLimitSheet(context, blocked);
+      await showNovaLimitSheet(context, blocked, onUpgrade: () => _openUpgrade(blocked));
       return;
     }
     RewardsService.earn(RewardTaskKey.useAi);
@@ -964,6 +987,13 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
         setState(() => _loading = false);
         return;
       }
+      final quota = e.quota;
+      if (quota != null) {
+        // Daily message limit (3.9.0): explain it with the countdown sheet.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) showNovaLimitSheet(context, quota, onUpgrade: () => _openUpgrade(quota));
+        });
+      }
       setState(() {
         _msgs.add({
           'id':      _newId(),
@@ -991,6 +1021,15 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
     _scrollEnd();
   }
 
+  /// "Get more" in the limit sheet: AI Boost lives in Rewards; Premium-only
+  /// limits (and AI Boost users) go to the Premium page.
+  void _openUpgrade(NovaQuotaStatus q) {
+    if (!mounted) return;
+    final premium = q.limit == 0 || q.plan == NovaTier.boost;
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => premium ? const SubscriptionScreen() : const RewardsScreen()));
+  }
+
   /// Creates the image, keeps it on the phone (nova_media) and replaces the
   /// "creating" card with it. Failures give the use back.
   Future<void> _generateImage(String prompt, String genId) async {
@@ -1015,6 +1054,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
       } catch (_) {
         ref = null; // phone storage full: still shown from the web address
       }
+      AnalyticsService.log('image_generated', feature: 'nova_ai');
       if (_updateMsg(genId, ref == null ? '[IMAGE]$url' : '[IMAGE]$url\n$ref')) _persist();
       _scrollEnd();
     } catch (_) {
@@ -1031,8 +1071,10 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
       final url = res.data?['result']?['url'] as String? ??
                   res.data?['url']            as String?;
       if (url == null || url.isEmpty) throw Exception('No video URL');
+      AnalyticsService.log('video_generated', feature: 'nova_ai');
       if (_updateMsg(loadId, '[VIDEO]$url')) _persist();
     } catch (_) {
+      await NovaQuota.refund(NovaQuotaKind.video);
       _updateMsg(
         loadId,
         '⚠️ Video generation failed. Please try again later.',
@@ -1755,7 +1797,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
     final quota = await NovaQuota.status(NovaQuotaKind.upload);
     if (!mounted) return;
     if (quota.exhausted) {
-      await showNovaLimitSheet(context, quota);
+      await showNovaLimitSheet(context, quota, onUpgrade: () => _openUpgrade(quota));
       return;
     }
     final allowed = quota.remaining - _pending.length;

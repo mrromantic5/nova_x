@@ -42,14 +42,24 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
     setState(() {}); _scoreCtrl.forward(from: 0);
   }
 
+  /// 3.9.0: NOVA Shield is free; the Pro layers unlock with coins or Premium.
+  bool get _pro => RewardsEntitlements.isUnlocked(RewardFeature.shield);
+
+  Future<void> _unlockPro() async {
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (ctx) => FeatureLockScreen(
+        featureKey: RewardFeature.shield,
+        onUnlocked: () => Navigator.of(ctx).maybePop(),
+      ),
+    ));
+    if (mounted) {
+      setState(() {});
+      _scoreCtrl.forward(from: 0);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (!RewardsEntitlements.isUnlocked(RewardFeature.shield)) {
-      return FeatureLockScreen(
-        featureKey: RewardFeature.shield,
-        onUnlocked: () => setState(() {}),
-      );
-    }
     final score    = NovaShieldService.protectionScore;
     final level    = NovaShieldService.protectionLevel;
     final enabled  = NovaShieldService.isEnabled;
@@ -258,8 +268,13 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
               ),
               const SizedBox(height: 24),
 
+              if (!_pro) ...[
+                _proBanner(),
+                const SizedBox(height: 24),
+              ],
+
               // ── DNS Provider ───────────────────────────────────────────
-              _sectionLabel('DNS PROVIDER'),
+              _sectionLabel(_pro ? 'DNS PROVIDER' : 'DNS PROVIDER  ·  CHOICE IS PRO'),
               const SizedBox(height: 10),
               ...NovaShieldService.providers.entries.map((e) =>
                   _dnsProviderTile(e.key, e.value)),
@@ -287,6 +302,7 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
                   'Prevents websites from discovering your real IP via WebRTC',
                   AppTheme.accentPurple, NovaShieldService.webrtcBlocking,
                   (v) async { await NovaShieldService.setWebrtcBlocking(v); setState(() {}); },
+                  pro: true,
                 ),
                 _divider(),
                 _layerTile(
@@ -294,6 +310,7 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
                   'Adds random noise to canvas, audio & screen to defeat fingerprinting',
                   AppTheme.warning, NovaShieldService.fingerprintProtection,
                   (v) async { await NovaShieldService.setFingerprintProtection(v); setState(() {}); },
+                  pro: true,
                 ),
                 _divider(),
                 _layerTile(
@@ -301,6 +318,7 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
                   'Hides which pages you came from — prevents cross-site tracking',
                   AppTheme.accentCyan, NovaShieldService.referrerSpoofing,
                   (v) async { await NovaShieldService.setReferrerSpoofing(v); setState(() {}); },
+                  pro: true,
                 ),
               ]),
               const SizedBox(height: 24),
@@ -340,8 +358,13 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
   // ── DNS provider tile ──────────────────────────────────────────────────────
   Widget _dnsProviderTile(DnsProvider provider, DnsProviderInfo info) {
     final selected = NovaShieldService.activeProvider == provider;
+    final locked = !_pro && provider != DnsProvider.cloudflareMalware;
     return GestureDetector(
       onTap: () async {
+        if (locked) {
+          await _unlockPro();
+          return;
+        }
         await NovaShieldService.setProvider(provider);
         setState(() {}); _scoreCtrl.forward(from: 0);
       },
@@ -382,7 +405,9 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
           ])),
           if (selected)
             const Icon(Icons.check_circle_rounded,
-                color: AppTheme.accentCyan, size: 20),
+                color: AppTheme.accentCyan, size: 20)
+          else if (locked)
+            const Icon(Icons.lock_rounded, color: Color(0xFFFFC83D), size: 18),
         ]),
       ),
     );
@@ -442,7 +467,75 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
     );
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
+  // ── NOVA Shield Pro (3.9.0) ─────────────────────────────────────────────────
+  Widget _proBanner() => GestureDetector(
+        onTap: _unlockPro,
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            gradient: LinearGradient(colors: [
+              const Color(0xFFFFC83D).withOpacity(0.16),
+              AppTheme.accentPurple.withOpacity(0.14),
+            ]),
+            border: Border.all(color: const Color(0xFFFFC83D).withOpacity(0.35)),
+          ),
+          child: Row(children: [
+            Container(
+              width: 44, height: 44,
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFC83D).withOpacity(0.18),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.workspace_premium_rounded, color: Color(0xFFFFC83D), size: 24),
+            ),
+            const SizedBox(width: 12),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Upgrade to NOVA Shield Pro', style: GoogleFonts.spaceGrotesk(
+                  color: Colors.white, fontSize: 14.5, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 3),
+              Text('IP-leak (WebRTC), fingerprint and referrer protection plus your choice of DNS. '
+                  'Unlock with coins or NOVA X Premium.',
+                  style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 11.5, height: 1.4)),
+            ])),
+            const SizedBox(width: 8),
+            const Icon(Icons.chevron_right_rounded, color: Color(0xFFFFC83D)),
+          ]),
+        ),
+      );
+
+  Widget _lockedLayerTile(IconData icon, String title, String subtitle) => InkWell(
+        onTap: _unlockPro,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(children: [
+            Container(width: 36, height: 36,
+              decoration: BoxDecoration(color: AppTheme.bgElevated, borderRadius: BorderRadius.circular(10)),
+              child: Icon(icon, color: AppTheme.textHint, size: 18)),
+            const SizedBox(width: 12),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title, style: GoogleFonts.inter(
+                  color: AppTheme.textSecondary, fontSize: 13, fontWeight: FontWeight.w700)),
+              Text(subtitle, style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 10, height: 1.4)),
+            ])),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFC83D).withOpacity(0.14),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0xFFFFC83D).withOpacity(0.4)),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.lock_rounded, color: Color(0xFFFFC83D), size: 11),
+                const SizedBox(width: 3),
+                Text('PRO', style: GoogleFonts.inter(
+                    color: const Color(0xFFFFC83D), fontSize: 9, fontWeight: FontWeight.w800)),
+              ]),
+            ),
+          ]),
+        ),
+      );
+
   // ── Helpers ────────────────────────────────────────────────────────────────
   int _countActive() {
     int n = 1; // DoH always active when shield is on
@@ -464,8 +557,10 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
       color: Color(0xFF1A2535), height: 1, indent: 16, endIndent: 16);
 
   Widget _layerTile(IconData icon, String title, String subtitle,
-      Color color, bool value, ValueChanged<bool>? onChanged) =>
-      Padding(
+      Color color, bool value, ValueChanged<bool>? onChanged, {bool pro = false}) =>
+      (pro && !_pro)
+          ? _lockedLayerTile(icon, title, subtitle)
+          : Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         child: Row(children: [
           Container(width: 36, height: 36,

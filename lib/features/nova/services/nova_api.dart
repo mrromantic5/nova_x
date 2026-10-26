@@ -12,15 +12,22 @@
 //
 // Errors use {success:false, error, code} with HTTP 400/413/415/429/5xx.
 // All responses are treated as untrusted data.
+//
+// 3.9.0: every request carries "context": {tz, offset_min} (the phone's time
+// zone) so NOVA knows the user's local date and time; questions that reach
+// NOVA AI count toward the plan's daily message limit (NovaQuota).
 
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
 
+import '../../../core/services/device_clock.dart';
+import '../../ai/services/nova_quota.dart';
 import '../models/nova_models.dart';
 import '../nova_config.dart';
 import 'nova_validator.dart';
+import '../../../core/services/analytics_service.dart';
 
 enum NovaApiErrorKind {
   network,
@@ -35,13 +42,16 @@ enum NovaApiErrorKind {
 }
 
 class NovaApiException implements Exception {
-  const NovaApiException(this.kind, this.userMessage, {this.statusCode});
+  const NovaApiException(this.kind, this.userMessage, {this.statusCode, this.quota});
 
   final NovaApiErrorKind kind;
 
   /// Safe, friendly sentence to show/speak to the user.
   final String userMessage;
   final int? statusCode;
+
+  /// Set when today's NOVA AI message limit is used up (3.9.0).
+  final NovaQuotaStatus? quota;
 
   @override
   String toString() => 'NovaApiException($kind, $statusCode)';
@@ -77,9 +87,14 @@ abstract class NovaApi {
   void dispose();
 }
 
+/// Counts one NOVA AI question; throws [NovaApiException] (with `quota`) when
+/// the daily limit is used up.
+typedef NovaMessageMeter = Future<void> Function(String text);
+
 class NovaApiClient implements NovaApi {
-  NovaApiClient({Dio? dio, String? baseUrl})
-      : _dio = dio ??
+  NovaApiClient({Dio? dio, String? baseUrl, NovaMessageMeter? meter})
+      : _meter = meter ?? meterMessage,
+        _dio = dio ??
             Dio(BaseOptions(
               baseUrl: baseUrl ?? NovaConfig.apiBaseUrl,
               connectTimeout: NovaConfig.connectTimeout,
@@ -90,6 +105,50 @@ class NovaApiClient implements NovaApi {
             ));
 
   final Dio _dio;
+  final NovaMessageMeter _meter;
+
+  static String? _lastCounted;
+  static int _lastCountedAt = 0;
+
+  /// The default meter: one question = one message, even when it goes to the
+  /// planner first and then to /chat (same text within 2 minutes counts once).
+  /// If the phone's storage can't be read, nothing is blocked.
+  static Future<void> meterMessage(String text) async {
+    final key = text.length > 300 ? text.substring(0, 300) : text;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (key == _lastCounted && now - _lastCountedAt < 120000) return;
+    NovaQuotaStatus? blocked;
+    try {
+      blocked = await NovaQuota.tryUse(NovaQuotaKind.chat);
+    } catch (_) {
+      return;
+    }
+    if (blocked != null) {
+      throw NovaApiException(NovaApiErrorKind.rateLimited, quotaMessage(blocked),
+          statusCode: 429, quota: blocked);
+    }
+    _lastCounted = key;
+    _lastCountedAt = now;
+  }
+
+  /// "You've used all 40 NOVA AI messages for today…"
+  static String quotaMessage(NovaQuotaStatus q) {
+    final at = q.resetAt;
+    String when = 'later today';
+    if (at != null) {
+      final h = at.hour.toString().padLeft(2, '0');
+      final m = at.minute.toString().padLeft(2, '0');
+      final sameDay = at.day == DateTime.now().day;
+      when = sameDay ? 'at $h:$m' : 'tomorrow at $h:$m';
+    }
+    final more = switch (q.plan) {
+      NovaTier.free => ' Get double with AI Boost (Rewards) or 300 a day with NOVA X Premium.',
+      NovaTier.boost => ' NOVA X Premium gives you 300 a day.',
+      NovaTier.premium => '',
+    };
+    return "You've used all ${q.limit} NOVA AI messages for this 24-hour period. "
+        'You can ask again $when.$more';
+  }
 
   /// null = unknown, false = Worker without /plan (cached for this session).
   bool? _planSupported;
@@ -98,9 +157,10 @@ class NovaApiClient implements NovaApi {
   Future<String> chat(String message, List<Map<String, String>> history,
       {CancelToken? cancel}) async {
     final text = _boundMessage(message);
+    await _meter(text);
     final data = await _withRetry(() => _dio.post<Object>(
           '/chat',
-          data: {'message': text, 'history': history},
+          data: {'message': text, 'history': history, 'context': DeviceClock.context()},
           cancelToken: cancel,
         ));
     final reply = data['reply'];
@@ -108,6 +168,7 @@ class NovaApiClient implements NovaApi {
       throw const NovaApiException(NovaApiErrorKind.malformed,
           'NOVA sent an empty reply. Please try again.');
     }
+    AnalyticsService.log('ai_chat', feature: 'nova_ai');
     return reply.trim();
   }
 
@@ -120,6 +181,7 @@ class NovaApiClient implements NovaApi {
       throw const NovaApiException(NovaApiErrorKind.badRequest, 'Add a photo first.');
     }
     final text = message.trim();
+    await _meter(text.isEmpty ? '(photo)' : text);
     final Map<String, dynamic> data;
     try {
       data = _decode(await _dio.post<Object>(
@@ -129,6 +191,7 @@ class NovaApiClient implements NovaApi {
               ? text.substring(0, NovaConfig.maxVisionMessageChars)
               : text,
           'history': history,
+          'context': DeviceClock.context(),
           'images': [
             for (final img in images.take(3)) {'mime': img.mime, 'data': base64Encode(img.bytes)},
           ],
@@ -187,11 +250,12 @@ class NovaApiClient implements NovaApi {
   Future<NovaPlannerResult?> plan(String message, List<Map<String, String>> history,
       {CancelToken? cancel}) async {
     if (_planSupported == false) return null;
+    await _meter(_boundMessage(message));
     final Map<String, dynamic> data;
     try {
       data = await _withRetry(() => _dio.post<Object>(
             '/plan',
-            data: {'message': _boundMessage(message), 'history': history},
+            data: {'message': _boundMessage(message), 'history': history, 'context': DeviceClock.context()},
             cancelToken: cancel,
           ));
     } on NovaApiException catch (e) {

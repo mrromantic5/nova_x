@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'device_clock.dart';
+
 class ApiService {
   static const String baseUrl = 'https://api.browser.t-lyfe.com.ng';
   static const _kToken = 'nx_server_token';
@@ -201,10 +203,23 @@ class ApiService {
   // ── Delete account (permanent) ───────────────────────────────
   // Wipes the account + all associated data server-side, then clears
   // the local session. Returns true only when the server confirms.
-  static Future<bool> deleteAccount() async {
+  // 3.9.0: with the reason the user picked (kept with the security archive).
+  static Future<bool> deleteAccount({
+    String? reasonCode,
+    String? reasonText,
+    String? appVersion,
+    String? device,
+  }) async {
     bool ok = false;
     try {
-      final res = await _dio.delete('/api/v1/sync/account', options: await _authOpts());
+      final res = await _dio.post('/api/v1/account/delete',
+          data: {
+            if (reasonCode != null) 'reason_code': reasonCode,
+            if (reasonText != null && reasonText.trim().isNotEmpty) 'reason_text': reasonText.trim(),
+            if (appVersion != null) 'app_version': appVersion,
+            if (device != null) 'device': device,
+          },
+          options: await _authOpts());
       final data = res.data;
       ok = (data is Map && data['status'] == 'success');
     } catch (_) {
@@ -223,7 +238,22 @@ class ApiService {
       await _dio.post('/api/v1/sync/fcm-token',
           data: {'token': fcmToken},
           options: await _authOpts());
+      // The server keeps the time zone next to the push token (3.9.0).
+      DeviceClock.resetSync();
+      await syncTimeZone();
     } catch (_) {}
+  }
+
+  // ── Phone time zone → greetings at the user's local time (3.9.0) ──
+  static Future<void> syncTimeZone() async {
+    if (!await isLoggedIn()) return;
+    await DeviceClock.syncToServer((tz, offsetMin) async {
+      final res = await _dio.post('/api/v1/sync/timezone',
+          data: {if (tz != null) 'tz': tz, 'offset_min': offsetMin},
+          options: await _authOpts());
+      final d = res.data;
+      return d is Map && d['status'] == 'success';
+    });
   }
 
   // ── Sync notification preferences to server ──────────────────

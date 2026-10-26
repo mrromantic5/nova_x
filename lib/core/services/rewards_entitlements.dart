@@ -8,12 +8,13 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'rewards_service.dart';
+import 'device_clock.dart';
 
 class RewardsEntitlements {
   static const _kCache = 'nx_entitlements_cache_v1';
   static const _kPremium = 'nx_premium_active_v1';
 
-  // feature_key -> expiry (UTC-naive local DateTime from server)
+  // feature_key -> expiry (3.9.0: server times are UTC and read as such)
   static final Map<String, DateTime> _expiry = {};
   static bool _loadedFromCache = false;
   static bool _premium = false;
@@ -91,7 +92,7 @@ class RewardsEntitlements {
   /// Optimistically set after a successful redeem so the UI unlocks instantly.
   static Future<void> setExpiry(String featureKey, String? isoExpiry) async {
     if (isoExpiry == null) return;
-    final dt = DateTime.tryParse(isoExpiry.replaceFirst(' ', 'T'));
+    final dt = ServerTime.parse(isoExpiry);
     if (dt != null) {
       _expiry[featureKey] = dt;
       await _persist();
@@ -101,7 +102,7 @@ class RewardsEntitlements {
   static Future<void> _persist() async {
     try {
       final p = await SharedPreferences.getInstance();
-      final m = _expiry.map((k, v) => MapEntry(k, v.toIso8601String()));
+      final m = _expiry.map((k, v) => MapEntry(k, v.toUtc().toIso8601String()));
       await p.setString(_kCache, jsonEncode(m));
     } catch (_) {/* ignore */}
   }

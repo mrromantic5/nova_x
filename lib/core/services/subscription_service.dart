@@ -7,6 +7,7 @@
 import 'package:dio/dio.dart';
 import 'api_service.dart';
 import 'rewards_entitlements.dart';
+import 'device_clock.dart';
 
 class SubStatus {
   final bool active;
@@ -80,7 +81,7 @@ class SubscriptionService {
 
   static DateTime? _date(dynamic v) {
     if (v == null) return null;
-    return DateTime.tryParse(v.toString().replaceFirst(' ', 'T'));
+    return ServerTime.parse(v); // server times are UTC (3.9.0)
   }
 
   /// Fetch current subscription status and update the premium gate.

@@ -1,118 +1,116 @@
 // lib/core/services/update_service.dart
 //
-// NOVA X — SaaS-grade App Update Service
-// Fetches version.json from server, compares with installed version,
-// shows premium update dialog when a new version is available.
+// NOVA X — "Update available" popup (3.9.0).
 //
-// ══════════════════════════════════════════════════════════
-// HOW TO RELEASE AN UPDATE — 3 simple steps:
-//   1. Bump _installedVersion below to match pubspec.yaml
-//   2. Bump version in pubspec.yaml (e.g. 3.1.1+6 → 3.1.2+7)
-//   3. Update version.json on your server with the new version
-// ══════════════════════════════════════════════════════════
+// HOW TO RELEASE AN UPDATE
+//   1. Publish the new version on Google Play (versionCode higher than now).
+//   2. Admin dashboard → App Updates → New release: version, build number
+//      (the versionCode), message, what's new, optional "force update".
+//   That's it — every older app shows the popup on its next launch.
+//
+// Behaviour
+//   • Shown once per app launch while a newer build is published.
+//   • ✕ or "Maybe later" closes it until the app is opened again.
+//   • "Update now" opens NOVA X on Google Play.
+//   • A forced update can't be dismissed.
+//   • The installed version comes from Android (never a hard-coded number).
+//   • Fallback: the old version.json on the server, if the dashboard has no
+//     release yet.
 
 import 'dart:convert';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:nova_x/core/widgets/update_dialog.dart';
+
+import '../widgets/update_dialog.dart';
+import 'app_info.dart';
+import 'platform_api.dart';
 
 class UpdateService {
-  // ── UPDATE THIS every time you release a new version ─────────────────────
-  // Must match the version in pubspec.yaml (e.g. if pubspec says 3.1.2+7,
-  // set this to '3.1.2')
-  static const String _installedVersion = '3.8.1';
+  UpdateService._();
 
-  // ── Hosted on your server — update version.json whenever you release ──────
-  static const String _versionUrl =
-      'https://api.browser.t-lyfe.com.ng/version.json';
+  static const String _versionUrl = 'https://api.browser.t-lyfe.com.ng/version.json';
 
-  static const String _firstSeenKey = 'nx_update_first_seen_';
+  /// Once per launch (cleared when the process starts again).
+  static bool _shownThisLaunch = false;
+  static bool _checking = false;
 
-  // ── Main entry point — called from HomeScreen.initState ──────────────────
   static Future<void> checkForUpdate(BuildContext context) async {
+    if (_shownThisLaunch || _checking) return;
+    _checking = true;
     try {
-      // Small delay so home screen renders first
-      await Future.delayed(const Duration(seconds: 2));
-      if (!context.mounted) return;
-
-      final remote = await _fetchRemoteVersion();
-      if (remote == null) return;
-
-      final remoteVersion = remote['version'] as String;
-
-      if (!_isNewerVersion(remoteVersion, _installedVersion)) return;
-
-      // Track when user first saw this update (for grace period countdown)
-      final prefs = await SharedPreferences.getInstance();
-      final seenKey = '$_firstSeenKey$remoteVersion';
-      if (prefs.getString(seenKey) == null) {
-        await prefs.setString(seenKey, DateTime.now().toIso8601String());
-      }
-
-      final firstSeenDate = DateTime.parse(
-          prefs.getString(seenKey) ?? DateTime.now().toIso8601String());
-
-      final graceDays   = (remote['grace_days'] as int?) ?? 5;
-      final forceUpdate = (remote['force_update'] as bool?) ?? false;
-      final daysElapsed = DateTime.now().difference(firstSeenDate).inDays;
-      final daysLeft    = (graceDays - daysElapsed).clamp(0, graceDays);
-      final mustUpdate  = forceUpdate && daysLeft == 0;
-
-      if (!context.mounted) return;
-
-      showDialog(
+      // Let the home screen settle first.
+      await Future<void>.delayed(const Duration(seconds: 2));
+      await AppInfo.load();
+      final release = await PlatformApi.latestRelease(AppInfo.build) ?? await _fromVersionJson();
+      if (release == null || !context.mounted || _shownThisLaunch) return;
+      _shownThisLaunch = true;
+      await showDialog<void>(
         context: context,
-        barrierDismissible: !mustUpdate,
-        barrierColor: Colors.black87,
+        barrierDismissible: !release.forceUpdate,
+        barrierColor: Colors.black.withOpacity(0.78),
         builder: (_) => UpdateDialog(
-          currentVersion: _installedVersion,
-          newVersion:     remoteVersion,
-          whatsNew:       remote['whats_new'] as String? ?? '',
-          playStoreUrl:   remote['play_store_url'] as String? ?? '',
-          daysLeft:       daysLeft,
-          graceDays:      graceDays,
-          mustUpdate:     mustUpdate,
+          currentVersion: AppInfo.version,
+          release: release,
         ),
       );
     } catch (_) {
-      // Silently fail — never crash the app over an update check
+      // Never crash the app over an update check.
+    } finally {
+      _checking = false;
     }
   }
 
-  // ── Fetch & parse version.json from server ────────────────────────────────
-  static Future<Map<String, dynamic>?> _fetchRemoteVersion() async {
+  /// Old mechanism: version.json { version, whats_new, play_store_url, force_update }.
+  static Future<AppRelease?> _fromVersionJson() async {
     try {
       final dio = Dio(BaseOptions(
         connectTimeout: const Duration(seconds: 8),
         receiveTimeout: const Duration(seconds: 8),
       ));
-      final response = await dio.get(_versionUrl);
-      if (response.statusCode == 200) {
-        final data = response.data is String
-            ? jsonDecode(response.data as String)
-            : response.data;
-        return Map<String, dynamic>.from(data as Map);
-      }
-    } catch (_) {}
-    return null;
+      final r = await dio.get<Object>(_versionUrl);
+      Object? data = r.data;
+      if (data is String) data = jsonDecode(data);
+      if (data is! Map) return null;
+      final remote = '${data['version'] ?? ''}';
+      if (!isNewerVersion(remote, AppInfo.version)) return null;
+      return AppRelease(
+        version: remote,
+        build: AppInfo.build + 1,
+        title: 'A new version of NOVA X is ready',
+        message: '',
+        whatsNew: '${data['whats_new'] ?? ''}'
+            .split('\n')
+            .map((l) => l.replaceFirst(RegExp(r'^\s*[-•*]\s*'), '').trim())
+            .where((l) => l.isNotEmpty)
+            .take(8)
+            .toList(),
+        forceUpdate: data['force_update'] == true,
+        playUrl: PlatformApi.playStoreUrl,
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
-  // ── Semantic version comparison ───────────────────────────────────────────
-  // Returns true if remote (e.g. "3.1.2") is newer than installed (e.g. "3.1.1")
-  static bool _isNewerVersion(String remote, String installed) {
-    try {
-      final r = remote.split('.').map(int.parse).toList();
-      final i = installed.split('.').map(int.parse).toList();
-      while (r.length < 3) r.add(0);
-      while (i.length < 3) i.add(0);
-      for (int idx = 0; idx < 3; idx++) {
-        if (r[idx] > i[idx]) return true;
-        if (r[idx] < i[idx]) return false;
+  /// "3.10.0" is newer than "3.9.1".
+  static bool isNewerVersion(String remote, String installed) {
+    List<int> parts(String v) {
+      final p = v.split('+').first.split('.').map((x) => int.tryParse(x.trim()) ?? -1).toList();
+      while (p.length < 3) {
+        p.add(0);
       }
-      return false;
-    } catch (_) {
-      return false;
+      return p;
     }
+
+    try {
+      final r = parts(remote), i = parts(installed);
+      if (r.contains(-1) || i.contains(-1)) return false;
+      for (var k = 0; k < 3; k++) {
+        if (r[k] > i[k]) return true;
+        if (r[k] < i[k]) return false;
+      }
+    } catch (_) {}
+    return false;
   }
 }

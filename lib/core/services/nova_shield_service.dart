@@ -39,6 +39,8 @@
 import 'dart:math';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'rewards_entitlements.dart';
+import 'rewards_service.dart';
 
 // ── DNS Provider enum ────────────────────────────────────────────────────────
 enum DnsProvider {
@@ -153,14 +155,22 @@ class NovaShieldService {
     _prefs = await SharedPreferences.getInstance();
   }
 
+  // ── Plans (3.9.0) ──────────────────────────────────────────────────────────
+  // Free: NOVA Shield on/off, malware & phishing blocking through encrypted
+  // DNS (NOVA DNS — Secure) and HTTPS upgrade.
+  // NOVA Shield Pro (coins or Premium): WebRTC leak blocking, fingerprint
+  // protection, referrer protection and the choice of DNS provider.
+  static bool get isPro => RewardsEntitlements.isUnlocked(RewardFeature.shield);
+
   // ── Settings getters / setters ─────────────────────────────────────────────
   static bool  get isEnabled        => _prefs?.getBool(_kEnabled)     ?? false;
   static bool  get httpsOnlyEnabled => _prefs?.getBool(_kHttps)       ?? true;
-  static bool  get webrtcBlocking   => _prefs?.getBool(_kWebrtc)      ?? true;
-  static bool  get fingerprintProtection => _prefs?.getBool(_kFingerprint) ?? true;
-  static bool  get referrerSpoofing => _prefs?.getBool(_kReferrer)    ?? true;
+  static bool  get webrtcBlocking   => isPro && (_prefs?.getBool(_kWebrtc) ?? true);
+  static bool  get fingerprintProtection => isPro && (_prefs?.getBool(_kFingerprint) ?? true);
+  static bool  get referrerSpoofing => isPro && (_prefs?.getBool(_kReferrer) ?? true);
 
   static DnsProvider get activeProvider {
+    if (!isPro) return DnsProvider.cloudflareMalware;
     final s = _prefs?.getString(_kProvider) ?? 'cloudflareMalware';
     return DnsProvider.values.firstWhere(
       (e) => e.name == s,

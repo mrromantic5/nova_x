@@ -8,6 +8,7 @@
 
 import 'package:dio/dio.dart';
 import 'api_service.dart';
+import 'device_clock.dart';
 
 // ── Feature + task keys (must match rewards.php) ─────────────────────────────
 class RewardFeature {
@@ -18,20 +19,23 @@ class RewardFeature {
   static const speeddial     = 'speeddial';
   static const cookie        = 'cookie';
   static const business      = 'business';
+  /// 3.9.0: doubles the daily NOVA AI limits for 24 hours (no free trial).
+  static const aiBoost       = 'ai_boost';
 
   static const all = [
-    customization, shield, cyber, devtools, speeddial, cookie, business,
+    customization, shield, cyber, devtools, speeddial, cookie, business, aiBoost,
   ];
 
   static String label(String key) {
     switch (key) {
       case customization: return 'Customization';
-      case shield:        return 'NOVA Shield';
+      case shield:        return 'NOVA Shield Pro';
       case cyber:         return 'NOVA Cyber';
       case devtools:      return 'Developer Tools';
       case speeddial:     return 'Custom Speed Dial';
       case cookie:        return 'Cookie Editor';
       case business:      return 'NOVA Business';
+      case aiBoost:       return 'AI Boost';
       default:            return key;
     }
   }
@@ -202,7 +206,7 @@ class RewardsService {
           final raw = _asMap(v);
           DateTime? exp;
           final s = raw['expires_at'] as String?;
-          if (s != null) exp = DateTime.tryParse(s.replaceFirst(' ', 'T'));
+          if (s != null) exp = ServerTime.parse(s); // UTC on the server (3.9.0)
           out[k] = Entitlement(raw['active'] == true, exp, (raw['source'] as String?) ?? 'points');
         });
       }

@@ -1,6 +1,7 @@
 // lib/core/services/advert_service.dart
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'device_clock.dart';
 
 class AdvertModel {
   final int    id;
@@ -31,7 +32,7 @@ class AdvertModel {
     mediaType:   j['media_type']  as String? ?? 'none',
     url:         j['url']         as String?,
     recipients:  int.tryParse(j['recipients'].toString()) ?? 0,
-    createdAt:   DateTime.tryParse(j['created_at'] as String? ?? '') ??
+    createdAt:   ServerTime.parse(j['created_at']) ??
                  DateTime.now(),
   );
 }

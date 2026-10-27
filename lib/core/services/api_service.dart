@@ -2,6 +2,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:dio/dio.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'device_clock.dart';
@@ -31,8 +32,20 @@ class ApiService {
 
   static Future<void> _saveSession(String token, Map<String, dynamic> user) async {
     final p = await SharedPreferences.getInstance();
+    final previous = p.getString(_kToken);
     await p.setString(_kToken, token);
     await p.setString(_kUser,  jsonEncode(user));
+    // 3.9.1: a new sign-in links this phone's push token to the account
+    // straight away (before, it only happened on the next app launch, so
+    // support replies went to an old phone and failed).
+    if (token.isNotEmpty && token != previous) _linkPushToken();
+  }
+
+  static void _linkPushToken() {
+    Future<void>(() async {
+      final t = await FirebaseMessaging.instance.getToken();
+      if (t != null && t.isNotEmpty) await registerFcmToken(t);
+    }).catchError((Object _) {});
   }
 
   static Future<void> clearSession() async {

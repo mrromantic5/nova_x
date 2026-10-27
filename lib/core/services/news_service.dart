@@ -7,6 +7,7 @@
 //   4. HackerNews     — unlimited, tech-only, no images — always works
 
 import 'package:dio/dio.dart';
+import 'api_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 class NewsArticle {
@@ -31,11 +32,9 @@ class NewsArticle {
 
 // ─────────────────────────────────────────────────────────────────────────────
 class NewsService {
-  // ── API Keys ──────────────────────────────────────────────────────────────
-  static const _gNewsKey   = 'dddac3111ff3a0f86578effcad1cf01c';
-  static const _newsApiKey = 'f047822f6e36405980259abb8d12afc3';
-  static const _serpApiKey =
-      '794180687cbc34a9eb77cece2a5ec05212ce4f4c7d200ec93c2eb61de18e56c6';
+  // 3.9.1: no API keys in the app. The NOVA X server fetches the news with
+  // its own keys and caches each category for 20 minutes.
+  static const _feed = '${ApiService.baseUrl}/api/v1/feed';
 
   // ── Category maps ─────────────────────────────────────────────────────────
   static const Map<String, String> _gNewsCategory = {
@@ -49,22 +48,6 @@ class NewsService {
     'Science':       'science',
   };
 
-  static const Map<String, String> _newsApiCategory = {
-    'For You':       'general',
-    'World':         'general',   // newsapi has no "world" category
-    'Sports':        'sports',
-    'Tech':          'technology',
-    'Entertainment': 'entertainment',
-    'Business':      'business',
-    'Health':        'health',
-    'Science':       'science',
-  };
-
-  static String _serpQuery(String label) {
-    if (label == 'For You') return 'top news today';
-    return '${label.toLowerCase()} news';
-  }
-
   static List<String> get categoryLabels => _gNewsCategory.keys.toList();
 
   // ── HTTP client ───────────────────────────────────────────────────────────
@@ -76,16 +59,7 @@ class NewsService {
   // ── 1. GNews ──────────────────────────────────────────────────────────────
   static Future<List<NewsArticle>> _fromGNews(String category) async {
     try {
-      final res = await _dio.get(
-        'https://gnews.io/api/v4/top-headlines',
-        queryParameters: {
-          'token':    _gNewsKey,
-          'lang':     'en',       // global English news (all countries)
-          'max':      10,
-          'category': _gNewsCategory[category] ?? 'general',
-          'expand':   'content',
-        },
-      );
+      final res = await _dio.get('$_feed/gnews', queryParameters: {'category': category});
       final articles = (res.data['articles'] as List?) ?? [];
       return articles
           .map((a) => NewsArticle(
@@ -93,7 +67,7 @@ class NewsService {
                 description: _clean(a['description']),
                 url:         a['url']         ?? '',
                 imageUrl:    a['image']        ?? '',
-                source:      a['source']?['name'] ?? 'GNews',
+                source:      a['source']?['name'] ?? 'News',
                 timeAgo:     _formatTime(a['publishedAt'] ?? ''),
                 category:    category,
               ))
@@ -107,16 +81,7 @@ class NewsService {
   // ── 2. SerpAPI (Google News) ──────────────────────────────────────────────
   static Future<List<NewsArticle>> _fromSerpApi(String category) async {
     try {
-      final res = await _dio.get(
-        'https://serpapi.com/search',
-        queryParameters: {
-          'engine':  'google_news',
-          'api_key': _serpApiKey,
-          'q':       _serpQuery(category),
-          'hl':      'en',
-          'gl':      'us',
-        },
-      );
+      final res = await _dio.get('$_feed/serp', queryParameters: {'category': category});
       final results = (res.data['news_results'] as List?) ?? [];
       final articles = <NewsArticle>[];
 
@@ -159,15 +124,7 @@ class NewsService {
   // ── 3. NewsAPI.org (dev-mode fallback) ────────────────────────────────────
   static Future<List<NewsArticle>> _fromNewsApi(String category) async {
     try {
-      final res = await _dio.get(
-        'https://newsapi.org/v2/top-headlines',
-        queryParameters: {
-          'apiKey':   _newsApiKey,
-          'category': _newsApiCategory[category] ?? 'general',
-          'language': 'en',
-          'pageSize': 10,
-        },
-      );
+      final res = await _dio.get('$_feed/newsapi', queryParameters: {'category': category});
       if (res.data['status'] != 'ok') return [];
       final articles = (res.data['articles'] as List?) ?? [];
       return articles
@@ -176,7 +133,7 @@ class NewsService {
                 description: _clean(a['description']  ?? ''),
                 url:         a['url']                  ?? '',
                 imageUrl:    a['urlToImage']            ?? '',
-                source:      a['source']?['name']       ?? 'NewsAPI',
+                source:      a['source']?['name']       ?? 'News',
                 timeAgo:     _formatTime(a['publishedAt'] ?? ''),
                 category:    category,
               ))

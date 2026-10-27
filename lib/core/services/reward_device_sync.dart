@@ -23,6 +23,7 @@ import '../widgets/nova_toast.dart';
 import 'api_service.dart';
 import 'default_browser_service.dart';
 import 'rewards_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// The NOVA assistant settings the 100-coin reward needs (Android side:
 /// NovaBridge "setupStatus").
@@ -145,8 +146,25 @@ class RewardDeviceSync {
       case 'deducted':
         NovaToast.show(e.message,
             title: '−${e.points} coins', kind: NovaToastKind.warning, duration: const Duration(seconds: 6));
+      case 'paused':
+        // 3.9.1: Premium users already know earning is paused — this used to
+        // pop up on every launch and resume. Never shown now.
+        break;
       default:
-        if (e.message.isNotEmpty) NovaToast.show(e.message, kind: NovaToastKind.info);
+        // Other notices (e.g. "held by another account") are shown once.
+        if (e.message.isNotEmpty) _showOnce('${e.key}:${e.type}', e.message);
     }
+  }
+
+  static Future<void> _showOnce(String id, String message) async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      final k = 'nx_reward_notice_$id';
+      if (p.getBool(k) == true) return;
+      await p.setBool(k, true);
+    } catch (_) {
+      return;
+    }
+    NovaToast.show(message, kind: NovaToastKind.info);
   }
 }

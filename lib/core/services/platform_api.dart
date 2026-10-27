@@ -365,6 +365,14 @@ class PlatformApi {
     } catch (_) {}
   }
 
+  /// Removes notifications from the personal inbox (swipe to delete).
+  static Future<void> deleteInboxItems(List<int> ids) async {
+    if (ids.isEmpty) return;
+    try {
+      await _dio.post('/api/v1/inbox/delete', data: {'ids': ids}, options: await _opts());
+    } catch (_) {}
+  }
+
   // ── App update (admin dashboard) ─────────────────────────────
   /// The newest published release when it is newer than [build]; null when
   /// there is none, or the server can't be reached.

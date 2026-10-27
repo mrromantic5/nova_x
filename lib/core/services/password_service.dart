@@ -100,8 +100,10 @@ class PasswordService {
 
   // ── JS: autofill fields ──────────────────────────────────────────────────────
   static String autofillJS(String username, String password) {
-    final safeU = username.replaceAll("'", "\\'").replaceAll('`', '\\`');
-    final safeP = password.replaceAll("'", "\\'").replaceAll('`', '\\`');
+    // 3.9.1: JSON-encoded, so a quote, backslash or line break in a saved
+    // password can never break out of the string and run as page script.
+    final safeU = jsonEncode(username);
+    final safeP = jsonEncode(password);
     return """
 (function() {
   var filled = false;
@@ -112,13 +114,13 @@ class PasswordService {
     if (!filled && (inp.type === 'email' ||
         name.includes('user') || name.includes('email') ||
         name.includes('login') || name.includes('account'))) {
-      inp.value = '$safeU';
+      inp.value = $safeU;
       inp.dispatchEvent(new Event('input',  {bubbles: true}));
       inp.dispatchEvent(new Event('change', {bubbles: true}));
       filled = true;
     }
     if (inp.type === 'password') {
-      inp.value = '$safeP';
+      inp.value = $safeP;
       inp.dispatchEvent(new Event('input',  {bubbles: true}));
       inp.dispatchEvent(new Event('change', {bubbles: true}));
     }

@@ -8,6 +8,8 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
+import 'api_service.dart';
+
 // ── Data Models ──────────────────────────────────────────────────────────────
 
 class PlaceAutocomplete {
@@ -133,14 +135,29 @@ class PlaceCategory {
 
 // ════════════════════════════════════════════════════════════════════════════
 class MapService {
-  static const _apiKey  = 'AIzaSyBc_bNBj_hmsG5rNFXHC4Tmgp0BRBjyXos';
-  static const _baseUrl = 'https://maps.googleapis.com/maps/api';
+  // 3.9.1: no API key in the app. Requests go through the NOVA X server,
+  // which adds the key, caches answers and checks Premium + a daily limit.
+  static const _baseUrl = '${ApiService.baseUrl}/api/v1/maps';
+
+  static String? _token;
 
   static final _dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 8),
-    receiveTimeout: const Duration(seconds: 8),
+    receiveTimeout: const Duration(seconds: 10),
     validateStatus: (_) => true,
-  ));
+  ))
+    ..interceptors.add(InterceptorsWrapper(onRequest: (o, h) async {
+      _token = await ApiService.getToken();
+      if (_token != null) o.headers['Authorization'] = 'Bearer $_token';
+      h.next(o);
+    }));
+
+  /// Call once when the map opens (photos need the sign-in header).
+  static Future<void> prepare() async => _token = await ApiService.getToken();
+
+  /// Headers for place photos (Image.network).
+  static Map<String, String> get photoHeaders =>
+      _token == null ? const {} : {'Authorization': 'Bearer $_token'};
 
   static const List<PlaceCategory> categories = [
     PlaceCategory(type: 'restaurant',     label: 'Food',      emoji: '🍽️'),
@@ -167,7 +184,6 @@ class MapService {
     try {
       final params = {
         'input': input,
-        'key':   _apiKey,
         'language': 'en',
         if (location != null)
           'location': '${location.latitude},${location.longitude}',
@@ -202,7 +218,6 @@ class MapService {
             'fields':
                 'name,formatted_address,geometry,rating,user_ratings_total,'
                 'formatted_phone_number,website,opening_hours,types,photos',
-            'key': _apiKey,
           });
       final data = r.data as Map<String, dynamic>;
       if (data['status'] != 'OK') return null;
@@ -267,7 +282,6 @@ class MapService {
       final p = <String, dynamic>{
         'location': '${location.latitude},${location.longitude}',
         'rankby':   'distance',
-        'key':      _apiKey,
         'language': 'en',
       };
       if (type    != null) p['type']    = type;
@@ -315,7 +329,6 @@ class MapService {
             'mode':        mode,
             'departure_time': 'now',
             'alternatives': false,
-            'key':         _apiKey,
             'language':    'en',
           });
       final data = r.data as Map<String, dynamic>;
@@ -380,7 +393,6 @@ class MapService {
       final r = await _dio.get('$_baseUrl/geocode/json',
           queryParameters: {
             'latlng': '${location.latitude},${location.longitude}',
-            'key':    _apiKey,
             'language': 'en',
           });
       final data = r.data as Map<String, dynamic>;
@@ -397,8 +409,7 @@ class MapService {
   static String getPhotoUrl(String photoRef, {int maxWidth = 400}) =>
       '$_baseUrl/place/photo'
       '?maxwidth=$maxWidth'
-      '&photo_reference=$photoRef'
-      '&key=$_apiKey';
+      '&photo_reference=${Uri.encodeQueryComponent(photoRef)}';
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   static double _calcDistKm(LatLng a, LatLng b) {

@@ -42,6 +42,14 @@
     <!-- NOVA assistant "Read my screen": one screenshot, only after the user
          agrees in Android's screen-capture dialog (NovaScreenCapture). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <!-- NOVA Capture (screenshots + screen recorder) reuses the permissions
+         above: FOREGROUND_SERVICE_MEDIA_PROJECTION for capture, and
+         RECORD_AUDIO + FOREGROUND_SERVICE_MICROPHONE only when the user picks
+         a recording with microphone narration (asked at that moment). Files go
+         to Pictures/ and Movies/NOVA X through MediaStore (no storage
+         permission on Android 10+; WRITE_EXTERNAL_STORAGE ≤ 28 below). The
+         optional floating controls over other apps use SYSTEM_ALERT_WINDOW,
+         only after the user turns them on and grants it in Android settings. -->
 
     <!-- "Hey NOVA" after a phone restart / app update: offers the one-tap
          "turn Hey NOVA back on" notification (only if the user had it on). -->
@@ -202,6 +210,22 @@
             android:name=".nova.NovaCaptureService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+
+        <!-- NOVA Capture: runs only while a screen recording or a requested
+             screenshot is in progress, with a visible notification. -->
+        <service
+            android:name=".capture.CaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection|microphone" />
+
+        <!-- NOVA Capture: shows Android's own screen-capture consent dialog. -->
+        <activity
+            android:name=".capture.CaptureConsentActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <!-- NOVA Music playback (started only when the user plays music). -->
         <service

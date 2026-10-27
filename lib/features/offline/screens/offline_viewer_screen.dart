@@ -41,11 +41,15 @@ class OfflineViewerScreen extends StatelessWidget {
       body: InAppWebView(
         initialUrlRequest: URLRequest(url: WebUri('file://$path')),
         initialSettings: InAppWebViewSettings(
-          javaScriptEnabled: true,
+          // 3.9.1 security: a saved page is a snapshot. Its scripts don't run
+          // and it can't read other files on the phone (where it could reach
+          // the app's own data) or contact the internet from file://.
+          javaScriptEnabled: false,
           allowFileAccess: true,
-          allowContentAccess: true,
-          allowFileAccessFromFileURLs: true,
-          allowUniversalAccessFromFileURLs: true,
+          allowContentAccess: false,
+          allowFileAccessFromFileURLs: false,
+          allowUniversalAccessFromFileURLs: false,
+          blockNetworkLoads: true,
           transparentBackground: true,
         ),
       ),

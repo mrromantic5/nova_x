@@ -56,6 +56,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:nova_x/features/music/screens/nova_music_screen.dart';
 import 'package:nova_x/features/nova/services/nova_wake.dart';
 import 'package:nova_x/features/nova/nova_features.dart';
+import 'package:nova_x/features/nova_capture/screens/capture_dashboard.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -1256,6 +1257,8 @@ class _HomeScreenState extends State<HomeScreen>
        'fn': () => _push(const CodeEditorScreen(sharedWorkspace: true))},
       {'icon': Icons.speed_rounded,            'label': 'NOVA Network',
        'fn': () => _push(const NovaNetworkScreen())},
+      {'icon': Icons.screenshot_monitor_rounded, 'label': 'NOVA Capture',
+       'fn': () => _push(const CaptureDashboard())},
       {'icon': Icons.monetization_on_rounded,  'label': 'Rewards',
        'fn': () => _push(const RewardsScreen())},
     ];
@@ -1733,6 +1736,8 @@ class _MenuSheet extends StatelessWidget {
        'fn': () { Navigator.pop(context); onPush(const CyberScreen()); }},
       {'icon': Icons.speed_rounded,             'label': 'NOVA Network', 'color': const Color(0xFF39FFB0),
        'fn': () { Navigator.pop(context); onPush(const NovaNetworkScreen()); }},
+      {'icon': Icons.screenshot_monitor_rounded, 'label': 'NOVA Capture', 'color': const Color(0xFFFF3B4E),
+       'fn': () { Navigator.pop(context); onPush(const CaptureDashboard()); }},
       {'icon': Icons.developer_mode_rounded,    'label': 'Dev Tools',  'color': AppTheme.accentCyan,
        'fn': () { Navigator.pop(context); onPush(const BrowserView(
            initialQuery: 'https://api.browser.t-lyfe.com.ng/devtools.html', autoOpenDevTools: true)); }},

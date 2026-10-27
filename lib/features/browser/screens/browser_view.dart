@@ -415,6 +415,111 @@ class _BrowserViewState extends State<BrowserView>
     ));
   }
 
+  // ── 3.9.1 security: site permissions ─────────────────────────────────────
+  // Websites no longer get the microphone or camera silently. The person is
+  // asked once per site for this tab (like Chrome); the answer is kept only
+  // while the tab is open. Incognito tabs never remember anything else.
+  final Map<String, bool> _sitePerms = {};
+
+  static String _siteOf(String url) {
+    final u = Uri.tryParse(url);
+    if (u == null || u.host.isEmpty) return '';
+    return u.host.toLowerCase();
+  }
+
+  Future<bool> _askSitePermission(String site, String what, IconData icon) async {
+    if (site.isEmpty || !mounted) return false;
+    final key = '$site|$what';
+    final known = _sitePerms[key];
+    if (known != null) return known;
+    final allow = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: AppTheme.bgElevated,
+      isDismissible: true,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Icon(icon, color: AppTheme.accentCyan, size: 22),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text('$site wants to use your $what',
+                    style: GoogleFonts.inter(color: AppTheme.textPrimary, fontSize: 15, fontWeight: FontWeight.w700)),
+              ),
+            ]),
+            const SizedBox(height: 8),
+            Text('Only allow sites you trust. You can change this by reloading the tab.',
+                style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 12.5)),
+            const SizedBox(height: 16),
+            Row(children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: Text('Block', style: GoogleFonts.inter(color: AppTheme.textPrimary)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accentCyan),
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: Text('Allow', style: GoogleFonts.inter(color: Colors.black, fontWeight: FontWeight.w700)),
+                ),
+              ),
+            ]),
+          ]),
+        ),
+      ),
+    );
+    final ok = allow == true;
+    _sitePerms[key] = ok;
+    return ok;
+  }
+
+  /// Asks before a web page hands the person over to another app.
+  Future<bool> _confirmExternalApp(String site) async {
+    if (!mounted) return false;
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: AppTheme.bgElevated,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Leave NOVA X?',
+                style: GoogleFonts.inter(color: AppTheme.textPrimary, fontSize: 15, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 6),
+            Text('${site.isEmpty ? 'This page' : site} wants to open another app.',
+                style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 12.5)),
+            const SizedBox(height: 16),
+            Row(children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: Text('Stay', style: GoogleFonts.inter(color: AppTheme.textPrimary)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accentCyan),
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: Text('Open app', style: GoogleFonts.inter(color: Colors.black, fontWeight: FontWeight.w700)),
+                ),
+              ),
+            ]),
+          ]),
+        ),
+      ),
+    );
+    return ok == true;
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
@@ -616,9 +721,14 @@ class _BrowserViewState extends State<BrowserView>
         displayZoomControls:          false,
         allowsInlineMediaPlayback:    true,
         mediaPlaybackRequiresUserGesture: false,
-        mixedContentMode:             MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
-        allowFileAccess:              true,
+        // 3.9.1: insecure (http) scripts on secure pages are blocked, and web
+        // pages can't read files on the phone (file://).
+        mixedContentMode:             MixedContentMode.MIXED_CONTENT_COMPATIBILITY_MODE,
+        allowFileAccess:              false,
+        allowFileAccessFromFileURLs:  false,
+        allowUniversalAccessFromFileURLs: false,
         allowContentAccess:           true,
+        safeBrowsingEnabled:          true,
         textZoom:                     _textZoom.toInt(),
         userAgent:                    _desktopMode ? _desktopUA : '',
         contentBlockers:              _adBlockEnabled
@@ -632,16 +742,38 @@ class _BrowserViewState extends State<BrowserView>
 
       // Grant in-page media permissions (microphone / camera) so getUserMedia
       // and voice features work inside the WebView.
+      // 3.9.1: the person decides (per site, for this tab). Only the
+      // microphone, camera and protected video playback can be granted;
+      // anything else a page asks for is refused.
       onPermissionRequest: (controller, request) async {
+        final site = _siteOf(request.origin.toString());
+        final wanted = request.resources;
+        final mic = wanted.contains(PermissionResourceType.MICROPHONE);
+        final cam = wanted.contains(PermissionResourceType.CAMERA);
+        final drm = wanted.contains(PermissionResourceType.PROTECTED_MEDIA_ID);
+        final grant = <PermissionResourceType>[];
+        if (mic || cam) {
+          final what = mic && cam ? 'camera and microphone' : (cam ? 'camera' : 'microphone');
+          final ok = await _askSitePermission(site, what,
+              cam ? Icons.videocam_rounded : Icons.mic_rounded);
+          if (ok) {
+            if (mic) grant.add(PermissionResourceType.MICROPHONE);
+            if (cam) grant.add(PermissionResourceType.CAMERA);
+          }
+        }
+        if (drm && !widget.incognito &&
+            await _askSitePermission(site, 'protected video playback', Icons.lock_rounded)) {
+          grant.add(PermissionResourceType.PROTECTED_MEDIA_ID);
+        }
+        if (grant.isEmpty) {
+          return PermissionResponse(resources: wanted, action: PermissionResponseAction.DENY);
+        }
         // A page using the microphone (calls, voice notes): "Hey NOVA" steps
         // aside so the page gets the mic.
-        if (request.resources.contains(PermissionResourceType.MICROPHONE)) {
+        if (grant.contains(PermissionResourceType.MICROPHONE)) {
           await NovaWake.pauseForOtherMic('web_mic', max: const Duration(minutes: 10));
         }
-        return PermissionResponse(
-          resources: request.resources,
-          action: PermissionResponseAction.GRANT,
-        );
+        return PermissionResponse(resources: grant, action: PermissionResponseAction.GRANT);
       },
 
       onWebViewCreated: (c) {
@@ -657,7 +789,11 @@ class _BrowserViewState extends State<BrowserView>
                 final d = args[0] is Map
                     ? Map<String,dynamic>.from(args[0] as Map)
                     : jsonDecode(args[0].toString()) as Map<String,dynamic>;
-                final domain = d['domain']?.toString() ?? '';
+                // 3.9.1: the site is taken from the tab's real address, not
+                // from the page (a page could claim to be another site).
+                final cur    = await _wvc?.getUrl();
+                final domain = cur == null || !cur.toString().startsWith('http')
+                    ? '' : LocalDB.extractDomain(cur.toString());
                 final user   = d['username']?.toString() ?? '';
                 final pass   = d['password']?.toString() ?? '';
                 if (domain.isNotEmpty && pass.isNotEmpty && mounted)
@@ -676,11 +812,15 @@ class _BrowserViewState extends State<BrowserView>
                 final data = args[0] is Map
                     ? args[0] as Map<String, dynamic>
                     : jsonDecode(args[0].toString()) as Map<String, dynamic>;
-                setState(() => _consoleLogs.add({
-                  'type': data['type']?.toString() ?? 'log',
-                  'msg':  data['msg']?.toString()  ?? '',
-                  'time': data['time']?.toString()  ?? '',
-                }));
+                final msg = data['msg']?.toString() ?? '';
+                setState(() {
+                  _consoleLogs.add({
+                    'type': data['type']?.toString() ?? 'log',
+                    'msg':  msg.length > 4000 ? msg.substring(0, 4000) : msg,
+                    'time': data['time']?.toString()  ?? '',
+                  });
+                  if (_consoleLogs.length > 500) _consoleLogs.removeAt(0);
+                });
               } catch (_) {}
             }
             return null;
@@ -716,7 +856,16 @@ class _BrowserViewState extends State<BrowserView>
           handlerName: 'nxSpeechStart',
           callback: (args) async {
             final raw = args.isNotEmpty ? args[0].toString() : 'en-US';
-            final locale = raw.replaceAll('-', '_');
+            final locale = RegExp(r'^[A-Za-z]{2,3}([-_][A-Za-z0-9]{2,8})?$').hasMatch(raw)
+                ? raw.replaceAll('-', '_') : 'en_US';
+            // 3.9.1: a page only hears the microphone after the person allows it.
+            final cur = await _wvc?.getUrl();
+            final site = _siteOf(cur?.toString() ?? '');
+            if (!await _askSitePermission(site, 'microphone', Icons.mic_rounded)) {
+              _wvc?.evaluateJavascript(
+                  source: "window.__nxSpeechError && window.__nxSpeechError('not-allowed')");
+              return null;
+            }
             try {
               if (!_speechAvail) {
                 _speechAvail = await _speech.initialize(
@@ -773,12 +922,20 @@ class _BrowserViewState extends State<BrowserView>
         if (uri == null) return NavigationActionPolicy.ALLOW;
         final scheme = uri.scheme.toLowerCase();
 
+        // 3.9.1: pages may not open data: addresses as the whole tab (a
+        // common phishing trick; Chrome blocks it too) or local files.
+        if ((scheme == 'data' && navigationAction.isForMainFrame) ||
+            scheme == 'file' || scheme == 'content') {
+          return NavigationActionPolicy.CANCEL;
+        }
+
         // Standard schemes — let WebView handle normally
         if (scheme == 'https' || scheme == 'http' ||
             scheme == 'data'  || scheme == 'blob' ||
             scheme == 'about' || scheme == 'javascript') {
           return NavigationActionPolicy.ALLOW;
         }
+        final fromSite = _siteOf(_currentUrl);
 
         // intent:// — Android intent URL (Play Store, app deep links, etc.)
         if (scheme == 'intent') {
@@ -788,16 +945,17 @@ class _BrowserViewState extends State<BrowserView>
             final fallbackMatch =
                 RegExp(r'browser_fallback_url=([^;]+)').firstMatch(uriStr);
             if (fallbackMatch != null) {
+              // 3.9.1: the fallback opens in this tab, and only if it is a web address.
               final fallback = Uri.decodeFull(fallbackMatch.group(1)!);
-              final fallbackUri = Uri.parse(fallback);
-              if (await ul.canLaunchUrl(fallbackUri)) {
-                await ul.launchUrl(fallbackUri,
-                    mode: ul.LaunchMode.externalApplication);
+              final fallbackUri = Uri.tryParse(fallback);
+              if (fallbackUri != null &&
+                  (fallbackUri.scheme == 'https' || fallbackUri.scheme == 'http')) {
+                await controller.loadUrl(urlRequest: URLRequest(url: WebUri(fallback)));
                 return NavigationActionPolicy.CANCEL;
               }
             }
-            // Try launching the intent URL directly via Android
-            if (await ul.canLaunchUrl(uri)) {
+            // Try launching the intent URL directly via Android (after asking)
+            if (await ul.canLaunchUrl(uri) && await _confirmExternalApp(fromSite)) {
               await ul.launchUrl(uri,
                   mode: ul.LaunchMode.externalApplication);
             }
@@ -829,9 +987,9 @@ class _BrowserViewState extends State<BrowserView>
         }
 
         // Any other unknown scheme (snssdk://, fb://, tg://, whatsapp://, etc.)
-        // Try to open with the native app, silently cancel if not possible
+        // Open with the native app after asking; silently cancel if not possible
         try {
-          if (await ul.canLaunchUrl(uri)) {
+          if (await ul.canLaunchUrl(uri) && await _confirmExternalApp(fromSite)) {
             await ul.launchUrl(uri,
                 mode: ul.LaunchMode.externalApplication);
           }
@@ -1557,6 +1715,12 @@ class _BrowserViewState extends State<BrowserView>
         onPressed: () async {
           final ok = await BiometricService.verify('Verify it\'s you to fill your saved password');
           if (!ok) return;
+          // 3.9.1: only into the same site (the tab may have moved on).
+          final now = await _wvc?.getUrl();
+          if (now == null || LocalDB.extractDomain(now.toString()) != domain) {
+            _snack('This page is a different site — password not filled');
+            return;
+          }
           final js = PasswordService.autofillJS(
               creds['username'] ?? '', creds['password'] ?? '');
           await _wvc?.evaluateJavascript(source: js);
@@ -1743,10 +1907,10 @@ h1{font-size:22px;font-weight:800;color:#FF5252;letter-spacing:-.3px}
 <div class="icon">🛑</div>
 <span class="badge">NOVA SHIELD BLOCKED</span>
 <h1>Dangerous Site Blocked</h1>
-<div class="domain">''' + domain + r'''</div>
-<p class="sub">NOVA Shield detected this site as <strong style="color:#FF5252">''' + type + r'''</strong>
-using Cloudflare threat intelligence. Your connection is protected.</p>
-<p class="cf">Powered by Cloudflare DNS-over-HTTPS · NOVA Shield v2.0</p>
+<div class="domain">''' + const HtmlEscape().convert(domain) + r'''</div>
+<p class="sub">NOVA Shield detected this site as <strong style="color:#FF5252">''' + const HtmlEscape().convert(type) + r'''</strong>
+using NOVA threat intelligence. Your connection is protected.</p>
+<p class="cf">Encrypted DNS · NOVA Shield</p>
 <a class="back" href="javascript:history.back()">← Go Back to Safety</a>
 </body></html>''';
   }

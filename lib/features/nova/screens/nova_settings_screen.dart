@@ -365,7 +365,7 @@ class _NovaSettingsScreenState extends State<NovaSettingsScreen> with WidgetsBin
                       '• Your message and the last few messages of the current conversation '
                       'are sent so NOVA can answer.\n'
                       '• Spoken replies: the reply text is sent to the NOVA Voice service '
-                      '(Tech Lyfe, using Microsoft\'s online voices) to create the audio. '
+                      'to create the audio. '
                       'The audio is played, then deleted from your phone.\n'
                       '• "Hey NOVA" listens on your phone only: sound is checked in memory and '
                       'never recorded, kept or sent until NOVA opens (also with the screen off, '

@@ -19,8 +19,8 @@ void main() {
     expect(jsonDecode(literal), pass);
   });
 
-  test('version fallback is 3.9.1 (18)', () {
-    expect(AppInfo.fallbackVersion, '3.9.1');
-    expect(AppInfo.fallbackBuild, 18);
+  test('version fallback matches pubspec (3.10.0+19)', () {
+    expect(AppInfo.fallbackVersion, '3.10.0');
+    expect(AppInfo.fallbackBuild, 19);
   });
 }

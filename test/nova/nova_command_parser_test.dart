@@ -155,12 +155,13 @@ void main() {
   });
 
   group("things NOVA can't do are answered honestly (never \"done\")", () {
-    test('lock screen, screenshots, power, alarms, messages, torch', () {
+    // Screenshots moved out of this list: NOVA Capture can take them now
+    // (see test/nova_capture/capture_voice_test.dart).
+    test('lock screen, power, alarms, messages, torch', () {
       for (final input in [
         'lock my screen',
         'Hey NOVA, lock the phone',
         'turn off the screen',
-        'take a screenshot',
         'restart my phone',
         'turn off my phone',
         'set an alarm for 6am',

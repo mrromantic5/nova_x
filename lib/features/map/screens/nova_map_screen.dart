@@ -111,6 +111,7 @@ class _NovaMapScreenState extends State<NovaMapScreen>
     _fabAnim = AnimationController(vsync: this,
         duration: const Duration(milliseconds: 400));
     if (!RewardsEntitlements.isPremium) return; // gated — skip map/location/API init
+    MapService.prepare().then((_) { if (mounted) setState(() {}); }); // photo sign-in header
     _initSpeech();
     _ipLocateFirst();
   }
@@ -700,6 +701,7 @@ class _NovaMapScreenState extends State<NovaMapScreen>
             child: p.photoRef != null
                 ? Image.network(
                     MapService.getPhotoUrl(p.photoRef!, maxWidth: 200),
+                    headers: MapService.photoHeaders,
                     fit: BoxFit.cover,
                     errorBuilder: (_, __, ___) => _photoPlaceholder(_catIcon(_selectedCat)),
                     loadingBuilder: (_, child, loading) => loading == null ? child
@@ -768,6 +770,7 @@ class _NovaMapScreenState extends State<NovaMapScreen>
               height: 180, width: double.infinity,
               child: Image.network(
                 MapService.getPhotoUrl(p.photoRef!, maxWidth: 800),
+                headers: MapService.photoHeaders,
                 fit: BoxFit.cover,
                 errorBuilder: (_, __, ___) => Container(
                   height: 180, color: _bg2,

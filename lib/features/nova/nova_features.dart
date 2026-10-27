@@ -28,6 +28,12 @@ import '../settings/screens/settings_screen.dart';
 import '../shield/screens/nova_shield_screen.dart';
 import 'screens/nova_settings_screen.dart';
 import 'widgets/nova_launch_screen.dart';
+import '../nova_capture/models/media_asset.dart';
+import '../nova_capture/screens/capture_dashboard.dart';
+import '../nova_capture/screens/capture_latest_screen.dart';
+import '../nova_capture/screens/capture_media_library.dart';
+import '../nova_capture/screens/recording_settings_screen.dart';
+import '../nova_capture/services/media_library_service.dart';
 
 class NovaFeatures {
   NovaFeatures._();
@@ -40,6 +46,9 @@ class NovaFeatures {
     'nova_ai', 'nova_settings', 'browser_settings', 'nova_music', 'nova_network',
     'cyber', 'dev_tools', 'code_editor', 'business', 'customize', 'profile',
     'offline_pages', 'notifications', 'premium', 'incognito', 'new_tab', 'home',
+    // NOVA Capture (screenshots + screen recorder)
+    'capture', 'capture_library', 'capture_shots', 'capture_videos', 'capture_settings',
+    'capture_latest', 'capture_latest_shot', 'capture_latest_video', 'capture_edit_latest',
   };
 
   static final RegExp _idShape = RegExp(r'^[a-z_]{1,30}$');
@@ -79,6 +88,15 @@ class NovaFeatures {
         'premium' => const SubscriptionScreen(),
         'incognito' => const BrowserView(initialQuery: 'https://www.google.com', incognito: true),
         'new_tab' => BrowserView(initialQuery: newTabUrl()),
+        'capture' => const CaptureDashboard(),
+        'capture_library' => const CaptureMediaLibrary(),
+        'capture_shots' => const CaptureMediaLibrary(initialFilter: MediaFilter.screenshots),
+        'capture_videos' => const CaptureMediaLibrary(initialFilter: MediaFilter.recordings),
+        'capture_settings' => const RecordingSettingsScreen(),
+        'capture_latest' => const CaptureLatestScreen(),
+        'capture_latest_shot' => const CaptureLatestScreen(kind: MediaKind.screenshot),
+        'capture_latest_video' => const CaptureLatestScreen(kind: MediaKind.recording),
+        'capture_edit_latest' => const CaptureLatestScreen(edit: true),
         _ => null,
       };
 
@@ -107,6 +125,10 @@ class NovaFeatures {
         'incognito' => 'an incognito tab',
         'new_tab' => 'a new tab',
         'home' => 'Home',
+        'capture' || 'capture_settings' => 'NOVA Capture',
+        'capture_library' || 'capture_shots' || 'capture_videos' => 'your captures',
+        'capture_latest' || 'capture_latest_shot' || 'capture_latest_video' => 'your latest capture',
+        'capture_edit_latest' => 'the screenshot editor',
         _ => 'NOVA X',
       };
 
@@ -133,6 +155,10 @@ class NovaFeatures {
         'premium' => Icons.workspace_premium_rounded,
         'incognito' => Icons.person_off_rounded,
         'new_tab' => Icons.add_box_rounded,
+        'capture' || 'capture_settings' => Icons.screenshot_monitor_rounded,
+        'capture_library' || 'capture_shots' || 'capture_videos' => Icons.photo_library_rounded,
+        'capture_latest' || 'capture_latest_shot' || 'capture_latest_video' => Icons.image_rounded,
+        'capture_edit_latest' => Icons.edit_rounded,
         _ => Icons.home_rounded,
       };
 

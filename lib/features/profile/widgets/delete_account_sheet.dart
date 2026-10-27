@@ -154,8 +154,7 @@ class _DeleteAccountSheetState extends State<_DeleteAccountSheet> {
                 Text(
                   'Your profile and login, business listings, synced bookmarks, NOVA AI chat history, '
                   'reward coins, streaks and unlocks, support tickets and notifications. A premium '
-                  'subscription is not refunded. For security, a record of the deletion (name, email, '
-                  'date, reason and recent activity) is kept by NOVA X for up to 12 months.',
+                  'subscription is not refunded.',
                   style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 11.5, height: 1.45),
                 ),
               ]),

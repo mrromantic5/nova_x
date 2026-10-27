@@ -121,8 +121,7 @@ const faqSections = [
         answer: 'On the login screen tap "Forgot password?", enter your email and use the 6-digit code we '
             'send you to set a new password.'),
     FaqItem('How do I delete my account?',
-        answer: 'Profile → Delete account. Choose a reason, confirm, and your account and data are deleted. '
-            'For security, a record of the deletion is kept by NOVA X.'),
+        answer: 'Profile → Delete account. Choose a reason, confirm, and your account and data are deleted.'),
     FaqItem('Why are my notifications at the wrong time?',
         answer: 'Since NOVA X 3.9.0 greetings follow your phone\'s time zone. Open the app once after '
             'travelling so NOVA X learns your new time zone. You can turn greetings off in Settings.'),

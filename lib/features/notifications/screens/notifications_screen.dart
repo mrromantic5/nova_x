@@ -73,12 +73,49 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     });
   }
 
-  Widget _inboxCard(InboxItem n) {
+  /// Support replies: same gestures as the other notifications —
+  /// swipe right to delete, swipe left (or tap) to open.
+  Widget _inboxCard(InboxItem n) => Dismissible(
+        key: Key('inbox_${n.id}'),
+        direction: DismissDirection.horizontal,
+        background: _swipeBg(
+            color: AppTheme.danger,
+            icon: Icons.delete_rounded,
+            label: 'Delete',
+            alignment: Alignment.centerLeft),
+        secondaryBackground: _swipeBg(
+            color: AppTheme.success,
+            icon: Icons.forum_rounded,
+            label: 'Open',
+            alignment: Alignment.centerRight),
+        confirmDismiss: (dir) async {
+          if (dir == DismissDirection.startToEnd) return true;
+          await _openInboxItem(n);
+          return false;
+        },
+        // Removed from the list only after the slide-out animation ends.
+        onDismissed: (_) => _deleteInboxItem(n),
+        child: _inboxCardBody(n),
+      );
+
+  void _deleteInboxItem(InboxItem n) {
+    setState(() => _inbox = _inbox.where((x) => x.id != n.id).toList());
+    PlatformApi.deleteInboxItems([n.id]);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('Removed', style: GoogleFonts.inter(color: Colors.white)),
+      backgroundColor: AppTheme.bgElevated,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      duration: const Duration(seconds: 2),
+    ));
+  }
+
+  Widget _inboxCardBody(InboxItem n) {
     final unread = !n.isRead;
     final closed = n.kind == 'support_closed';
     final color = closed ? AppTheme.textHint : AppTheme.accentCyan;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
       child: Material(
         color: AppTheme.bgCard,
         borderRadius: BorderRadius.circular(18),

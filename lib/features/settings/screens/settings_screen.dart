@@ -16,6 +16,9 @@ import '../../profile/screens/profile_screen.dart';
 import '../../customization/screens/customization_screen.dart';
 import '../../customization/screens/speed_dial_editor_screen.dart';
 import '../../nova/screens/nova_settings_screen.dart';
+import '../../support/screens/support_screen.dart';
+import '../../support/screens/issue_report_screen.dart';
+import 'package:nova_x/core/services/app_info.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -38,6 +41,7 @@ class _SettingsScreenState extends State<SettingsScreen>
   @override
   void initState() {
     super.initState();
+    AppInfo.load().then((_) { if (mounted) setState(() {}); }); // real installed version
     _engine                = LocalDB.getSearchEngine();
     _adBlock               = LocalDB.getAdBlockEnabled();
     _savePasswords         = LocalDB.getSavePasswordsEnabled();
@@ -520,91 +524,31 @@ class _SettingsScreenState extends State<SettingsScreen>
               'How we collect and protect your data',
               AppTheme.accentPurple,
               () => _push(const PrivacyScreen())),
-            _actionTile(
-              Icons.email_outlined, 'Contact Us',
-              'emmanuelkgyasiarthur@gmail.com',
+            // 3.9.1: no personal contact details — help goes through Support.
+            _navTile(
+              Icons.support_agent_rounded, 'Help & Support',
+              'FAQ, NOVA answers and support tickets',
               AppTheme.success,
-              () => _showContactSheet(),
-            ),
+              () => _push(const SupportScreen())),
+            _navTile(
+              Icons.bug_report_outlined, 'Report an Issue',
+              'Tell the NOVA X team about a problem',
+              AppTheme.warning,
+              () => _push(const IssueReportScreen())),
           ]),
 
           // ── About ──────────────────────────────────────────────────────
           _sectionHeader('About NOVA X'),
           _card([
-            _infoTile(Icons.info_outline_rounded,   'Version',   '2.2.0'),
-            _infoTile(Icons.person_outline_rounded, 'Developer', 'Kobby (Mr. Romantic)'),
-            _infoTile(Icons.business_outlined,      'Company',   'Tech Lyfe Team'),
-            _infoTile(Icons.code_rounded,           'Engine',    'NOVA X Engine v2.2'),
+            _infoTile(Icons.info_outline_rounded,   'Version',   '${AppInfo.version} (${AppInfo.build})'),
+            _infoTile(Icons.person_outline_rounded, 'Developer', 'Tech Lyfe Team'),
+            _infoTile(Icons.business_outlined,      'Company',   'Tech Lyfe'),
+            _infoTile(Icons.code_rounded,           'Engine',    'NOVA X Engine ${AppInfo.version}'),
           ]),
         ],
       ),
     );
   }
-
-  void _showContactSheet() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => Container(
-        decoration: const BoxDecoration(
-          color: AppTheme.bgCard,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-        ),
-        padding: const EdgeInsets.fromLTRB(24, 12, 24, 40),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Container(width: 40, height: 4,
-            margin: const EdgeInsets.only(bottom: 20),
-            decoration: BoxDecoration(color: AppTheme.divider,
-                borderRadius: BorderRadius.circular(2))),
-          Row(children: [
-            Container(width: 44, height: 44,
-              decoration: BoxDecoration(gradient: AppTheme.primaryGradient,
-                  borderRadius: BorderRadius.circular(14)),
-              child: const Icon(Icons.support_agent_rounded,
-                  color: Colors.white, size: 22)),
-            const SizedBox(width: 14),
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Contact Us', style: GoogleFonts.spaceGrotesk(
-                  color: AppTheme.textPrimary, fontSize: 18,
-                  fontWeight: FontWeight.w800)),
-              Text('Tech Lyfe Team', style: GoogleFonts.inter(
-                  color: AppTheme.textHint, fontSize: 12)),
-            ]),
-          ]),
-          const SizedBox(height: 20),
-          _contactTile(Icons.email_outlined, 'Email',
-              'emmanuelkgyasiarthur@gmail.com', AppTheme.accentCyan),
-          const SizedBox(height: 10),
-          _contactTile(Icons.chat_outlined, 'WhatsApp',
-              '+233 540 964 040', AppTheme.success),
-          const SizedBox(height: 10),
-          _contactTile(Icons.chat_outlined, 'WhatsApp',
-              '+233 502 733 366', AppTheme.success),
-        ]),
-      ),
-    );
-  }
-
-  Widget _contactTile(IconData icon, String label,
-      String value, Color color) =>
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.08),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: color.withOpacity(0.2)),
-        ),
-        child: Row(children: [
-          Icon(icon, color: color, size: 18),
-          const SizedBox(width: 12),
-          Text('$label: ', style: GoogleFonts.inter(
-              color: AppTheme.textHint, fontSize: 13,
-              fontWeight: FontWeight.w600)),
-          Expanded(child: Text(value, style: GoogleFonts.inter(
-              color: AppTheme.textPrimary, fontSize: 13,
-              fontWeight: FontWeight.w700))),
-        ]),
-      );
 
   // ── Greeting Notifications toggle ────────────────────────────────────────
   Widget _greetingNotificationsTile() {

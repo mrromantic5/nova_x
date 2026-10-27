@@ -44,7 +44,12 @@ enum NovaActionType {
 
   /// NOVA Music: pause · resume · next · previous · stop · now_playing,
   /// and the phone's media volume (volume_up · volume_down · mute · unmute).
-  musicControl('music_control');
+  musicControl('music_control'),
+
+  /// NOVA Capture: screenshots, screen recording and saved captures. Built
+  /// only by NOVA's local command parser from an allow-listed intent
+  /// (CaptureIntent); the AI planner can never produce it.
+  capture('capture');
 
   const NovaActionType(this.wireName);
 

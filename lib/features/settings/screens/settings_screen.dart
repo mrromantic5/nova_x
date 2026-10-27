@@ -19,6 +19,7 @@ import '../../nova/screens/nova_settings_screen.dart';
 import '../../support/screens/support_screen.dart';
 import '../../support/screens/issue_report_screen.dart';
 import 'package:nova_x/core/services/app_info.dart';
+import 'package:nova_x/features/nova_capture/screens/capture_dashboard.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -248,6 +249,9 @@ class _SettingsScreenState extends State<SettingsScreen>
             _navTile(Icons.auto_awesome_rounded, 'NOVA Assistant',
                 'Voice, digital assistant & permissions', AppTheme.accentCyan,
                 () => _push(const NovaSettingsScreen())),
+            _navTile(Icons.screenshot_monitor_rounded, 'NOVA Capture',
+                'Screenshots, screen recording & settings', const Color(0xFFFF3B4E),
+                () => _push(const CaptureDashboard())),
           ]),
 
           // ── NOVA Shield ───────────────────────────────────────────────────────

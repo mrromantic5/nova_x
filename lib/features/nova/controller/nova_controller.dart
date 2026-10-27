@@ -801,6 +801,8 @@ class NovaController extends ChangeNotifier {
 
   Future<void> _speak(String text, int s) async {
     if (!_settings.speakReplies || !_alive(s) || text.trim().isEmpty) return;
+    // Never speak into a screen recording that has sound (shown as text instead).
+    if (NovaCaptureActions.instance?.silenceSpeech == true) return;
     _completeSpeech();
     final id = 'nova_${s}_${_utterance++}';
     final done = Completer<void>();

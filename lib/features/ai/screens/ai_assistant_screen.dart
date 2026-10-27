@@ -27,6 +27,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:nova_x/core/services/rewards_service.dart';
+import 'package:nova_x/core/services/api_service.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
 import 'package:nova_x/features/ai/services/nova_chat_commands.dart';
 import 'package:nova_x/features/ai/services/nova_chat_repository.dart';
@@ -119,11 +120,15 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
   bool _measuring = false;
   List<NovaChoice> _choices = const [];
 
-  // ── API endpoints (image & video generation — unchanged) ───────────────────
-  static const String _imageApi =
-      'https://ab-text-toimgfast.abrahamdw882.workers.dev/?text=';
-  static const String _videoApi =
-      'https://eliteprotech-apis.zone.id/aivideo?q=';
+  // ── Image & video generation (3.9.1: through the NOVA X server, which
+  // keeps the providers private and enforces the daily limits) ────────────
+  static const String _imageApi = '${ApiService.baseUrl}/api/v1/gen/image?text=';
+  static const String _videoApi = '${ApiService.baseUrl}/api/v1/gen/video?q=';
+
+  static Future<Map<String, String>> _authHeaders() async {
+    final t = await ApiService.getToken();
+    return t == null ? const {} : {'Authorization': 'Bearer $t'};
+  }
 
   static const List<String> _suggestions = [
     'Test my internet speed',
@@ -457,6 +462,30 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
     if (mounted) {
       setState(() { _isSpeaking = false; _speakingId = null; _utteranceId = null; });
     }
+  }
+
+  // ── Feedback on answers (3.9.1) ─────────────────────────────────────────────
+  String? _feedbackOf(String id) {
+    for (final m in _msgs) {
+      if (m['id'] == id) return m['fb'];
+    }
+    return null;
+  }
+
+  void _setFeedback(String id, String? value) {
+    final i = _msgs.indexWhere((m) => m['id'] == id);
+    if (i < 0) return;
+    setState(() {
+      final m = Map<String, String>.from(_msgs[i]);
+      if (value == null) {
+        m.remove('fb');
+      } else {
+        m['fb'] = value;
+      }
+      _msgs[i] = m;
+    });
+    if (value != null) AnalyticsService.log('ai_feedback', feature: 'nova_ai', props: {'value': value});
+    _persist();
   }
 
   // ── Report / Flag ──────────────────────────────────────────────────────────
@@ -1034,13 +1063,14 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
   /// "creating" card with it. Failures give the use back.
   Future<void> _generateImage(String prompt, String genId) async {
     final chatId = _chatId;
-    final url = '$_imageApi${Uri.encodeComponent(prompt)}';
+    final url = '$_imageApi${Uri.encodeQueryComponent(prompt)}';
     try {
       final res = await _dio.get<List<int>>(
         url,
         options: Options(
           responseType: ResponseType.bytes,
-          receiveTimeout: const Duration(seconds: 120),
+          receiveTimeout: const Duration(seconds: 130),
+          headers: await _authHeaders(),
         ),
       );
       final data = res.data;
@@ -1055,7 +1085,9 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
         ref = null; // phone storage full: still shown from the web address
       }
       AnalyticsService.log('image_generated', feature: 'nova_ai');
-      if (_updateMsg(genId, ref == null ? '[IMAGE]$url' : '[IMAGE]$url\n$ref')) _persist();
+      // The image lives on the phone; the server address is never re-used
+      // (it would create a new image).
+      if (_updateMsg(genId, ref == null ? '[IMAGE]nova:image' : '[IMAGE]nova:image\n$ref')) _persist();
       _scrollEnd();
     } catch (_) {
       await NovaQuota.refund(NovaQuotaKind.image);
@@ -1066,8 +1098,8 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
 
   Future<void> _generateVideo(String prompt, String loadId) async {
     try {
-      final res =
-          await _dio.get('$_videoApi${Uri.encodeComponent(prompt)}');
+      final res = await _dio.get('$_videoApi${Uri.encodeQueryComponent(prompt)}',
+          options: Options(receiveTimeout: const Duration(seconds: 150), headers: await _authHeaders()));
       final url = res.data?['result']?['url'] as String? ??
                   res.data?['url']            as String?;
       if (url == null || url.isEmpty) throw Exception('No video URL');
@@ -1365,15 +1397,19 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
                 color: _speakingId == id ? Colors.redAccent : AppTheme.textHint,
                 onTap: () => _speakMessage(id, content),
               ),
-              const SizedBox(width: 16),
-              _ActionBtn(
-                icon: FontAwesomeIcons.flag,
-                label: 'Report',
-                color: AppTheme.textHint,
-                onTap: () => _reportContent(
-                  contentType: 'text',
-                  contentRef: content.length > 500 ? content.substring(0, 500) : content,
-                ),
+              const Spacer(),
+              // 3.9.1: 👍 / 👎 feedback. Thumbs down opens the report sheet.
+              _FeedbackButtons(
+                value: _feedbackOf(id),
+                onChanged: (v) {
+                  _setFeedback(id, v);
+                  if (v == 'down') {
+                    _reportContent(
+                      contentType: 'text',
+                      contentRef: content.length > 500 ? content.substring(0, 500) : content,
+                    );
+                  }
+                },
               ),
             ]),
           ),
@@ -1466,6 +1502,23 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
   Widget _buildImageWidget(String url, {String? ref}) {
     final file = ref == null ? null : NovaMediaStore.fileOf(ref);
     final local = file != null && file.existsSync();
+    // 3.9.1 images are kept on the phone only ("nova:image"): nothing to
+    // download again if the file was removed.
+    if (!local && !url.startsWith('https://')) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(color: AppTheme.bgCard, borderRadius: BorderRadius.circular(16)),
+          child: const Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.broken_image_outlined, color: AppTheme.textHint, size: 18),
+            SizedBox(width: 8),
+            Text('Image no longer on this phone', style: TextStyle(color: AppTheme.textHint, fontSize: 12)),
+          ]),
+        ),
+      );
+    }
     return Align(
       alignment: Alignment.centerLeft,
       child: Column(
@@ -2472,4 +2525,102 @@ class _TypingDotsState extends State<_TypingDots>
       }),
     ),
   );
+}
+
+
+/// 👍 / 👎 under NOVA's answers (Font Awesome). 👍 fills in with a little
+/// bounce; tapping it again removes it. 👎 fills in and opens the report sheet.
+class _FeedbackButtons extends StatefulWidget {
+  const _FeedbackButtons({required this.value, required this.onChanged});
+
+  /// 'up', 'down' or null.
+  final String? value;
+  final ValueChanged<String?> onChanged;
+
+  @override
+  State<_FeedbackButtons> createState() => _FeedbackButtonsState();
+}
+
+class _FeedbackButtonsState extends State<_FeedbackButtons> with SingleTickerProviderStateMixin {
+  late final AnimationController _pop = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 420),
+  );
+  late final Animation<double> _scale = TweenSequence<double>([
+    TweenSequenceItem(tween: Tween(begin: 1.0, end: 1.45).chain(CurveTween(curve: Curves.easeOut)), weight: 40),
+    TweenSequenceItem(tween: Tween(begin: 1.45, end: 0.9).chain(CurveTween(curve: Curves.easeInOut)), weight: 30),
+    TweenSequenceItem(tween: Tween(begin: 0.9, end: 1.0).chain(CurveTween(curve: Curves.easeOut)), weight: 30),
+  ]).animate(_pop);
+
+  @override
+  void dispose() {
+    _pop.dispose();
+    super.dispose();
+  }
+
+  void _up() {
+    HapticFeedback.lightImpact();
+    if (widget.value == 'up') {
+      widget.onChanged(null);
+      return;
+    }
+    _pop.forward(from: 0);
+    widget.onChanged('up');
+  }
+
+  void _down() {
+    HapticFeedback.selectionClick();
+    widget.onChanged('down');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final up = widget.value == 'up';
+    final down = widget.value == 'down';
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      Semantics(
+        button: true,
+        label: up ? 'Good answer (selected)' : 'Good answer',
+        child: GestureDetector(
+          onTap: _up,
+          behavior: HitTestBehavior.opaque,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            child: ScaleTransition(
+              scale: _scale,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                child: FaIcon(
+                  up ? FontAwesomeIcons.solidThumbsUp : FontAwesomeIcons.thumbsUp,
+                  key: ValueKey(up),
+                  color: up ? AppTheme.accentCyan : AppTheme.textHint,
+                  size: 14,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+      Semantics(
+        button: true,
+        label: 'Bad answer — report it',
+        child: GestureDetector(
+          onTap: _down,
+          behavior: HitTestBehavior.opaque,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 180),
+              child: FaIcon(
+                down ? FontAwesomeIcons.solidThumbsDown : FontAwesomeIcons.thumbsDown,
+                key: ValueKey(down),
+                color: down ? const Color(0xFFFF6B6B) : AppTheme.textHint,
+                size: 14,
+              ),
+            ),
+          ),
+        ),
+      ),
+    ]);
+  }
 }

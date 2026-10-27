@@ -456,7 +456,8 @@ class _PaystackPayScreenState extends State<_PaystackPayScreen> {
             javaScriptEnabled: true,
             useWideViewPort: true,
             loadWithOverviewMode: true,
-            mixedContentMode: MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
+            // 3.9.1: the payment page must load only over HTTPS.
+            mixedContentMode: MixedContentMode.MIXED_CONTENT_NEVER_ALLOW,
           ),
           onLoadStart: (c, url) {
             final ref = _refFrom(url?.toString() ?? '');

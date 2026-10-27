@@ -5,6 +5,7 @@
 // AI output is untrusted: unknown actions, unsafe URL schemes, oversized or
 // malformed arguments are rejected, never "best-effort" executed.
 
+import '../../nova_capture/controllers/capture_voice_commands.dart';
 import '../models/nova_models.dart';
 
 class NovaActionValidator {
@@ -62,7 +63,9 @@ class NovaActionValidator {
   /// Validates a planner action `{name, args}`. Returns null if rejected.
   static NovaAction? fromPlanner(String? name, Object? rawArgs) {
     final type = NovaActionType.fromWire(name);
-    if (type == null) return null;
+    // Screen capture is started only from NOVA's own command recognition,
+    // never from text an AI model returned.
+    if (type == null || type == NovaActionType.capture) return null;
     final args = <String, String>{};
     if (rawArgs is Map) {
       rawArgs.forEach((k, v) {
@@ -130,6 +133,13 @@ class NovaActionValidator {
         final command = args['command'];
         if (command == null || !musicCommands.contains(command)) return null;
         return NovaAction(type, {'command': command});
+      case NovaActionType.capture:
+        final intent = CaptureIntent.fromId(args['command']);
+        if (intent == null) return null;
+        final rest = Map<String, String>.of(args)..remove('command');
+        final clean = CaptureCommandRegistry.validArgs(intent, rest);
+        if (clean == null) return null;
+        return NovaAction(type, {'command': intent.id, ...clean});
     }
   }
 
@@ -253,6 +263,9 @@ class NovaActionValidator {
     'private mode': 'incognito', 'incognito mode': 'incognito', 'new private tab': 'incognito',
     'new tab': 'new_tab', 'a new tab': 'new_tab',
     'home': 'home', 'home page': 'home', 'homepage': 'home', 'home screen': 'home', 'nova x home': 'home',
+    'nova capture': 'capture', 'screenshot studio': 'capture', 'screen recorder': 'capture',
+    'capture studio': 'capture', 'my captures': 'capture_library', 'my screenshots': 'capture_shots',
+    'my recordings': 'capture_videos', 'screen recordings': 'capture_videos',
   };
 
   /// Web pages used when an app isn't installed (opened inside NOVA X).

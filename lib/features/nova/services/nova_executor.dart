@@ -29,6 +29,19 @@ abstract class NovaHost {
   bool get isClosed;
 }
 
+/// NOVA Capture actions (screenshots, screen recording), provided by
+/// lib/features/nova_capture. Results always come from the native capture
+/// state — an action never reports success it didn't verify.
+abstract class NovaCaptureActions {
+  /// Installed at start-up by CaptureVoiceActionHandler.install().
+  static NovaCaptureActions? instance;
+
+  Future<NovaActionResult> run(NovaAction action, NovaHost host);
+
+  /// True while NOVA's voice could be recorded (a recording with sound).
+  bool get silenceSpeech;
+}
+
 class NovaExecutor {
   NovaExecutor({
     required NovaNativeApi native,
@@ -67,6 +80,11 @@ class NovaExecutor {
     'incognito': 'an incognito tab',
     'new_tab': 'a new tab',
     'home': 'the home page',
+    'capture': 'NOVA Capture',
+    'capture_library': 'your captures',
+    'capture_shots': 'your screenshots',
+    'capture_videos': 'your recordings',
+    'capture_settings': 'recording settings',
   };
 
   Future<NovaActionResult> execute(NovaAction a) async {
@@ -82,6 +100,7 @@ class NovaExecutor {
         NovaActionType.navigate => _navigate(a),
         NovaActionType.playMusic => _playMusic(a),
         NovaActionType.musicControl => _musicControl(a),
+        NovaActionType.capture => _capture(a),
       };
     } catch (_) {
       return _result(a, NovaActionStatus.failed, 'Something went wrong while doing that.');
@@ -395,6 +414,16 @@ class NovaExecutor {
           "Nothing is playing right now. Say “play” and a song name, or “play some music”.");
     }
     return _nativeFailure(a, r.status);
+  }
+
+  // ── NOVA Capture ──────────────────────────────────────────────────────────
+
+  Future<NovaActionResult> _capture(NovaAction a) async {
+    final handler = NovaCaptureActions.instance;
+    if (handler == null) {
+      return _result(a, NovaActionStatus.unsupported, "Screen capture isn't available here.");
+    }
+    return handler.run(a, _host);
   }
 
   // ── Settings & maps ───────────────────────────────────────────────────────

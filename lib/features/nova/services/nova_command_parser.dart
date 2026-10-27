@@ -8,6 +8,7 @@
 // null and goes to the NOVA AI (planner, then chat). Every action it emits is
 // built through NovaActionValidator, exactly like AI-planned actions.
 
+import '../../nova_capture/controllers/capture_voice_commands.dart';
 import '../models/nova_models.dart';
 import '../nova_config.dart';
 import 'nova_validator.dart';
@@ -44,6 +45,10 @@ class NovaCommandParser {
       return const NovaCancelPlan();
     }
 
+    // NOVA Capture: screenshots and screen recording (local, works offline).
+    final capture = _capture(text);
+    if (capture != null) return capture;
+
     final time = _timeOrDate(text);
     if (time != null) return NovaReplyPlan(time);
 
@@ -71,6 +76,20 @@ class NovaCommandParser {
     t = t.replaceFirst(_politePrefix, '');
     t = t.replaceFirst(_politeSuffix, '');
     return t.replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+
+  // ── NOVA Capture ──────────────────────────────────────────────────────────
+
+  /// A capture command (always validated), a question when the request is
+  /// unclear, or null when the text isn't about screen capture.
+  NovaPlan? _capture(String t) {
+    final m = CaptureCommandRegistry.match(t);
+    if (m is CaptureClarification) return NovaClarifyPlan(m.question, options: m.options);
+    if (m is CaptureCommand) {
+      final a = NovaActionValidator.build(NovaActionType.capture, {'command': m.intent.id, ...m.args});
+      return a == null ? null : NovaActionsPlan([a]);
+    }
+    return null;
   }
 
   // ── Local answers ─────────────────────────────────────────────────────────
@@ -103,11 +122,6 @@ class NovaCommandParser {
         RegExp(r'^(?:lock screen|screen off|lock it)$').hasMatch(t)) {
       return "I can't lock your screen — Android only lets special system apps do that. "
           'Press the power button to lock it.';
-    }
-    if (RegExp(r'^(?:take|capture|grab)(?: a| me a| the)? (?:screenshot|screen shot|screen capture|screengrab)$')
-            .hasMatch(t) ||
-        t == 'screenshot') {
-      return "I can't take screenshots. Press the power and volume-down buttons together.";
     }
     if (RegExp(r'^(?:restart|reboot|shut ?down|power off|turn off|switch off)(?: the| my)? (?:phone|device|mobile)$')
             .hasMatch(t) ||

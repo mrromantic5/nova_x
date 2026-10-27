@@ -18,6 +18,8 @@ import 'features/browser/screens/browser_view.dart';
 import 'features/nova/nova_overlay.dart';
 import 'features/nova/services/nova_prefs.dart';
 import 'features/support/screens/support_screen.dart';
+import 'features/nova_capture/controllers/capture_voice_action_handler.dart';
+import 'features/nova_capture/widgets/floating_recording_controls.dart';
 import 'package:nova_x/core/services/analytics_service.dart';
 import 'package:nova_x/core/services/app_info.dart';
 import 'package:nova_x/core/services/device_clock.dart';
@@ -45,6 +47,7 @@ void main() async {
   await Firebase.initializeApp();
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   NovaToast.navigatorKey = navigatorKey; // app-wide bottom toasts (rewards, limits)
+  CaptureVoiceActionHandler.install(); // NOVA Capture: screenshots + screen recorder (offline)
   runApp(const ProviderScope(child: NovaXApp()));
 }
 
@@ -59,6 +62,8 @@ Future<void> novaAssistantMain() async {
   await LocalDB.initialize(); // search engine preference for web searches
   await DeviceClock.load(); // NOVA's answers use the phone's date and time
   final settings = await NovaPrefs.load();
+  // "Hey NOVA, start screen recording" from the floating panel.
+  CaptureVoiceActionHandler.install();
   runApp(NovaAssistantApp(settings: settings));
 }
 
@@ -258,6 +263,8 @@ class _NovaXAppState extends State<NovaXApp> with WidgetsBindingObserver {
       debugShowCheckedModeBanner: false,
       navigatorKey:              navigatorKey,
       navigatorObservers:        [_analyticsObserver],
+      // NOVA Capture: recording indicator + controls over every screen.
+      builder: (context, child) => CaptureOverlayHost(child: child ?? const SizedBox.shrink()),
       theme: ThemeData(
         useMaterial3:            true,
         scaffoldBackgroundColor: AppTheme.bgDark,

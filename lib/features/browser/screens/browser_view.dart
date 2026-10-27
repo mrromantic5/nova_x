@@ -35,6 +35,8 @@ import 'package:nova_x/features/ai/services/nova_media_store.dart';
 import 'package:nova_x/features/nova/models/nova_models.dart';
 import 'package:nova_x/features/nova/nova_launcher.dart';
 import 'package:nova_x/features/nova/services/nova_wake.dart';
+import 'package:nova_x/features/nova_capture/services/webpage_capture_service.dart';
+import 'package:nova_x/features/nova_capture/widgets/capture_action_sheet.dart';
 
 class BrowserView extends StatefulWidget {
   final String initialQuery;
@@ -301,10 +303,15 @@ class _BrowserViewState extends State<BrowserView>
     _isBookmarked    = widget.incognito ? false : LocalDB.isBookmarked(initial);
     _adBlockEnabled  = LocalDB.getAdBlockEnabled();
     _savePasswords   = LocalDB.getSavePasswordsEnabled();
+    WebpageCaptureService.register(_captureTarget);
   }
+
+  /// NOVA Capture: lets "Screenshot this page" use this tab.
+  late final _BrowserCaptureTarget _captureTarget = _BrowserCaptureTarget(this);
 
   @override
   void dispose() {
+    WebpageCaptureService.unregister(_captureTarget);
     // Incognito: clear cookies + cache on exit
     if (widget.incognito && _wvc != null) {
       _wvc!.clearCache();
@@ -1526,6 +1533,11 @@ class _BrowserViewState extends State<BrowserView>
             () { Navigator.pop(context); _askNovaAboutPage(); },
             color: AppTheme.accentCyan),
 
+          // ── NOVA CAPTURE (screenshots + screen recording) ──────────────────
+          _menuTile(Icons.screenshot_monitor_rounded, 'Screenshot & record',
+            () { Navigator.pop(context); CaptureActionSheet.show(context, page: _captureTarget); },
+            color: const Color(0xFFFF3B4E)),
+
           // ── AD BLOCKER ──────────────────────────────────────────────────────
           ListTile(
             contentPadding: EdgeInsets.zero, dense: true,
@@ -1983,4 +1995,26 @@ using NOVA threat intelligence. Your connection is protected.</p>
       ),
     );
   }
+}
+
+/// The open tab as a NOVA Capture target (the page itself, through the
+/// browser engine — no screen-capture permission involved).
+class _BrowserCaptureTarget implements WebCaptureTarget {
+  _BrowserCaptureTarget(this._s);
+  final _BrowserViewState _s;
+
+  @override
+  InAppWebViewController? get captureController => _s.mounted ? _s._wvc : null;
+
+  @override
+  String get captureTitle => _s._pageTitle;
+
+  @override
+  String get captureUrl => _s._currentUrl;
+
+  @override
+  bool get captureIncognito => _s.widget.incognito;
+
+  @override
+  double get captureProgress => _s._progress;
 }

@@ -499,10 +499,10 @@ class _TermsScreenState extends State<TermsScreen> {
               fontSize: 13, height: 1.6)),
       const SizedBox(height: 16),
       _contactRow(Icons.business_rounded, 'Company', 'Tech Lyfe Team'),
+      _contactRow(Icons.support_agent_rounded, 'In the app', 'Profile → Contact Support'),
+      // An email address must stay in the policy (Google Play requirement).
       _contactRow(Icons.email_outlined, 'Email',
           'emmanuelkgyasiarthur@gmail.com'),
-      _contactRow(Icons.chat_outlined, 'WhatsApp', '+233 540 964 040'),
-      _contactRow(Icons.chat_outlined, 'WhatsApp', '+233 502 733 366'),
       const SizedBox(height: 12),
       Text('Response time: within 48 business hours',
           style: GoogleFonts.inter(

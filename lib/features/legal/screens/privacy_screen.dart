@@ -208,7 +208,7 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                 _sub('NOVA Network (Speed Test and Device Details)',
                     'When you run a speed test (or ask NOVA for your internet speed, ping or IP '
                     'address), NOVA X exchanges random test data with the NOVA speed test '
-                    'server run by Tech Lyfe on Cloudflare. Like any website, the server sees '
+                    'servers operated for Tech Lyfe. Like any website, the server sees '
                     'your IP address and uses it only to show your provider and approximate '
                     'location (city level, no GPS); nothing is stored on the server. Device '
                     'details (battery, connection, storage) are read on your phone and never '
@@ -312,7 +312,7 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                     'sensitive personal information in AI conversations.'),
                 _sub('NOVA Voice and "Hey NOVA"',
                     'Spoken replies are created by the NOVA Voice service run by Tech '
-                    'Lyfe, which uses Microsoft\'s online text-to-speech voices: the text '
+                    'Lyfe with a trusted text-to-speech provider: the text '
                     'of the reply is sent to it and the audio is played back, then '
                     'deleted from your phone. If that service is unavailable (for '
                     'example offline), your phone\'s own voice is used. '
@@ -325,10 +325,10 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                     'off", it keeps listening the same way and can open over the lock '
                     'screen, where anything personal asks you to unlock first.'),
                 _sub('Image and Video Generation',
-                    'The /image and /video commands in NOVA AI send your prompt to '
-                    'third-party generation services (ab-text-toimgfast.abrahamdw882.'
-                    'workers.dev for images and eliteprotech-apis.zone.id for videos). '
-                    'Their privacy policies apply to the prompts and generated media.'),
+                    'The /image and /video commands in NOVA AI send your prompt (only the '
+                    'text you type after the command) to third-party image and video '
+                    'generation providers to create the media. Do not include personal '
+                    'information in these prompts.'),
                 _sub('Visual Search (Google Image Search)',
                     'The Lens/Visual Search feature uploads your image directly to '
                     'Google Lens (lens.google.com) from within the app\'s WebView. '
@@ -338,8 +338,8 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                     'NOVA Cyber performs active security probes against websites you choose '
                     'to scan. These probes include HTTP requests with security test payloads. '
                     'Scan results are displayed locally and are not stored on our servers. '
-                    'DNS lookups for DMARC/SPF checks are made via Google DNS-over-HTTPS '
-                    '(dns.google). Google\'s Privacy Policy applies to those DNS queries.'),
+                    'DNS lookups for email-security (DMARC/SPF) checks use encrypted '
+                    'DNS-over-HTTPS.'),
                 _sub('SMTP Email Service',
                     'We use our own email server to send verification codes, password '
                     'reset codes and account security notices (for example, when your '
@@ -432,10 +432,10 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                     'as needed to provide the Service.'),
                 _sub('Deleted Accounts',
                     'When you delete your account, your account and its data are removed '
-                    'straight away. For security and fraud prevention we keep a short '
-                    'record of the deletion — username, email, the date, the reason you '
-                    'chose and a summary of recent account activity — for up to 12 months, '
-                    'after which it is erased. Payment records are kept as required by law.'),
+                    'straight away. For security and fraud prevention, a short record of the '
+                    'deleted account (account name, email, deletion date and recent activity) '
+                    'is kept for up to 12 months and then erased. Payment records are kept '
+                    'only as long as the law requires.'),
                 _sub('Local Data',
                     'Data stored on your device (history, bookmarks, saved '
                     'passwords, NOVA AI chats) remains until you clear it or '
@@ -627,12 +627,10 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
               color: AppTheme.textSecondary, fontSize: 13, height: 1.6)),
       const SizedBox(height: 16),
       _contactRow(Icons.business_rounded, 'Company', 'Tech Lyfe Team'),
-      _contactRow(Icons.person_outline_rounded, 'Developer',
-          'Kobby (Mr. Romantic)'),
+      _contactRow(Icons.support_agent_rounded, 'In the app', 'Profile → Contact Support'),
+      // An email address must stay in the policy (Google Play requirement).
       _contactRow(Icons.email_outlined, 'Email',
           'emmanuelkgyasiarthur@gmail.com'),
-      _contactRow(Icons.chat_outlined, 'WhatsApp', '+233 540 964 040'),
-      _contactRow(Icons.chat_outlined, 'WhatsApp', '+233 502 733 366'),
       const SizedBox(height: 12),
       Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),

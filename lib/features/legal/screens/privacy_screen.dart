@@ -106,7 +106,7 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                               color: Colors.white, fontSize: 32,
                               fontWeight: FontWeight.w900, height: 1.1)),
                       const SizedBox(height: 8),
-                      Text('Effective: October 26, 2026  •  v2.8',
+                      Text('Effective: October 27, 2026  •  v2.9',
                           style: GoogleFonts.inter(
                               color: AppTheme.textHint, fontSize: 12)),
                     ],
@@ -205,6 +205,19 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                     'background, never reads it over the lock screen, and cannot see apps that '
                     'block screenshots. Photos you add in the assistant panel are handled the '
                     'same way.'),
+                _sub('Screenshots and Screen Recordings (NOVA Capture)',
+                    'Screenshots and screen recordings are made only when you ask, and '
+                    'are saved only on your phone (Pictures/NOVA X and Movies/NOVA X). '
+                    'Capturing your whole screen or recording it always shows Android\'s '
+                    'own permission dialog first, and a notification stays visible while '
+                    'a recording runs. If you choose a recording with sound, the microphone '
+                    'is used only while that recording runs (never while paused). '
+                    'Webpage screenshots use the browser itself and need no permission. '
+                    'NOVA X does not upload, sync or share your captures; they leave your '
+                    'phone only if you share or export them. The page title and address '
+                    'are kept with a webpage screenshot only if you turn that on, and only '
+                    'on your phone. Voice commands for capture are recognised on your '
+                    'phone; no screenshots, recordings or audio are sent to NOVA AI.'),
                 _sub('NOVA Network (Speed Test and Device Details)',
                     'When you run a speed test (or ask NOVA for your internet speed, ping or IP '
                     'address), NOVA X exchanges random test data with the NOVA speed test '

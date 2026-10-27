@@ -516,7 +516,7 @@ class _NovaNetworkScreenState extends State<NovaNetworkScreen> with TickerProvid
           const SizedBox(width: 12),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(m == null ? (_metaError ?? 'Finding the nearest server…') : 'Cloudflare · ${m.serverName}',
+              Text(m == null ? (_metaError ?? 'Finding the nearest server…') : 'NOVA Speed Server · ${m.serverName}',
                   maxLines: 2, overflow: TextOverflow.ellipsis, style: GoogleFonts.inter(color: Cyber.text, fontSize: 14, fontWeight: FontWeight.w600)),
               const SizedBox(height: 2),
               Text(
@@ -844,7 +844,7 @@ class _NovaNetworkScreenState extends State<NovaNetworkScreen> with TickerProvid
           InfoRow('Peak upload', '${SpeedMath.speedText(r.peakUpMbps)} Mbps', icon: Icons.trending_up_rounded),
           InfoRow('Data used', SpeedMath.bytesText(r.bytesUsed), icon: Icons.data_usage_rounded),
           InfoRow('Connections', '${r.connections} parallel', icon: Icons.call_split_rounded),
-          if (r.server != null) InfoRow('Server', 'Cloudflare · ${r.server}', icon: Icons.dns_outlined),
+          if (r.server != null) InfoRow('Server', 'NOVA Speed Server · ${r.server}', icon: Icons.dns_outlined),
           if (_meta?.httpProtocol != null)
             InfoRow('Protocol', [_meta!.httpProtocol!, if (_meta!.tlsVersion != null) _meta!.tlsVersion!].join(' · '),
                 icon: Icons.lock_outline_rounded),
@@ -857,7 +857,7 @@ class _NovaNetworkScreenState extends State<NovaNetworkScreen> with TickerProvid
         const SizedBox(width: 8),
         Expanded(
           child: Text(
-            'Tests send random data to the nearest NOVA speed server (Cloudflare) and nothing is stored there. '
+            'Tests send random data to the nearest NOVA speed server and nothing is stored there. '
             'Results stay on this phone. Location is approximate, from your IP address — no GPS is used.',
             style: Cyber.label(11.5).copyWith(height: 1.5),
           ),
@@ -985,7 +985,7 @@ class _NovaNetworkScreenState extends State<NovaNetworkScreen> with TickerProvid
                 InfoRow('Location', [m.place, if (m.region != null && m.region != m.city) m.region!].join(' · '),
                     icon: Icons.location_on_outlined),
                 if (m.timezone != null) InfoRow('Time zone', m.timezone!, icon: Icons.public_rounded),
-                InfoRow('Nearest server', 'Cloudflare · ${m.serverName}', icon: Icons.dns_outlined),
+                InfoRow('Nearest server', 'NOVA Speed Server · ${m.serverName}', icon: Icons.dns_outlined),
                 if (m.rttMs != null) InfoRow('Round trip', '${m.rttMs!.round()} ms', icon: Icons.timer_outlined),
               ],
             ]),

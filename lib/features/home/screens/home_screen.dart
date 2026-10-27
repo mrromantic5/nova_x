@@ -8,6 +8,7 @@
 //   • Business name search opens the business's website
 //   • Dynamic time-based subtitle (changes every 3 hours)
 
+import 'dart:async';
 import 'dart:io';
 import 'package:nova_x/core/services/default_browser_service.dart';
 import 'package:nova_x/core/services/rewards_service.dart';
@@ -51,6 +52,7 @@ import 'package:nova_x/features/notifications/screens/notifications_screen.dart'
 import 'package:nova_x/features/devtools/screens/code_editor_screen.dart';
 import 'package:nova_x/core/services/update_service.dart';
 import 'package:nova_x/core/services/platform_api.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:nova_x/features/music/screens/nova_music_screen.dart';
 import 'package:nova_x/features/nova/services/nova_wake.dart';
 import 'package:nova_x/features/nova/nova_features.dart';
@@ -83,7 +85,8 @@ class _HomeScreenState extends State<HomeScreen>
   // Speed Dial
   bool _searching   = false;
   bool _lensLoading  = false;
-  int  _notifBadge   = 0;   // unread advert count
+  int  _notifBadge   = 0;   // unread adverts + support replies
+  StreamSubscription<RemoteMessage>? _pushSub; // 3.9.1: live badge
   int  _bizBadge     = 0;   // new (unseen) business count
   List<AdvertModel> _adverts = [];  // true while uploading image to Google
   List<Map<String, dynamic>> _speedDial = [];
@@ -179,6 +182,8 @@ class _HomeScreenState extends State<HomeScreen>
   void initState() {
     super.initState();
     _loadNotifBadge();
+    // A push (support reply, advert…) while the app is open updates the bell.
+    _pushSub = FirebaseMessaging.onMessage.listen((_) => _loadNotifBadge());
     _loadBizBadge();
     AdvertService.init();
     RewardsEntitlements.refresh();
@@ -242,6 +247,7 @@ class _HomeScreenState extends State<HomeScreen>
     _pulseCtrl.dispose();
     _speech.stop();
     NovaWake.resumeAfterOtherMic('stt_home');
+    _pushSub?.cancel();
     super.dispose();
   }
 
@@ -250,6 +256,7 @@ class _HomeScreenState extends State<HomeScreen>
     // When the user returns (e.g. after setting NOVA X as default), award once.
     if (state == AppLifecycleState.resumed) {
       DefaultBrowserService.checkAndAward();
+      _loadNotifBadge(); // replies that arrived while NOVA X was in the background
       _openQueuedUrl();
       _openQueuedFeature();
     }

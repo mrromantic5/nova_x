@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
+import com.tlyfe.nova_x.capture.CaptureChannel
 import com.tlyfe.nova_x.nova.NovaBridge
 import com.tlyfe.nova_x.nova.NovaMicArbiter
 import com.tlyfe.nova_x.nova.NovaWakeService
@@ -85,6 +86,9 @@ class MainActivity : FlutterFragmentActivity() {
     /** NOVA assistant native boundary (channel com.tlyfe.nova_x/nova). */
     private var nova: NovaBridge? = null
 
+    /** NOVA Capture: screenshots, screen recording, media (channel com.tlyfe.nova_x/capture). */
+    private var capture: CaptureChannel? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // Must be set before super.onCreate(): the Flutter engine may be
         // configured during it, and a restored instance must not re-open the
@@ -141,6 +145,10 @@ class MainActivity : FlutterFragmentActivity() {
         nova?.dispose()
         nova = NovaBridge(this, messenger)
 
+        // ── NOVA Capture (screenshots + screen recorder) ───────────────────
+        capture?.dispose()
+        capture = CaptureChannel(this, messenger)
+
         // ── Launcher shortcuts (main.dart → getShortcut) ───────────────────
         // Same behaviour as the shortcut handler the CI used to generate.
         MethodChannel(messenger, SHORTCUT_CHANNEL).setMethodCallHandler { call, result ->
@@ -162,6 +170,7 @@ class MainActivity : FlutterFragmentActivity() {
         // super first: plugins (speech_to_text, image_picker…) rely on it.
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         nova?.onRequestPermissionsResult(requestCode, grantResults)
+        capture?.onRequestPermissionsResult(requestCode)
     }
 
     override fun onStart() {
@@ -187,6 +196,8 @@ class MainActivity : FlutterFragmentActivity() {
     override fun onDestroy() {
         nova?.dispose()
         nova = null
+        capture?.dispose()
+        capture = null
         super.onDestroy()
     }
 
@@ -248,6 +259,7 @@ class MainActivity : FlutterFragmentActivity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         // Always forward first: image_picker, file_picker etc. rely on it.
         super.onActivityResult(requestCode, resultCode, data)
+        if (capture?.onActivityResult(requestCode, resultCode, data) == true) return
         if (requestCode != REQ_BROWSER_ROLE) return
 
         val result = pendingRoleResult ?: return

@@ -8,6 +8,7 @@ import android.os.SystemClock
 import android.view.WindowManager
 import com.tlyfe.nova_x.nova.NovaBridge
 import com.tlyfe.nova_x.nova.NovaMicArbiter
+import com.tlyfe.nova_x.capture.CaptureChannel
 import com.tlyfe.nova_x.nova.NovaScreenCapture
 import com.tlyfe.nova_x.nova.NovaWakePrefs
 import com.tlyfe.nova_x.nova.NovaWakeService
@@ -49,6 +50,9 @@ class NovaAssistActivity : FlutterFragmentActivity() {
 
     private var bridge: NovaBridge? = null
 
+    /** NOVA Capture commands said to the floating panel ("start screen recording"). */
+    private var capture: CaptureChannel? = null
+
     /** True while the photo picker / camera (opened from the panel) is in front. */
     private var keepOpen = false
 
@@ -68,6 +72,7 @@ class NovaAssistActivity : FlutterFragmentActivity() {
             it.launchReason = reasonOf(intent)
             it.keepOpenHandler = { open -> keepOpen = open }
         }
+        capture = CaptureChannel(this, flutterEngine.dartExecutor.binaryMessenger)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -123,6 +128,7 @@ class NovaAssistActivity : FlutterFragmentActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         bridge?.onRequestPermissionsResult(requestCode, grantResults)
+        capture?.onRequestPermissionsResult(requestCode)
     }
 
     override fun onResume() {
@@ -135,6 +141,7 @@ class NovaAssistActivity : FlutterFragmentActivity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (NovaScreenCapture.onActivityResult(applicationContext, requestCode, resultCode, data)) return
         super.onActivityResult(requestCode, resultCode, data)
+        capture?.onActivityResult(requestCode, resultCode, data)
     }
 
     override fun onStop() {
@@ -149,6 +156,8 @@ class NovaAssistActivity : FlutterFragmentActivity() {
         NovaScreenCapture.cancel()
         bridge?.dispose()
         bridge = null
+        capture?.dispose()
+        capture = null
         super.onDestroy()
     }
 

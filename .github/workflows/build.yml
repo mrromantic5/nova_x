@@ -38,6 +38,7 @@ jobs:
           flutter analyze --no-fatal-infos --no-fatal-warnings \
             lib/main.dart \
             lib/features/nova \
+            lib/features/nova_capture \
             lib/features/ai \
             lib/features/music \
             lib/features/network \
@@ -62,6 +63,8 @@ jobs:
             lib/features/onboarding \
             lib/features/permissions \
             lib/features/premium \
+            lib/features/offline \
+            lib/core/services/password_service.dart \
             lib/core/services/platform_api.dart \
             lib/core/services/analytics_service.dart \
             lib/core/services/app_info.dart \
@@ -73,10 +76,11 @@ jobs:
             lib/core/services/rewards_entitlements.dart \
             lib/core/widgets/update_dialog.dart \
             test/nova \
+            test/nova_capture \
             test/auth
 
       - name: NOVA unit tests
-        run: flutter test test/nova test/auth
+        run: flutter test test/nova test/nova_capture test/auth
 
       - name: Patch flutter_inappwebview ProGuard
         run: |

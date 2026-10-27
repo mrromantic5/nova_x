@@ -108,6 +108,11 @@ class _AiFlagSheetState extends State<_AiFlagSheet> {
         onSelect: (c) => setState(() => _selected = c),
         onNext:   _next,
         onClose:  () => Navigator.pop(context),
+        // 3.9.1: "Other issue" asks for a description right here.
+        controller:    _detailCtrl,
+        onTextChanged: () => setState(() {}),
+        onSubmit:      _submit,
+        submitting:    _submitting,
       );
       case 1:  return _StepDetail(
         key:        const ValueKey<int>(1),
@@ -132,6 +137,10 @@ class _StepSelect extends StatelessWidget {
   final ValueChanged<AiFlagCategory> onSelect;
   final VoidCallback                onNext;
   final VoidCallback                onClose;
+  final TextEditingController       controller;
+  final VoidCallback                onTextChanged;
+  final VoidCallback                onSubmit;
+  final bool                        submitting;
 
   const _StepSelect({
     super.key,
@@ -139,7 +148,13 @@ class _StepSelect extends StatelessWidget {
     required this.onSelect,
     required this.onNext,
     required this.onClose,
+    required this.controller,
+    required this.onTextChanged,
+    required this.onSubmit,
+    required this.submitting,
   });
+
+  bool get _isOther => selected?.key == 'other';
 
   @override
   Widget build(BuildContext context) {
@@ -314,12 +329,45 @@ class _StepSelect extends StatelessWidget {
 
         const SizedBox(height: 16),
 
-        // ── Continue button ──────────────────────────────────────────────
+        // ── "Other issue": describe it here ─────────────────────────────
+        AnimatedSize(
+          duration: const Duration(milliseconds: 220),
+          child: !_isOther
+              ? const SizedBox(width: double.infinity)
+              : Container(
+                  margin: const EdgeInsets.only(bottom: 14),
+                  decoration: BoxDecoration(
+                    color:        AppTheme.bgElevated,
+                    borderRadius: BorderRadius.circular(13),
+                    border:       Border.all(color: AppTheme.accentCyan.withOpacity(0.4)),
+                  ),
+                  child: TextField(
+                    controller:  controller,
+                    autofocus:   true,
+                    maxLines:    4,
+                    minLines:    3,
+                    maxLength:   500,
+                    onChanged:   (_) => onTextChanged(),
+                    style:       GoogleFonts.inter(color: Colors.white, fontSize: 14, height: 1.5),
+                    decoration: InputDecoration(
+                      border:         InputBorder.none,
+                      hintText:       'Tell us what was wrong with this answer…',
+                      hintStyle:      GoogleFonts.inter(color: AppTheme.textHint, fontSize: 13),
+                      contentPadding: const EdgeInsets.all(14),
+                      counterStyle:   GoogleFonts.inter(color: AppTheme.textHint, fontSize: 10),
+                    ),
+                  ),
+                ),
+        ),
+
+        // ── Continue / Submit button ────────────────────────────────────
         _PrimaryBtn(
-          label:   'Continue',
-          enabled: selected != null,
-          icon:    FontAwesomeIcons.arrowRight,
-          onTap:   onNext,
+          label:   _isOther ? 'Submit Report' : 'Continue',
+          enabled: selected != null && !submitting &&
+              (!_isOther || controller.text.trim().length >= 3),
+          loading: submitting,
+          icon:    _isOther ? FontAwesomeIcons.paperPlane : FontAwesomeIcons.arrowRight,
+          onTap:   _isOther ? onSubmit : onNext,
         ),
       ]),
     );

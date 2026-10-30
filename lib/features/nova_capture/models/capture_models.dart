@@ -108,7 +108,7 @@ class CaptureErrorCode {
         protectedContent => 'The app on screen blocks screenshots, so nothing was captured.',
         notFound => "That capture isn't available any more.",
         timeout => "Android's screen-capture request wasn't answered.",
-        RecordingState.cancelled => 'Cancelled.',
+        cancelled => 'Cancelled.',
         webCapture => "This page couldn't be captured.",
         noPage => 'Open a web page in NOVA X first.',
         _ => 'Something went wrong. Please try again.',

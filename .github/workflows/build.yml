@@ -40,6 +40,8 @@ jobs:
             lib/features/nova \
             lib/features/nova_capture \
             lib/features/xcoder \
+            lib/features/devguide \
+            lib/features/business/screens/business_screen.dart \
             lib/features/devtools \
             lib/features/browser/devtools \
             lib/features/browser/widgets/devtools_panel.dart \

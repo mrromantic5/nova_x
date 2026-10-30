@@ -10,6 +10,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:nova_x/core/services/api_service.dart';
+import 'package:nova_x/core/services/offline_cache.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
 import '../../browser/screens/browser_view.dart';
 import '../../profile/screens/profile_screen.dart';
@@ -421,7 +422,41 @@ class _BusinessScreenState extends State<BusinessScreen>
     }
     if (_all.isEmpty) return _refreshable(_buildEmptyAll());
     if (_filtered.isEmpty) return _refreshable(_buildEmptyFilter());
+    if (ApiService.businessesFromCache) {
+      return Column(children: [_offlineBanner(), Expanded(child: _list())]);
+    }
+    return _list();
+  }
 
+  // 3.11.1: shown when the listings come from the copy saved on the phone.
+  Widget _offlineBanner() {
+    final at = ApiService.businessesSavedAt;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+      child: GestureDetector(
+        onTap: _load,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFB020).withOpacity(0.10),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFFFB020).withOpacity(0.35)),
+          ),
+          child: Row(children: [
+            const Icon(Icons.wifi_off_rounded, color: Color(0xFFFFB020), size: 16),
+            const SizedBox(width: 10),
+            Expanded(child: Text(
+              at == null ? 'You’re offline — showing saved listings' : 'You’re offline — listings saved ${OfflineCache.age(at)}',
+              style: GoogleFonts.inter(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w600),
+            )),
+            Text('Retry', style: GoogleFonts.inter(color: AppTheme.accentCyan, fontSize: 12.5, fontWeight: FontWeight.w700)),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _list() {
     return RefreshIndicator(
       onRefresh: _load,
       color: AppTheme.accentCyan,
@@ -483,8 +518,9 @@ class _BusinessScreenState extends State<BusinessScreen>
             SizedBox(
               height: 180, width: double.infinity,
               child: imgUrl != null
-                  ? Image.network(imgUrl, fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _imagePlaceholder(180, color))
+                  ? CachedNetImage(imgUrl, fit: BoxFit.cover,
+                      width: double.infinity, height: 180,
+                      fallback: _imagePlaceholder(180, color))
                   : _imagePlaceholder(180, color),
             ),
             Positioned(top: 12, left: 12, child: _catBadge(cat, color)),
@@ -612,8 +648,9 @@ class _BusinessScreenState extends State<BusinessScreen>
               decoration: BoxDecoration(borderRadius: BorderRadius.circular(14)),
               clipBehavior: Clip.hardEdge,
               child: imgUrl != null
-                  ? Image.network(imgUrl, fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _imagePlaceholder(70, color))
+                  ? CachedNetImage(imgUrl, fit: BoxFit.cover,
+                      width: double.infinity, height: 70,
+                      fallback: _imagePlaceholder(70, color))
                   : _imagePlaceholder(70, color),
             ),
             if (showRank)
@@ -709,12 +746,14 @@ class _BusinessScreenState extends State<BusinessScreen>
               color: Colors.white, size: 60),
         ),
         const SizedBox(height: 20),
-        Text('No businesses listed yet',
+        Text(ApiService.businessesLoadFailed ? 'Can’t load businesses' : 'No businesses listed yet',
             style: GoogleFonts.spaceGrotesk(
                 color: AppTheme.textPrimary, fontSize: 20,
                 fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
-        Text('Create an account and be the first to list one!',
+        Text(ApiService.businessesLoadFailed
+                ? 'You’re offline or the server didn’t answer. Pull down to try again — listings you’ve seen are kept for offline use.'
+                : 'Create an account and be the first to list one!',
             style: GoogleFonts.inter(
                 color: AppTheme.textHint, fontSize: 13, height: 1.5),
             textAlign: TextAlign.center),

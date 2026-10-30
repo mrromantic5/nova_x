@@ -12,8 +12,10 @@ import '../../../core/services/subscription_service.dart';
 import '../../ai/widgets/nova_markdown_view.dart';
 import '../../nova/services/nova_api.dart';
 import '../../premium/screens/subscription_screen.dart';
+import '../ai/nova_coder_client.dart';
 import '../ai/xcoder_ai.dart';
 import '../editor/ace_editor.dart';
+import 'xcoder_agent_sheet.dart';
 import 'xcoder_ui.dart';
 
 abstract class XAiHost {
@@ -25,6 +27,10 @@ abstract class XAiHost {
   Future<void> insertCode(String code, {required bool replaceSelection});
   Future<void> replaceFile(String code);
   Future<void> createFile(String suggestedName, String content);
+
+  /// 3.11.1 — project context for NOVA Coder (tree, open file, other open
+  /// files, diagnostics, recent terminal / console output).
+  Future<Map<String, Object?>> coderContext({required bool includeSelection, bool wholeFile = true});
 }
 
 Future<void> showXAiSheet(BuildContext context, XAiHost host, {XAiTask task = XAiTask.ask, String prompt = ''}) {
@@ -62,6 +68,8 @@ class _Turn {
   String original = ''; // what the code would replace (for the diff)
   bool selectionScope = false;
   bool applied = false;
+  String streaming = '';
+  bool needsPremium = false;
 }
 
 class _AiSheetState extends State<_AiSheet> {
@@ -79,7 +87,8 @@ class _AiSheetState extends State<_AiSheet> {
     widget.host.editorContext().then((c) {
       if (mounted) setState(() => _selection = (c['selection'] as String?) ?? '');
     });
-    if (XCoderAi.available && widget.initialTask != XAiTask.ask && widget.initialTask != XAiTask.generate) {
+    if (XCoderAi.available &&
+        ((widget.initialTask != XAiTask.ask && widget.initialTask != XAiTask.generate) || widget.initialPrompt.trim().isNotEmpty)) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _send());
     }
   }
@@ -118,6 +127,14 @@ class _AiSheetState extends State<_AiSheet> {
       final related = _task == XAiTask.generate || _task == XAiTask.fix || _task == XAiTask.tests
           ? await widget.host.relatedFiles()
           : const <({String name, String snippet})>[];
+      final context = await widget.host.coderContext(includeSelection: sel.isNotEmpty);
+      // earlier answers in this panel make it a conversation
+      final history = <Map<String, String>>[
+        for (final p in _turns.where((x) => x != turn && x.result != null).toList().reversed.take(4).toList().reversed) ...[
+          {'role': 'user', 'content': p.prompt.isEmpty ? XCoderAi.defaultPrompt(p.task) : p.prompt},
+          {'role': 'assistant', 'content': p.result!.reply.length > 6000 ? p.result!.reply.substring(0, 6000) : p.result!.reply},
+        ],
+      ];
       turn.result = await _ai.run(XAiRequest(
         task: _task,
         fileName: widget.host.fileName,
@@ -129,7 +146,17 @@ class _AiSheetState extends State<_AiSheet> {
         after: _task == XAiTask.complete ? _afterCursor(ctx) : '',
         diagnostics: _task == XAiTask.fix || _task == XAiTask.review ? widget.host.fileProblems : const [],
         files: related,
-      ));
+      ),
+          context: context,
+          history: history,
+          onDelta: (text) {
+            if (!mounted) return;
+            setState(() => turn.streaming = text);
+            _scrollToEnd();
+          });
+    } on CoderException catch (e) {
+      if (e.code != 'cancelled') turn.error = e.message;
+      turn.needsPremium = e.needsPremium;
     } on NovaApiException catch (e) {
       turn.error = e.userMessage;
     } catch (_) {
@@ -172,7 +199,7 @@ class _AiSheetState extends State<_AiSheet> {
       context: context,
       isScrollControlled: true,
       backgroundColor: XC.side,
-      builder: (ctx) => _DiffSheet(diff: diff, title: t.selectionScope ? 'Selection' : widget.host.fileName),
+      builder: (ctx) => XDiffSheet(diff: diff, title: t.selectionScope ? 'Selection' : widget.host.fileName),
     );
     if (apply == true) await _apply(t, replace: true);
   }
@@ -273,7 +300,14 @@ class _AiSheetState extends State<_AiSheet> {
           ),
         ]),
         const SizedBox(height: 8),
-        if (r == null && t.error == null)
+        if (r == null && t.error == null && t.streaming.isNotEmpty) ...[
+          NovaMarkdownView(text: t.streaming, fontSize: 13.5),
+          const Padding(
+            padding: EdgeInsets.only(top: 4),
+            child: SizedBox(width: 22, height: 3, child: LinearProgressIndicator(color: XC.accent, backgroundColor: Colors.transparent)),
+          ),
+        ],
+        if (r == null && t.error == null && t.streaming.isEmpty)
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 14),
             child: Row(children: [
@@ -281,6 +315,15 @@ class _AiSheetState extends State<_AiSheet> {
               SizedBox(width: 10),
               Text('NOVA is working…', style: TextStyle(color: XC.dim)),
             ]),
+          ),
+        if (t.error != null && t.needsPremium)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: FilledButton.icon(
+              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SubscriptionScreen())),
+              icon: const Icon(Icons.workspace_premium_rounded, size: 18),
+              label: const Text('Get NOVA X Premium'),
+            ),
           ),
         if (t.error != null)
           Container(
@@ -351,7 +394,7 @@ class _AiSheetState extends State<_AiSheet> {
           child: Row(children: [
             const Icon(Icons.auto_awesome_rounded, color: Color(0xFFFFD54F), size: 20),
             const SizedBox(width: 8),
-            Text('NOVA', style: XC.ui(16, weight: FontWeight.w800)),
+            Text('NOVA Coder', style: XC.ui(16, weight: FontWeight.w800)),
             const SizedBox(width: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -364,6 +407,17 @@ class _AiSheetState extends State<_AiSheet> {
               child: Text('${widget.host.fileName} · ${widget.host.languageLabel}',
                   style: XC.ui(11.5, color: XC.faint), overflow: TextOverflow.ellipsis),
             ),
+            if (widget.host is XAgentHost)
+              IconButton(
+                tooltip: 'NOVA Agent — change several files',
+                onPressed: () {
+                  final host = widget.host as XAgentHost;
+                  final nav = Navigator.of(context);
+                  nav.pop();
+                  showXAgentSheet(nav.context, host);
+                },
+                icon: const Icon(Icons.smart_toy_outlined, color: XC.accent),
+              ),
             IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close_rounded, color: XC.dim)),
           ]),
         ),
@@ -468,8 +522,8 @@ class _AiSheetState extends State<_AiSheet> {
   }
 }
 
-class _DiffSheet extends StatelessWidget {
-  const _DiffSheet({required this.diff, required this.title});
+class XDiffSheet extends StatelessWidget {
+  const XDiffSheet({super.key, required this.diff, required this.title});
   final List<DiffLine> diff;
   final String title;
 

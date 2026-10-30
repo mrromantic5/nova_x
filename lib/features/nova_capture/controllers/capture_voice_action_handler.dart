@@ -162,6 +162,21 @@ class CaptureVoiceActionHandler implements NovaCaptureActions {
             'with or without sound, and open, edit or share your saved captures.');
       case CaptureIntent.retry:
         return _r(a, NovaActionStatus.invalid, "There's nothing to try again.");
+      case CaptureIntent.bubbleShow:
+        await _c.refreshCapabilities();
+        if (!_c.capabilities.overlayPermission) {
+          _c.markBubbleWanted();
+          await _c.openOverlaySettings();
+          return _r(a, NovaActionStatus.permissionRequired,
+              'Allow “Display over other apps” for NOVA X on this screen, then come back and the floating button will appear.');
+        }
+        final shown = await _c.setBubble(true);
+        if (!shown.success) return _fail(a, shown, cmd);
+        return _ok(a, 'The floating capture button is on. Tap it for Record, Screenshot and more.');
+      case CaptureIntent.bubbleHide:
+        final hidden = await _c.setBubble(false);
+        if (!hidden.success) return _fail(a, hidden, cmd);
+        return _ok(a, 'Floating capture button closed.');
     }
   }
 

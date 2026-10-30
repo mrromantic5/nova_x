@@ -37,7 +37,9 @@ enum CaptureIntent {
   storage('capture.storage.status'),
   explain('capture.help.explain'),
   options('capture.help.options'),
-  retry('capture.retry');
+  retry('capture.retry'),
+  bubbleShow('capture.bubble.show'),
+  bubbleHide('capture.bubble.hide');
 
   const CaptureIntent(this.id);
   final String id;
@@ -193,6 +195,10 @@ class CaptureCommandRegistry {
       "^(?:take|capture|grab|get)?(?: a)? ?(?:$_shot|capture|snap)?(?: of)? ?(?:this|the|current) (?:page|webpage|web page|site|website|tab)\$|^$_shot (?:this|the) (?:page|webpage|web page|site|website)\$");
   static final _auto = _re(
       "^(?:(?:take|capture|grab|make|snap|get)(?: a| me a| the| one| another)? )?$_shot(?: and save(?: it)?)?(?: (?:now|it|this))?\$");
+  static final _bubbleShow = _re(
+      r"^(?:show|enable|turn on|open|bring back|display)(?: the| my)? (?:(?:floating|capture|recording|screen recorder|recorder) ){1,2}(?:button|icon|bubble|controls?)(?: on (?:the|my) screen)?$");
+  static final _bubbleHide = _re(
+      r"^(?:hide|disable|turn off|close|remove)(?: the| my)? (?:(?:floating|capture|recording|screen recorder|recorder) ){1,2}(?:button|icon|bubble|controls?)(?: on (?:the|my) screen)?$");
   static final _retry = _re(r"^(?:try again|try that again|retry|one more time|do it again)$");
 
   // Loose mentions that deserve a question rather than a guess.
@@ -207,6 +213,8 @@ class CaptureCommandRegistry {
     if (t.isEmpty || t.length > 160) return null;
 
     if (_retry.hasMatch(t)) return lastFailed == null ? null : const CaptureCommand(CaptureIntent.retry);
+    if (_bubbleShow.hasMatch(t)) return const CaptureCommand(CaptureIntent.bubbleShow);
+    if (_bubbleHide.hasMatch(t)) return const CaptureCommand(CaptureIntent.bubbleHide);
     if (_explain.hasMatch(t)) return const CaptureCommand(CaptureIntent.explain);
     if (_status.hasMatch(t)) return const CaptureCommand(CaptureIntent.recordingStatus);
     if (_storage.hasMatch(t)) return const CaptureCommand(CaptureIntent.storage);

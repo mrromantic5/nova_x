@@ -155,6 +155,36 @@ class CaptureController extends ChangeNotifier {
   Future<void> openAppSettings() => _platform.openAppSettings();
   Future<void> openOverlaySettings() => _platform.openOverlaySettings();
 
+  // ── Floating capture button ─────────────────────────────────────────────
+
+  /// True while the user was sent to Android settings to allow "Display over
+  /// other apps"; the button is turned on as soon as they come back with it.
+  bool _bubbleWanted = false;
+
+  bool get bubbleEnabled => snapshot.bubbleEnabled || capabilities.bubbleEnabled;
+
+  Future<CaptureResult> setBubble(bool on) async {
+    await init();
+    final r = await _platform.setBubbleEnabled(on);
+    _bubbleWanted = on && r.missingPermission == 'overlay';
+    await refresh();
+    return r;
+  }
+
+  /// Call when NOVA X comes back to the front (after Android settings).
+  Future<void> resumeBubbleRequest() async {
+    await refreshCapabilities();
+    if (_bubbleWanted && capabilities.overlayPermission) {
+      _bubbleWanted = false;
+      await setBubble(true);
+    } else {
+      await _platform.bubbleStatus(); // re-shows it if it was killed with the app
+      await refresh();
+    }
+  }
+
+  void markBubbleWanted() => _bubbleWanted = true;
+
   // ── Recording ───────────────────────────────────────────────────────────
 
   /// Starts after Android's consent; completes when recording has begun (or failed).

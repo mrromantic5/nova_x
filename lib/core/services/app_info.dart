@@ -10,8 +10,8 @@ class AppInfo {
 
   /// Used when Android can't be asked (tests, older native build).
   /// Keep in step with pubspec.yaml.
-  static const String fallbackVersion = '3.11.0';
-  static const int fallbackBuild = 20;
+  static const String fallbackVersion = '3.11.1';
+  static const int fallbackBuild = 21;
 
   static const MethodChannel _ch = MethodChannel('com.tlyfe.nova_x/nova');
 

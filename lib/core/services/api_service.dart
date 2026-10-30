@@ -6,6 +6,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'device_clock.dart';
+import 'offline_cache.dart';
 
 class ApiService {
   static const String baseUrl = 'https://api.browser.t-lyfe.com.ng';
@@ -318,13 +319,36 @@ class ApiService {
   }
 
   // ── Businesses — global ──────────────────────────────────────
+  /// 3.11.1: true when the last [getBusinesses] answer came from the copy
+  /// saved on the phone (no internet), with the time it was saved.
+  static bool businessesFromCache = false;
+  static bool businessesLoadFailed = false;
+  static DateTime? businessesSavedAt;
+
   static Future<List<Map<String, dynamic>>> getBusinesses() async {
     try {
       final res = await _dio.get('/api/v1/businesses');
-      return List<Map<String, dynamic>>.from(
+      final list = List<Map<String, dynamic>>.from(
           ((res.data as Map)['businesses'] as List)
               .map((e) => Map<String, dynamic>.from(e as Map)));
-    } catch (_) { return []; }
+      businessesFromCache = false;
+      businessesLoadFailed = false;
+      businessesSavedAt = DateTime.now();
+      // Keep a copy for offline use (public listings only).
+      OfflineCache.putJson('businesses', list.take(500).toList());
+      return list;
+    } catch (_) {
+      final saved = await OfflineCache.getJson('businesses');
+      if (saved != null && saved.$1 is List) {
+        businessesFromCache = true;
+        businessesLoadFailed = false;
+        businessesSavedAt = saved.$2;
+        return (saved.$1 as List).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+      }
+      businessesFromCache = false;
+      businessesLoadFailed = true;
+      return [];
+    }
   }
 
   static Future<Map<String, dynamic>?> searchBusiness(String query) async {

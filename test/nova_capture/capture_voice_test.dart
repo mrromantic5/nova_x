@@ -127,6 +127,13 @@ void main() {
       expectIntent('NOVA, try again.', CaptureIntent.retry);
     });
 
+    test('floating capture button (3.11.0)', () {
+      expectIntent('show the floating button', CaptureIntent.bubbleShow);
+      expectIntent('turn on the floating capture icon', CaptureIntent.bubbleShow);
+      expectIntent('hide the floating bubble', CaptureIntent.bubbleHide);
+      expectIntent('close the recording controls', CaptureIntent.bubbleHide);
+    });
+
     test('"cancel that" still cancels NOVA itself', () {
       expect(parser.parse('cancel'), isA<NovaCancelPlan>());
     });

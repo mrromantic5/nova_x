@@ -21,14 +21,42 @@ import 'capture_flows.dart';
 import 'capture_ui.dart';
 
 /// Wrap MaterialApp's child with this (MaterialApp.builder).
-class CaptureOverlayHost extends StatelessWidget {
+///
+/// Shows the countdown and the in-app recording controls. When the floating
+/// capture button is on screen it already shows the controls (in NOVA X and
+/// over other apps), so the in-app pill steps aside to avoid two sets.
+class CaptureOverlayHost extends StatefulWidget {
   const CaptureOverlayHost({super.key, required this.child});
   final Widget child;
 
   @override
+  State<CaptureOverlayHost> createState() => _CaptureOverlayHostState();
+}
+
+class _CaptureOverlayHostState extends State<CaptureOverlayHost> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Back from Android's "Display over other apps" screen: turn the
+    // floating button on if the user allowed it.
+    if (state == AppLifecycleState.resumed) CaptureController.instance.resumeBubbleRequest();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Stack(children: [
-      child,
+      widget.child,
       ListenableBuilder(
         listenable: CaptureController.instance,
         builder: (context, _) {
@@ -38,6 +66,7 @@ class CaptureOverlayHost extends StatelessWidget {
             return _Countdown(seconds: c.snapshot.countdown);
           }
           if (!s.isCapturing && !s.isSaving) return const SizedBox.shrink();
+          if (c.snapshot.bubbleShowing) return const SizedBox.shrink();
           return const FloatingRecordingControls();
         },
       ),

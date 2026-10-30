@@ -249,6 +249,19 @@ class CapturePermissionSheet {
         ],
       );
 
+  static Future<bool> bubble(BuildContext context) => show(
+        context,
+        icon: Icons.radio_button_checked_rounded,
+        title: 'Floating capture button',
+        confirm: 'Open Android settings',
+        points: const [
+          'A small round button stays on your screen — in NOVA X and over other apps.',
+          'Tap it for Record, Pause, Stop, Screenshot and NOVA Capture. Drag it anywhere, or onto ✕ to close it.',
+          'Android calls this “Display over other apps”. Turn it on for NOVA X on the next screen, then come back.',
+          'It never records by itself: Android still asks before every recording or screenshot.',
+        ],
+      );
+
   static Future<bool> overlay(BuildContext context) => show(
         context,
         icon: Icons.picture_in_picture_alt_rounded,

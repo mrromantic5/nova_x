@@ -168,6 +168,22 @@ class CaptureFlows {
     if (context.mounted) await openPreview(context, r.item!, justCaptured: true);
   }
 
+  /// Floating capture button on/off. Turning it on explains and asks for
+  /// Android's "Display over other apps" first if needed.
+  static Future<void> toggleBubble(BuildContext context, bool on) async {
+    await _c.init();
+    await _c.refreshCapabilities();
+    if (on && !_c.capabilities.overlayPermission) {
+      if (!context.mounted) return;
+      if (!await CapturePermissionSheet.bubble(context)) return;
+      _c.markBubbleWanted();
+      await _c.openOverlaySettings();
+      return; // turned on when the user comes back (CaptureOverlayHost)
+    }
+    final r = await _c.setBubble(on);
+    captureReport(r, success: on ? 'Floating button on. Tap it for controls, drag it onto ✕ to close it.' : 'Floating button off.');
+  }
+
   static Future<void> openPreview(BuildContext context, MediaAsset item, {bool justCaptured = false}) =>
       Navigator.of(context).push(MaterialPageRoute(
         settings: const RouteSettings(name: 'nova/capture_preview'),

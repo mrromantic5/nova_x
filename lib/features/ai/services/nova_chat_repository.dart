@@ -342,6 +342,9 @@ class NovaChatRepository extends ChangeNotifier {
         await _uploadOne(api, id);
       }
       await _saveIndexQuietly();
+      // 3.11.1: download chats that are only listed (from another phone or
+      // an earlier install) so they can be opened and read offline too.
+      await _prefetch(api);
     } on NovaChatSyncException catch (e) {
       _problem = e.problem;
     } catch (_) {
@@ -351,6 +354,41 @@ class NovaChatRepository extends ChangeNotifier {
       _notify();
     }
   }
+
+  /// Newest chats first; at most [max] downloads per sync, stops at the
+  /// first network problem (the rest are fetched at the next sync).
+  Future<void> _prefetch(NovaChatApi api, {int max = 40}) async {
+    final pending = chats.where((c) => c.onServerOnly).take(max).toList();
+    var changed = false;
+    for (final meta in pending) {
+      if (_retired) break;
+      try {
+        final remote = await api.messages(meta.id);
+        if (_store.find(meta.id) != meta || !meta.onServerOnly) continue; // changed meanwhile
+        if (remote == null) {
+          await _forget(meta.id); // deleted on another phone
+          continue;
+        }
+        await _store.writeMessages(meta.id, remote);
+        meta.onServerOnly = false;
+        meta.synced = true;
+        meta.messageCount = remote.length;
+        changed = true;
+      } on NovaChatSyncException catch (e) {
+        _problem = e.problem;
+        break;
+      } catch (_) {
+        break;
+      }
+    }
+    if (changed) {
+      await _saveIndexQuietly();
+      _notify();
+    }
+  }
+
+  /// How many chats can be read without internet.
+  int get offlineReadable => _store.chats.where((c) => !c.onServerOnly).length;
 
   void _scheduleUpload(String id) {
     if (_api == null || _retired) return;

@@ -13,6 +13,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:nova_x/core/database/local_db.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
+import 'package:nova_x/core/services/offline_cache.dart';
 
 class SpeedDialEditorScreen extends StatefulWidget {
   const SpeedDialEditorScreen({super.key});
@@ -469,9 +470,9 @@ class _SpeedDialEditorScreenState extends State<SpeedDialEditorScreen>
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(17),
-            child: Image.network(favicon,
+            child: CachedNetImage(favicon,
               width: 56, height: 56, fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Center(child: Text(
+              fallback: Center(child: Text(
                 name.isNotEmpty ? name[0].toUpperCase() : '?',
                 style: GoogleFonts.spaceGrotesk(
                     color: AppTheme.accentCyan,

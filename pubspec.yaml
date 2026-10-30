@@ -1,7 +1,7 @@
 name: nova_x
 description: NOVA X — The Future of Browsing
 publish_to: 'none'
-version: 3.10.0+19
+version: 3.11.0+20
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -44,3 +44,9 @@ flutter:
     - assets/images/
     - assets/backgrounds/
     - assets/bear.riv
+    # X Coder editor (3.11.0): bundled Ace 1.43.4, works offline
+    - assets/xcoder/
+    - assets/xcoder/ace/
+    - assets/xcoder/ace/snippets/
+    # Dev Tools inspector agent (3.11.0)
+    - assets/devtools/

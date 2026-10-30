@@ -153,5 +153,15 @@ class CapturePlatform {
   }
 
   Future<void> openOverlaySettings() => _invoke('openOverlaySettings');
+
+  // ── Floating capture button ─────────────────────────────────────────────
+
+  Future<CaptureResult> setBubbleEnabled(bool enabled) => _call('setBubbleEnabled', {'enabled': enabled});
+
+  /// (enabled, showing, permission)
+  Future<(bool, bool, bool)> bubbleStatus() async {
+    final m = await _invoke('bubbleStatus');
+    return (m['enabled'] == true, m['showing'] == true, m['permission'] == true);
+  }
   Future<void> openAppSettings() => _invoke('openAppSettings');
 }

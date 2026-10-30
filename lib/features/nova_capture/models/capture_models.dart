@@ -200,6 +200,8 @@ class CaptureSnapshot {
     this.screenshotBusy = false,
     this.overlayShowing = false,
     this.hasUnsaved = false,
+    this.bubbleEnabled = false,
+    this.bubbleShowing = false,
   });
 
   factory CaptureSnapshot.fromMap(Object? raw, {int? nowMs}) {
@@ -235,6 +237,8 @@ class CaptureSnapshot {
       screenshotBusy: m['screenshotBusy'] == true,
       overlayShowing: m['overlayShowing'] == true,
       hasUnsaved: m['hasUnsaved'] == true,
+      bubbleEnabled: m['bubbleEnabled'] == true,
+      bubbleShowing: m['bubbleShowing'] == true,
     );
   }
 
@@ -257,6 +261,10 @@ class CaptureSnapshot {
   final bool screenshotBusy;
   final bool overlayShowing;
   final bool hasUnsaved;
+
+  /// The floating capture button is turned on / currently on screen.
+  final bool bubbleEnabled;
+  final bool bubbleShowing;
 
   /// Recording time at [now] (only advances while actually recording).
   Duration elapsedAt(DateTime now) {
@@ -325,6 +333,7 @@ class CaptureCapabilities {
     this.needsStoragePermission = false,
     this.lostRecordings = 0,
     this.available = true,
+    this.bubbleEnabled = false,
   });
 
   factory CaptureCapabilities.fromMap(Object? raw) {
@@ -340,6 +349,7 @@ class CaptureCapabilities {
       overlayPermission: m['overlayPermission'] == true,
       needsStoragePermission: m['needsStoragePermission'] == true,
       lostRecordings: lost is num ? lost.toInt() : 0,
+      bubbleEnabled: m['bubbleEnabled'] == true,
     );
   }
 
@@ -350,6 +360,7 @@ class CaptureCapabilities {
   final bool overlayPermission;
   final bool needsStoragePermission;
   final int lostRecordings;
+  final bool bubbleEnabled;
 
   /// False when the native module isn't there (tests, other platforms).
   final bool available;

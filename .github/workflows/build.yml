@@ -39,6 +39,13 @@ jobs:
             lib/main.dart \
             lib/features/nova \
             lib/features/nova_capture \
+            lib/features/xcoder \
+            lib/features/devtools \
+            lib/features/browser/devtools \
+            lib/features/browser/widgets/devtools_panel.dart \
+            lib/features/customization/screens/speed_dial_editor_screen.dart \
+            lib/core/services/offline_cache.dart \
+            lib/core/services/news_service.dart \
             lib/features/ai \
             lib/features/music \
             lib/features/network \
@@ -77,10 +84,12 @@ jobs:
             lib/core/widgets/update_dialog.dart \
             test/nova \
             test/nova_capture \
+            test/xcoder \
+            test/offline \
             test/auth
 
       - name: NOVA unit tests
-        run: flutter test test/nova test/nova_capture test/auth
+        run: flutter test test/nova test/nova_capture test/xcoder test/offline test/auth
 
       - name: Patch flutter_inappwebview ProGuard
         run: |

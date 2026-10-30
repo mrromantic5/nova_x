@@ -106,7 +106,7 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                               color: Colors.white, fontSize: 32,
                               fontWeight: FontWeight.w900, height: 1.1)),
                       const SizedBox(height: 8),
-                      Text('Effective: October 27, 2026  •  v2.9',
+                      Text('Effective: October 30, 2026  •  v2.10',
                           style: GoogleFonts.inter(
                               color: AppTheme.textHint, fontSize: 12)),
                     ],
@@ -218,6 +218,27 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                     'are kept with a webpage screenshot only if you turn that on, and only '
                     'on your phone. Voice commands for capture are recognised on your '
                     'phone; no screenshots, recordings or audio are sent to NOVA AI.'),
+                _sub('Floating Capture Button',
+                    'If you turn on the floating capture button, NOVA X uses Android\'s '
+                    '"Display over other apps" permission to show a small round button on '
+                    'your screen, including over other apps, so you can record, pause, stop '
+                    'or take a screenshot. It is off until you turn it on, you can close it '
+                    'at any time, and it never captures anything by itself: Android still '
+                    'asks for permission before every recording or screenshot.'),
+                _sub('Developer Tools and X Coder',
+                    'Dev Tools reads the web page you are viewing (elements, styles, storage, '
+                    'console messages and network requests) only on your phone, only while you '
+                    'use it. Request and response details are kept in the app\'s memory for '
+                    'that tab and are never sent to us. X Coder saves your projects only on '
+                    'your phone, and its terminal and preview run on your phone. If you use '
+                    'NOVA in X Coder (Premium), the code you choose and your request are sent '
+                    'to the NOVA AI service run by Tech Lyfe, which uses a third-party AI '
+                    'provider to answer; the service does not store it.'),
+                _sub('Offline Copies',
+                    'To work without internet, NOVA X keeps on your phone the latest news it '
+                    'showed you, the icons of your quick-access sites and your last coin '
+                    'balance. They are never uploaded and are removed when you clear the '
+                    'app\'s storage.'),
                 _sub('NOVA Network (Speed Test and Device Details)',
                     'When you run a speed test (or ask NOVA for your internet speed, ping or IP '
                     'address), NOVA X exchanges random test data with the NOVA speed test '

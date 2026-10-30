@@ -1,6 +1,7 @@
 // 3.9.1: saved passwords are written into pages as JSON strings, so no
 // character in a password can end the string and run as page script.
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nova_x/core/services/app_info.dart';
@@ -19,8 +20,11 @@ void main() {
     expect(jsonDecode(literal), pass);
   });
 
-  test('version fallback matches pubspec (3.10.0+19)', () {
-    expect(AppInfo.fallbackVersion, '3.10.0');
-    expect(AppInfo.fallbackBuild, 19);
+  test('version fallback matches pubspec.yaml', () {
+    // Reads pubspec.yaml, so this never needs editing on a version bump.
+    final m = RegExp(r'^version:\s*([\d.]+)\+(\d+)', multiLine: true).firstMatch(File('pubspec.yaml').readAsStringSync());
+    expect(m, isNotNull, reason: 'pubspec.yaml has a version line');
+    expect(AppInfo.fallbackVersion, m!.group(1));
+    expect(AppInfo.fallbackBuild, int.parse(m.group(2)!));
   });
 }

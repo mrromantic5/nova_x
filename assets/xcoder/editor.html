@@ -1,0 +1,420 @@
+<!doctype html>
+<!--
+  X Coder editor host (NOVA X 3.11.0).
+  Ace 1.43.4 bundled in assets/xcoder/ace (BSD licence, see LICENSE.txt), so
+  editing, highlighting, autocompletion and linting all work offline.
+  Served by WebViewAssetLoader at https://appassets.androidplatform.net/…
+  so Ace's linting web workers run (same origin).
+
+  Flutter → page:  window.nx.cmd(name, args)  (returns a JSON-able value)
+  Page → Flutter:  flutter_inappwebview.callHandler('xc', {type, …})
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<style>
+  html,body{margin:0;padding:0;height:100%;background:#0b1424;overflow:hidden}
+  #ed{position:absolute;inset:0}
+  .ace_editor{font-family:'JetBrains Mono','Fira Code','Roboto Mono','Droid Sans Mono',monospace!important}
+  .ace_gutter-cell.ace_error{background-position:2px center}
+  .ace_mobile-menu{display:none!important}
+  /* diff / AI preview highlight */
+  .nx-added{position:absolute;background:rgba(46,204,113,.18)}
+  .nx-flash{position:absolute;background:rgba(0,212,255,.22)}
+  .ace_autocomplete{width:min(92vw,420px)!important}
+  .ace_tooltip{max-width:86vw;white-space:pre-wrap}
+</style>
+<script src="ace/ace.js"></script>
+<script src="ace/ext-language_tools.js"></script>
+<script src="ace/ext-searchbox.js"></script>
+<script src="ace/ext-beautify.js"></script>
+<script src="ace/ext-whitespace.js"></script>
+<script src="ace/ext-modelist.js"></script>
+</head>
+<body>
+<div id="ed"></div>
+<script>
+(function(){
+  'use strict';
+  var base = location.href.replace(/[^\/]*$/, '') + 'ace/';
+  ace.config.set('basePath', base);
+  ace.config.set('modePath', base);
+  ace.config.set('themePath', base);
+  ace.config.set('workerPath', base);
+  ace.config.set('loadWorkerFromBlob', false);
+
+  var lt = ace.require('ace/ext/language_tools');
+  var Range = ace.require('ace/range').Range;
+  var UndoManager = ace.require('ace/undomanager').UndoManager;
+  var EditSession = ace.require('ace/edit_session').EditSession;
+  var beautify = ace.require('ace/ext/beautify');
+
+  var editor = ace.edit('ed');
+  var docs = {};          // id -> {session, savedRev, mode, name}
+  var current = null;
+  var bridgeReady = false, queue = [];
+  var projectWords = [];  // words from other files of the project
+  var aiMarkers = [];
+
+  function send(o){
+    if (!bridgeReady) { queue.push(o); return; }
+    try { window.flutter_inappwebview.callHandler('xc', o); } catch(e){}
+  }
+  window.addEventListener('flutterInAppWebViewPlatformReady', function(){
+    bridgeReady = true; var q = queue; queue = []; q.forEach(send);
+  });
+  if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) bridgeReady = true;
+
+  editor.setOptions({
+    theme: 'ace/theme/one_dark',
+    fontSize: 13,
+    showPrintMargin: false,
+    enableBasicAutocompletion: true,
+    enableLiveAutocompletion: true,
+    enableSnippets: true,
+    liveAutocompletionDelay: 120,
+    liveAutocompletionThreshold: 1,
+    highlightActiveLine: true,
+    highlightSelectedWord: true,
+    displayIndentGuides: true,
+    highlightIndentGuides: true,
+    showFoldWidgets: true,
+    fadeFoldWidgets: false,
+    behavioursEnabled: true,      // auto-close brackets & quotes
+    wrapBehavioursEnabled: true,
+    scrollPastEnd: 0.5,
+    animatedScroll: true,
+    tabSize: 2,
+    useSoftTabs: true,
+    copyWithEmptySelection: true,
+    enableMultiselect: true,
+    tooltipFollowsMouse: false,
+    useWorker: true,
+    customScrollbar: false,
+    hasCssTransforms: false
+  });
+  editor.renderer.setScrollMargin(6, 6, 0, 0);
+  editor.renderer.setPadding(6);
+
+  // ── Completers: language keywords + snippets + local words (Ace) + project words
+  var projectCompleter = {
+    id: 'project',
+    getCompletions: function(ed, session, pos, prefix, cb){
+      if (!prefix || prefix.length < 2) return cb(null, []);
+      var p = prefix.toLowerCase(), out = [];
+      for (var i = 0; i < projectWords.length && out.length < 60; i++){
+        var w = projectWords[i];
+        if (w.length > prefix.length && w.toLowerCase().indexOf(p) === 0) out.push({caption:w, value:w, meta:'project', score:200});
+      }
+      cb(null, out);
+    }
+  };
+  lt.addCompleter(projectCompleter);
+
+  // ── Documents ─────────────────────────────────────────────────────────
+  function modeOf(m){ return 'ace/mode/' + (m || 'text'); }
+
+  function annotationsOf(s){
+    return (s.getAnnotations() || []).slice(0, 300).map(function(a){
+      return {row:a.row, column:a.column||0, type:a.type||'info', text:String(a.text||'').slice(0,300)};
+    });
+  }
+
+  function attach(id, s){
+    s.on('change', debounce(function(){
+      var d = docs[id]; if (!d) return;
+      send({type:'change', id:id, dirty: !d.session.getUndoManager().isAtBookmark(), length: s.getLength(), chars: s.getValue().length});
+    }, 220));
+    s.on('changeAnnotation', debounce(function(){
+      send({type:'annotations', id:id, items: annotationsOf(s)});
+    }, 260));
+  }
+
+  function openDoc(a){
+    var id = a.id;
+    var d = docs[id];
+    if (!d){
+      var s = new EditSession(a.content || '', modeOf(a.mode));
+      s.setUndoManager(new UndoManager());
+      s.getUndoManager().bookmark();
+      s.setUseWrapMode(!!settings.wrap);
+      s.setTabSize(settings.tabSize); s.setUseSoftTabs(settings.softTabs);
+      d = docs[id] = {session:s, mode:a.mode, name:a.name || ''};
+      attach(id, s);
+    }
+    if (a.focus !== false) switchDoc(id);
+    return true;
+  }
+
+  function switchDoc(id){
+    var d = docs[id]; if (!d) return false;
+    current = id;
+    editor.setSession(d.session);
+    editor.setReadOnly(!!settings.readOnly || !!d.readOnly);
+    clearAi();
+    cursorEvt();
+    send({type:'annotations', id:id, items: annotationsOf(d.session)});
+    return true;
+  }
+
+  function closeDoc(id){
+    var d = docs[id]; if (!d) return false;
+    try { d.session.destroy && d.session.destroy(); } catch(e){}
+    delete docs[id];
+    if (current === id) current = null;
+    return true;
+  }
+
+  function cursorEvt(){
+    if (!current) return;
+    var c = editor.getCursorPosition();
+    var sel = editor.getSelectedText();
+    send({type:'cursor', id:current, row:c.row, column:c.column, selected: sel.length,
+          lines: editor.session.getLength(), selections: editor.selection.rangeCount || 1});
+  }
+  editor.selection.on('changeCursor', debounce(cursorEvt, 90));
+  editor.selection.on('changeSelection', debounce(cursorEvt, 90));
+
+  // ── Keyboard shortcuts (hardware keyboards / DeX) ─────────────────────
+  editor.commands.addCommand({name:'nxSave', bindKey:{win:'Ctrl-S', mac:'Cmd-S'}, exec:function(){ send({type:'key', key:'save'}); }});
+  editor.commands.addCommand({name:'nxPalette', bindKey:{win:'Ctrl-Shift-P|F1', mac:'Cmd-Shift-P|F1'}, exec:function(){ send({type:'key', key:'palette'}); }});
+  editor.commands.addCommand({name:'nxQuickOpen', bindKey:{win:'Ctrl-P', mac:'Cmd-P'}, exec:function(){ send({type:'key', key:'quickOpen'}); }});
+  editor.commands.addCommand({name:'nxRun', bindKey:{win:'Ctrl-Enter|F5', mac:'Cmd-Enter|F5'}, exec:function(){ send({type:'key', key:'run'}); }});
+  editor.commands.addCommand({name:'nxTerminal', bindKey:{win:'Ctrl-`', mac:'Ctrl-`'}, exec:function(){ send({type:'key', key:'terminal'}); }});
+  editor.commands.addCommand({name:'nxAi', bindKey:{win:'Ctrl-I', mac:'Cmd-I'}, exec:function(){ send({type:'key', key:'ai'}); }});
+  editor.commands.addCommand({name:'nxFormat', bindKey:{win:'Shift-Alt-F', mac:'Shift-Alt-F'}, exec:function(){ format(); }});
+  editor.commands.addCommand({name:'nxFindFiles', bindKey:{win:'Ctrl-Shift-F', mac:'Cmd-Shift-F'}, exec:function(){ send({type:'key', key:'findInFiles'}); }});
+
+  // ── Settings ─────────────────────────────────────────────────────────
+  var settings = {theme:'one_dark', fontSize:13, tabSize:2, softTabs:true, wrap:false, readOnly:false,
+                  live:true, lineNumbers:true, invisibles:false, keybinding:'default', relative:false};
+  function applySettings(o){
+    for (var k in o) if (Object.prototype.hasOwnProperty.call(o,k)) settings[k] = o[k];
+    editor.setTheme('ace/theme/' + settings.theme);
+    editor.setFontSize(Number(settings.fontSize) || 13);
+    editor.setOption('enableLiveAutocompletion', !!settings.live);
+    editor.setOption('showLineNumbers', !!settings.lineNumbers);
+    editor.setOption('showGutter', true);
+    editor.setOption('showInvisibles', !!settings.invisibles);
+    editor.setOption('relativeLineNumbers', !!settings.relative);
+    editor.setReadOnly(!!settings.readOnly);
+    for (var id in docs){
+      var s = docs[id].session;
+      s.setTabSize(Number(settings.tabSize) || 2);
+      s.setUseSoftTabs(!!settings.softTabs);
+      s.setUseWrapMode(!!settings.wrap);
+    }
+    var bg = getComputedStyle(editor.container).backgroundColor;
+    document.body.style.background = bg;
+    send({type:'theme', background: bg, dark: !!editor.renderer.theme && !!editor.renderer.theme.isDark});
+    return true;
+  }
+  editor.renderer.on('themeLoaded', function(){
+    var bg = getComputedStyle(editor.container).backgroundColor;
+    document.body.style.background = bg;
+    send({type:'theme', background:bg, dark: !!(editor.renderer.theme && editor.renderer.theme.isDark)});
+  });
+
+  // ── Editing helpers ───────────────────────────────────────────────────
+  function format(){
+    var mode = (docs[current] && docs[current].mode) || '';
+    if (mode === 'json'){
+      try {
+        var v = JSON.parse(editor.getValue());
+        editor.session.setValue(JSON.stringify(v, null, Number(settings.tabSize)||2));
+        return {ok:true};
+      } catch(e){ return {ok:false, error:String(e.message||e)}; }
+    }
+    if (['html','css','scss','less','javascript','jsx','typescript','tsx','php','xml','svg','vue'].indexOf(mode) < 0)
+      return {ok:false, error:'Formatting is available for HTML, CSS, JavaScript, TypeScript, JSON, PHP and XML.'};
+    if (editor.session.$modeId !== modeOf(mode)) return {ok:false, error:'The language is still loading — try again in a moment.'};
+    try {
+      var pos = editor.getCursorPosition();
+      beautify.beautify(editor.session);
+      editor.moveCursorToPosition(pos); editor.clearSelection();
+      return {ok:true};
+    } catch(e){ return {ok:false, error:String(e.message||e)}; }
+  }
+
+  function clearAi(){
+    aiMarkers.forEach(function(m){ try { editor.session.removeMarker(m); } catch(e){} });
+    aiMarkers = [];
+  }
+
+  function insertText(a){
+    editor.focus();
+    var r;
+    if (a.where === 'replaceSelection' && !editor.selection.isEmpty()){
+      r = editor.getSelectionRange();
+      var end = editor.session.replace(r, a.text);
+      r = new Range(r.start.row, r.start.column, end.row, end.column);
+    } else if (a.where === 'replaceAll'){
+      replaceAllKeepingUndo(a.text);
+      return {ok:true};
+    } else {
+      var p = editor.getCursorPosition();
+      var e2 = editor.session.insert(p, a.text);
+      r = new Range(p.row, p.column, e2.row, e2.column);
+    }
+    if (a.highlight){
+      clearAi();
+      aiMarkers.push(editor.session.addMarker(new Range(r.start.row, 0, r.end.row, 1e6), 'nx-added', 'fullLine'));
+      setTimeout(clearAi, 4000);
+    }
+    editor.renderer.scrollCursorIntoView();
+    return {ok:true};
+  }
+
+  function replaceAllKeepingUndo(text){
+    var s = editor.session;
+    var full = new Range(0, 0, s.getLength(), 0);
+    s.replace(full, text);
+    return true;
+  }
+
+  function context(){
+    var s = editor.session, c = editor.getCursorPosition();
+    var from = Math.max(0, c.row - 60), to = Math.min(s.getLength(), c.row + 60);
+    return {
+      selection: editor.getSelectedText(),
+      before: s.getLines(from, c.row).join('\n'),
+      after: s.getLines(c.row + 1, to).join('\n'),
+      line: s.getLine(c.row), row: c.row, column: c.column,
+      value: s.getValue()
+    };
+  }
+
+  function findAll(a){
+    editor.focus();
+    var n = editor.findAll(a.query, {caseSensitive: !!a.caseSensitive, regExp: !!a.regex, wholeWord: !!a.wholeWord});
+    return n || 0;
+  }
+
+  function replaceAll(a){
+    var opts = {needle:a.query, caseSensitive: !!a.caseSensitive, regExp: !!a.regex, wholeWord: !!a.wholeWord};
+    editor.find(a.query, opts);
+    return editor.replaceAll(a.replacement, opts) || 0;
+  }
+
+  function outline(){
+    // Lightweight symbol outline (functions, classes, selectors, headings).
+    var s = editor.session, mode = (docs[current] && docs[current].mode) || '', out = [];
+    var res = {
+      js: [/^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)/, /^\s*(?:export\s+)?class\s+([A-Za-z_$][\w$]*)/, /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/, /^\s{2,}(?:async\s+)?(?:static\s+)?([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{/],
+      py: [/^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)/, /^\s*class\s+([A-Za-z_]\w*)/],
+      dart: [/^\s*(?:abstract\s+)?class\s+([A-Za-z_]\w*)/, /^\s*(?:[\w<>?,\s]+\s)?([A-Za-z_]\w*)\s*\([^;]*\)\s*(?:async\s*)?\{/],
+      css: [/^\s*([^@{}][^{]*?)\s*\{/, /^\s*(@media[^{]*)\{/],
+      md: [/^(#{1,6}\s+.+)$/],
+      html: [/<(?:section|header|footer|main|nav|article|form|div)\b[^>]*\bid=["']([^"']+)["']/, /<h([1-6])[^>]*>([^<]{1,60})/],
+      php: [/^\s*(?:public|private|protected|static|\s)*function\s+([A-Za-z_]\w*)/, /^\s*(?:abstract\s+|final\s+)?class\s+([A-Za-z_]\w*)/],
+      generic: [/^\s*(?:pub\s+)?(?:fn|func|fun|def|function|sub)\s+([A-Za-z_]\w*)/, /^\s*(?:public\s+|private\s+|internal\s+)?(?:data\s+|sealed\s+|abstract\s+)?(?:class|struct|interface|enum|object|trait|impl)\s+([A-Za-z_]\w*)/]
+    };
+    var set = /javascript|jsx|typescript|tsx|vue/.test(mode) ? res.js : mode === 'python' ? res.py : mode === 'dart' ? res.dart.concat(res.generic)
+      : /css|scss|less/.test(mode) ? res.css : mode === 'markdown' ? res.md : mode === 'html' ? res.html : mode === 'php' ? res.php.concat(res.js) : res.generic;
+    var n = s.getLength();
+    for (var i = 0; i < n && out.length < 400; i++){
+      var line = s.getLine(i);
+      if (line.length > 400) continue;
+      for (var j = 0; j < set.length; j++){
+        var m = set[j].exec(line);
+        if (m){
+          var name = (m[2] ? 'h' + m[1] + ' ' + m[2] : m[1]).trim();
+          if (/^(if|for|while|switch|catch|return|else)$/.test(name)) break;
+          out.push({row:i, name:name.slice(0,80), indent:(line.match(/^\s*/)[0].length)});
+          break;
+        }
+      }
+    }
+    return out;
+  }
+
+  // ── Command dispatcher ────────────────────────────────────────────────
+  var cmds = {
+    open: openDoc,
+    switchTo: function(a){ return switchDoc(a.id); },
+    close: function(a){ return closeDoc(a.id); },
+    getValue: function(a){ var d = docs[a && a.id || current]; return d ? d.session.getValue() : null; },
+    setValue: function(a){
+      var d = docs[a.id || current]; if (!d) return false;
+      if (a.keepUndo) { var cur = editor.session === d.session; if (cur) return replaceAllKeepingUndo(a.text); }
+      d.session.setValue(a.text); if (a.markSaved) d.session.getUndoManager().bookmark(); return true;
+    },
+    markSaved: function(a){ var d = docs[a.id || current]; if (d) { d.session.getUndoManager().bookmark(); send({type:'change', id:a.id||current, dirty:false, length:d.session.getLength(), chars:d.session.getValue().length}); } return true; },
+    setMode: function(a){ var d = docs[a.id || current]; if (!d) return false; d.mode = a.mode; d.session.setMode(modeOf(a.mode)); return true; },
+    settings: applySettings,
+    setReadOnly: function(a){ var d = docs[a.id || current]; if (d) d.readOnly = !!a.readOnly; editor.setReadOnly(!!a.readOnly || !!settings.readOnly); return true; },
+    focus: function(){ editor.focus(); return true; },
+    blur: function(){ editor.blur(); try { document.activeElement && document.activeElement.blur(); } catch(e){} return true; },
+    undo: function(){ editor.undo(); return true; },
+    redo: function(){ editor.redo(); return true; },
+    exec: function(a){ editor.focus(); editor.execCommand(a.command); return true; },
+    insert: insertText,
+    typeKey: function(a){
+      editor.focus();
+      var k = a.key;
+      if (k === 'Tab') { editor.execCommand(editor.selection.isEmpty() ? 'indent' : 'blockindent'); return true; }
+      if (k === 'ShiftTab') { editor.execCommand('blockoutdent'); return true; }
+      if (k === 'Left') { editor.navigateLeft(1); return true; }
+      if (k === 'Right') { editor.navigateRight(1); return true; }
+      if (k === 'Up') { editor.navigateUp(1); return true; }
+      if (k === 'Down') { editor.navigateDown(1); return true; }
+      if (k === 'Home') { editor.navigateLineStart(); return true; }
+      if (k === 'End') { editor.navigateLineEnd(); return true; }
+      if (k === 'Escape') { editor.exitMultiSelectMode && editor.exitMultiSelectMode(); editor.clearSelection(); return true; }
+      editor.insert(k); return true;
+    },
+    gotoLine: function(a){ editor.gotoLine((a.row|0) + 1, a.column|0, true); editor.centerSelection(); editor.focus(); return true; },
+    find: function(a){ editor.focus(); var r = editor.find(a.query, {backwards: !!a.back, caseSensitive: !!a.caseSensitive, regExp: !!a.regex, wholeWord: !!a.wholeWord, wrap:true}); return !!r; },
+    findAll: findAll,
+    replaceAll: replaceAll,
+    searchBox: function(a){ editor.focus(); editor.execCommand(a && a.replace ? 'replace' : 'find'); return true; },
+    format: format,
+    toggleComment: function(){ editor.focus(); editor.toggleCommentLines(); return true; },
+    duplicate: function(){ editor.focus(); editor.duplicateSelection(); return true; },
+    moveLines: function(a){ editor.focus(); if (a.up) editor.moveLinesUp(); else editor.moveLinesDown(); return true; },
+    deleteLine: function(){ editor.focus(); editor.removeLines(); return true; },
+    selectAll: function(){ editor.focus(); editor.selectAll(); return true; },
+    selectNextOccurrence: function(){ editor.focus(); editor.execCommand('selectMoreAfter'); return true; },
+    foldAll: function(){ editor.session.foldAll(); return true; },
+    unfoldAll: function(){ editor.session.unfold(); return true; },
+    trimWhitespace: function(){ ace.require('ace/ext/whitespace').trimTrailingSpace(editor.session, {trimEmpty:true}); return true; },
+    convertIndent: function(a){ ace.require('ace/ext/whitespace').convertIndentation(editor.session, a.soft ? ' ' : '\t', a.size || settings.tabSize); return true; },
+    upper: function(){ editor.focus(); editor.toUpperCase(); return true; },
+    lower: function(){ editor.focus(); editor.toLowerCase(); return true; },
+    sortLines: function(){ editor.focus(); editor.execCommand('sortlines'); return true; },
+    context: context,
+    selection: function(){ return editor.getSelectedText(); },
+    cursor: function(){ var c = editor.getCursorPosition(); return {row:c.row, column:c.column}; },
+    annotations: function(){ return current ? annotationsOf(editor.session) : []; },
+    setAnnotations: function(a){ var d = docs[a.id || current]; if (d) d.session.setAnnotations(a.items || []); return true; },
+    projectWords: function(a){ projectWords = (a.words || []).slice(0, 5000); return projectWords.length; },
+    outline: outline,
+    flashLines: function(a){
+      clearAi();
+      aiMarkers.push(editor.session.addMarker(new Range(a.from|0, 0, a.to|0, 1e6), 'nx-flash', 'fullLine'));
+      setTimeout(clearAi, 2500); return true;
+    },
+    stats: function(){
+      var s = editor.session, v = s.getValue();
+      return {lines: s.getLength(), chars: v.length, words: (v.match(/\S+/g) || []).length};
+    }
+  };
+
+  window.nx = {
+    cmd: function(name, args){
+      var f = cmds[name];
+      if (!f) return {error:'unknown command ' + name};
+      try { var r = f(args || {}); return r === undefined ? null : r; }
+      catch(e){ return {error: String(e && e.message || e)}; }
+    }
+  };
+
+  function debounce(fn, ms){ var t; return function(){ var a = arguments, s = this; clearTimeout(t); t = setTimeout(function(){ fn.apply(s, a); }, ms); }; }
+
+  window.addEventListener('resize', function(){ editor.resize(); });
+  send({type:'ready', version: ace.version});
+})();
+</script>
+</body>
+</html>

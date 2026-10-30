@@ -113,6 +113,8 @@ class _CaptureDashboardState extends State<CaptureDashboard> with WidgetsBinding
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
             children: [
               _statusCard(),
+              const SizedBox(height: 12),
+              _bubbleCard(),
               const CaptureSectionTitle('Capture'),
               _actions(),
               CaptureSectionTitle('Recent', trailing: TextButton(
@@ -222,6 +224,38 @@ class _CaptureDashboardState extends State<CaptureDashboard> with WidgetsBinding
           ),
         ],
       ]),
+    );
+  }
+
+  // ── Floating button ─────────────────────────────────────────────────────
+
+  Widget _bubbleCard() {
+    final on = _c.bubbleEnabled;
+    return CaptureCard(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      borderColor: on ? AppTheme.accentCyan.withOpacity(0.4) : null,
+      child: SwitchListTile(
+        value: on,
+        activeColor: AppTheme.accentCyan,
+        secondary: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: AppTheme.bgElevated,
+            border: Border.all(color: AppTheme.accentCyan, width: 2),
+          ),
+          child: const Icon(Icons.screenshot_monitor_rounded, color: Colors.white, size: 20),
+        ),
+        title: Text('Floating capture button', style: captureText(14.5, weight: FontWeight.w700)),
+        subtitle: Text(
+          on
+              ? 'On screen and over other apps. Tap it for Record, Screenshot and more; drag it onto ✕ to close.'
+              : 'A small round button on your screen, in NOVA X and over other apps.',
+          style: captureText(12, color: AppTheme.textSecondary),
+        ),
+        onChanged: (v) => CaptureFlows.toggleBubble(context, v),
+      ),
     );
   }
 
@@ -385,16 +419,12 @@ class _CaptureDashboardState extends State<CaptureDashboard> with WidgetsBinding
         ),
         _PermissionRow(
           icon: Icons.picture_in_picture_alt_rounded,
-          title: 'Floating controls over other apps',
-          status: !_c.settings.overlayEnabled
-              ? 'Off (optional)'
-              : (caps.overlayPermission ? 'On' : 'Needs “Display over other apps”'),
-          ok: !_c.settings.overlayEnabled || caps.overlayPermission,
-          action: _c.settings.overlayEnabled && !caps.overlayPermission
-              ? () async {
-                  if (await CapturePermissionSheet.overlay(context)) await _c.openOverlaySettings();
-                }
-              : null,
+          title: 'Display over other apps',
+          status: caps.overlayPermission
+              ? 'Allowed — used only by the floating button'
+              : 'Not allowed (only needed for the floating button)',
+          ok: caps.overlayPermission || !_c.bubbleEnabled,
+          action: caps.overlayPermission ? null : () => CaptureFlows.toggleBubble(context, true),
         ),
         if (caps.sdk > 0 && caps.sdk < 29)
           _PermissionRow(

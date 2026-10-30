@@ -10,6 +10,7 @@ import '../../../core/theme/app_theme.dart';
 import '../controllers/capture_controller.dart';
 import '../models/capture_settings.dart';
 import '../models/media_asset.dart';
+import '../widgets/capture_flows.dart';
 import '../widgets/capture_ui.dart';
 
 class RecordingSettingsScreen extends StatefulWidget {
@@ -187,22 +188,15 @@ class _RecordingSettingsScreenState extends State<RecordingSettingsScreen> with 
             CaptureCard(
               padding: const EdgeInsets.symmetric(vertical: 4),
               child: SwitchListTile(
-                value: s.overlayEnabled,
+                value: _c.bubbleEnabled,
                 activeColor: AppTheme.accentCyan,
-                title: Text('Floating controls over other apps', style: captureText(14, weight: FontWeight.w600)),
+                title: Text('Floating capture button', style: captureText(14, weight: FontWeight.w600)),
                 subtitle: Text(
-                  s.overlayEnabled && !caps.overlayPermission
-                      ? 'Needs “Display over other apps” — tap to allow'
-                      : 'A small Pause / Stop pill while you record in other apps. Optional.',
+                  'A round button on your screen and over other apps: Record, Pause, Stop, Screenshot. '
+                  'Drag it to move, drag it onto ✕ to close. Needs “Display over other apps”.',
                   style: captureText(12, color: AppTheme.textSecondary),
                 ),
-                onChanged: (on) async {
-                  if (on && !caps.overlayPermission) {
-                    if (!await CapturePermissionSheet.overlay(context)) return;
-                    await _c.openOverlaySettings();
-                  }
-                  await _set(s.copyWith(overlayEnabled: on));
-                },
+                onChanged: (on) => CaptureFlows.toggleBubble(context, on),
               ),
             ),
             const CaptureSectionTitle('Screenshots'),

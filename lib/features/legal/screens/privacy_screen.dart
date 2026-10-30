@@ -106,7 +106,7 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                               color: Colors.white, fontSize: 32,
                               fontWeight: FontWeight.w900, height: 1.1)),
                       const SizedBox(height: 8),
-                      Text('Effective: October 30, 2026  •  v2.10',
+                      Text('Effective: October 31, 2026  •  v2.11',
                           style: GoogleFonts.inter(
                               color: AppTheme.textHint, fontSize: 12)),
                     ],
@@ -231,13 +231,17 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                     'use it. Request and response details are kept in the app\'s memory for '
                     'that tab and are never sent to us. X Coder saves your projects only on '
                     'your phone, and its terminal and preview run on your phone. If you use '
-                    'NOVA in X Coder (Premium), the code you choose and your request are sent '
-                    'to the NOVA AI service run by Tech Lyfe, which uses a third-party AI '
-                    'provider to answer; the service does not store it.'),
+                    'NOVA Coder or NOVA Agent in X Coder (Premium), your request and the code '
+                    'context it needs (the open file or selection, other open tabs, the list of '
+                    'project files, editor errors and recent terminal output) are sent to the '
+                    'NOVA Coder service run by Tech Lyfe, which uses a third-party AI provider to '
+                    'answer, together with your account token to check your plan. The service '
+                    'does not store your code; it keeps only a daily request count per account.'),
                 _sub('Offline Copies',
                     'To work without internet, NOVA X keeps on your phone the latest news it '
-                    'showed you, the icons of your quick-access sites and your last coin '
-                    'balance. They are never uploaded and are removed when you clear the '
+                    'showed you, the icons of your quick-access sites, the public business '
+                    'listings you viewed, your NOVA AI chats and your last coin balance. They '
+                    'are never uploaded again from this copy and are removed when you clear the '
                     'app\'s storage.'),
                 _sub('NOVA Network (Speed Test and Device Details)',
                     'When you run a speed test (or ask NOVA for your internet speed, ping or IP '

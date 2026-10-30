@@ -45,6 +45,14 @@ void main() {
     expect(NewsArticle.fromJson({'t': 'ok', 'u': 'https://x'})?.title, 'ok');
   });
 
+  test('business listings are kept for offline use', () async {
+    await OfflineCache.putJson('businesses', [
+      {'id': 1, 'name': 'Kobby Tech', 'category': 'Technology', 'image_url': 'https://x.test/a.png'},
+    ]);
+    final saved = await OfflineCache.getJson('businesses');
+    expect((saved!.$1 as List).single, containsPair('name', 'Kobby Tech'));
+  });
+
   test('age labels', () {
     expect(OfflineCache.age(DateTime.now()), 'just now');
     expect(OfflineCache.age(DateTime.now().subtract(const Duration(minutes: 5))), '5 min ago');

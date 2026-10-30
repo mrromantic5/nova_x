@@ -31,11 +31,14 @@ import '../../../core/services/rewards_entitlements.dart';
 import '../../../core/services/subscription_service.dart';
 import '../../ai/widgets/nova_markdown_view.dart';
 import '../../premium/screens/subscription_screen.dart';
+import '../../devguide/developer_guide_screen.dart';
+import '../ai/nova_coder_client.dart';
 import '../ai/xcoder_ai.dart';
 import '../editor/ace_editor.dart';
 import '../run/js_runner.dart';
 import '../run/preview_server.dart';
 import '../terminal/xcoder_terminal.dart';
+import '../widgets/xcoder_agent_sheet.dart';
 import '../widgets/xcoder_ai_sheet.dart';
 import '../widgets/xcoder_explorer.dart';
 import '../widgets/xcoder_keybar.dart';
@@ -77,7 +80,7 @@ class XCoderScreen extends StatefulWidget {
   State<XCoderScreen> createState() => _XCoderScreenState();
 }
 
-class _XCoderScreenState extends State<XCoderScreen> with WidgetsBindingObserver implements TerminalHost, XAiHost {
+class _XCoderScreenState extends State<XCoderScreen> with WidgetsBindingObserver implements TerminalHost, XAiHost, XAgentHost {
   final _ws = XWorkspace.instance;
   final _ace = AceController();
   final _scaffold = GlobalKey<ScaffoldState>();
@@ -216,6 +219,12 @@ class _XCoderScreenState extends State<XCoderScreen> with WidgetsBindingObserver
             _togglePanel(XPanel.terminal);
           case 'ai':
             _openAi();
+          case 'agent':
+            _openAgent();
+          case 'aiComplete':
+            _aiComplete();
+          case 'guide':
+            _openGuide();
           case 'findInFiles':
             _openSearch();
         }
@@ -982,6 +991,20 @@ class _XCoderScreenState extends State<XCoderScreen> with WidgetsBindingObserver
   @override
   Future<String?> currentFile() async => _active?.rel;
 
+  @override
+  Future<void> openGuide(String section) async => _openGuide(section);
+
+  @override
+  Future<void> askNova(String question, {bool agent = false}) async {
+    if (agent) {
+      _openAgent(question);
+    } else if (_active == null) {
+      _openAgent(question);
+    } else {
+      showXAiSheet(context, this, task: XAiTask.ask, prompt: question);
+    }
+  }
+
   // ── XAiHost ───────────────────────────────────────────────────────────
 
   @override
@@ -1031,6 +1054,149 @@ class _XCoderScreenState extends State<XCoderScreen> with WidgetsBindingObserver
     await _ws.write(p, rel, content);
     await _refreshTree();
     await _openFile(rel);
+  }
+
+  // ── NOVA Coder context & agent host (3.11.1) ───────────────────────────
+
+  @override
+  String get projectName => _project?.name ?? 'Project';
+
+  @override
+  Future<List<String>> projectFiles() async => _files;
+
+  @override
+  Future<String?> readProjectFile(String rel) async {
+    final clean = XWorkspace.normalize(rel);
+    final p = _project;
+    if (clean == null || clean.isEmpty || p == null) return null;
+    final open = _docs.where((d) => d.rel == clean).firstOrNull;
+    if (open != null) return _ace.value(open.id); // unsaved edits included
+    if (!await _ws.exists(p, clean)) return null;
+    if (!await _ws.isProbablyText(p, clean)) return '(binary file)';
+    return _ws.read(p, clean);
+  }
+
+  @override
+  Future<Map<String, Object?>> coderContext({required bool includeSelection, bool wholeFile = true}) async {
+    final d = _active;
+    final ctx = d == null ? const <String, dynamic>{} : await _ace.context();
+    final value = (ctx['value'] as String?) ?? '';
+    final others = <Map<String, String>>[];
+    for (final o in _docs) {
+      if (o.id == _activeId || others.length >= 6) continue;
+      final v = await _ace.value(o.id) ?? '';
+      if (v.trim().isEmpty) continue;
+      others.add({'path': o.rel ?? o.name, 'content': v.length > 20000 ? v.substring(0, 20000) : v});
+    }
+    final term = _term?.lines ?? const <TermLine>[];
+    final termTail = term.skip(term.length > 60 ? term.length - 60 : 0).map((l) => l.text).join('\n');
+    final outTail = _output.skip(_output.length > 40 ? _output.length - 40 : 0).map((l) => '[${l.level}] ${l.text}').join('\n');
+    return {
+      'project': _project?.name ?? '',
+      'tree': _files.take(2500).toList(),
+      if (d != null)
+        'activeFile': {
+          'path': d.rel ?? d.name,
+          'language': kAceModeLabels[d.mode] ?? d.mode,
+          if (wholeFile) 'content': value.length > 60000 ? value.substring(0, 60000) : value,
+          if (includeSelection && ((ctx['selection'] as String?) ?? '').isNotEmpty) 'selection': ctx['selection'],
+          'cursorLine': _cursor.row,
+        },
+      if (others.isNotEmpty) 'files': others,
+      'diagnostics': [
+        for (final p in _problems.take(60)) {'path': p.rel ?? p.name, 'row': p.a.row, 'type': p.a.type, 'text': p.a.text}
+      ],
+      if (termTail.trim().isNotEmpty) 'terminal': termTail,
+      if (outTail.trim().isNotEmpty) 'console': outTail,
+    };
+  }
+
+  @override
+  Future<List<String>> applyAgentEdits(List<AgentEdit> edits) async {
+    final p = _project;
+    if (p == null) return const ['✗ No project open'];
+    final out = <String>[];
+    for (final e in edits) {
+      final rel = XWorkspace.normalize(e.path);
+      if (rel == null || rel.isEmpty) {
+        out.add('✗ ${e.path}: invalid path');
+        continue;
+      }
+      try {
+        final open = _docs.where((d) => d.rel == rel).firstOrNull;
+        if (e.action == 'delete') {
+          if (open != null) {
+            open.dirty = false;
+            await _closeDoc(open.id, ask: false);
+          }
+          await _ws.delete(p, rel);
+          out.add('✓ $rel deleted');
+          continue;
+        }
+        final text = e.content ?? '';
+        if (open != null) {
+          // through the editor, so Undo can revert it
+          await _ace.setValue(text, id: open.id, keepUndo: open.id == _activeId);
+          await _save(open, quiet: true);
+        } else {
+          await _ws.write(p, rel, text);
+        }
+        out.add('✓ $rel ${e.action == 'create' ? 'created' : 'updated'}');
+      } catch (err) {
+        out.add('✗ $rel: $err');
+      }
+    }
+    await _refreshTree();
+    _saved.add(null);
+    final firstNew = edits.where((e) => e.action == 'create').firstOrNull;
+    if (firstNew != null) await _openFile(XWorkspace.normalize(firstNew.path) ?? firstNew.path);
+    return out;
+  }
+
+  @override
+  Future<void> runInTerminal(String command) async {
+    _showPanel(XPanel.terminal);
+    await _term?.submit(command);
+  }
+
+  void _openAgent([String instruction = '']) => showXAgentSheet(context, this, instruction: instruction);
+
+  void _openGuide([String section = 'xcoder']) => Navigator.push(
+      context, MaterialPageRoute(builder: (_) => DeveloperGuideScreen(initialSection: section)));
+
+  /// AI completion at the cursor (NOVA Coder Fast), inserted highlighted; Undo removes it.
+  Future<void> _aiComplete() async {
+    final d = _active;
+    if (d == null) return;
+    if (!XCoderAi.available) {
+      _openAi(XAiTask.complete);
+      return;
+    }
+    final c = await _ace.context();
+    final before = '${c['before'] ?? ''}\n${((c['line'] as String?) ?? '').substring(0, ((c['column'] as num?) ?? 0).toInt().clamp(0, ((c['line'] as String?) ?? '').length))}';
+    final line = (c['line'] as String?) ?? '';
+    final col = ((c['column'] as num?) ?? 0).toInt().clamp(0, line.length);
+    final after = '${line.substring(col)}\n${c['after'] ?? ''}';
+    if (mounted) xToast(context, 'NOVA is completing…');
+    try {
+      final text = await NovaCoderClient().complete(
+          path: d.rel ?? d.name, language: kAceModeLabels[d.mode] ?? d.mode, prefix: before, suffix: after);
+      if (text.trim().isEmpty) {
+        if (mounted) xToast(context, 'No suggestion here.');
+        return;
+      }
+      await _ace.insert(text);
+    } on CoderException catch (e) {
+      if (mounted) xToast(context, e.message, error: true);
+    }
+  }
+
+  void _fixTerminalError() {
+    if (_active == null) {
+      xToast(context, 'Open the file the error is about first.');
+      return;
+    }
+    showXAiSheet(context, this, task: XAiTask.debug, prompt: 'Explain and fix the error in the terminal / console output.');
   }
 
   void _openAi([XAiTask task = XAiTask.ask]) {
@@ -1133,6 +1299,15 @@ class _XCoderScreenState extends State<XCoderScreen> with WidgetsBindingObserver
     for (final t in XAiTask.values)
       XCommand('ai.${t.wire}', 'NOVA: ${t.label} — ${t.hint}', Icons.auto_awesome_rounded, () async => _openAi(t),
           category: 'NOVA', premium: true),
+    XCommand('agent', 'NOVA Agent: change the project from a description…', Icons.smart_toy_outlined, () async => _openAgent(),
+        category: 'NOVA', premium: true, keys: 'Ctrl+Shift+I'),
+    XCommand('aiComplete', 'NOVA: Complete code at the cursor (AI)', Icons.bolt_rounded, _aiComplete,
+        category: 'NOVA', premium: true, keys: 'Alt+\\'),
+    XCommand('fixTerminal', 'NOVA: Explain & fix the last terminal / console error', Icons.bug_report_outlined,
+        () async => _fixTerminalError(), category: 'NOVA', premium: true),
+    XCommand('guide', 'Developer Guide', Icons.menu_book_rounded, () async => _openGuide(), category: 'Help', keys: 'F1'),
+    XCommand('guideTerminal', 'Developer Guide: terminal commands', Icons.terminal_rounded, () async => _openGuide('terminal'),
+        category: 'Help'),
   ];
 
   Future<void> _palette(String initial) async {
@@ -1360,7 +1535,8 @@ class _XCoderScreenState extends State<XCoderScreen> with WidgetsBindingObserver
           ),
         ),
         XIconBtn(Icons.play_arrow_rounded, tooltip: 'Run (F5)', onTap: _run, color: XC.ok, size: 24),
-        XIconBtn(Icons.auto_awesome_rounded, tooltip: 'NOVA', onTap: () => _openAi(), color: const Color(0xFFFFD54F)),
+        XIconBtn(Icons.auto_awesome_rounded, tooltip: 'NOVA Coder', onTap: () => _openAi(), color: const Color(0xFFFFD54F)),
+        XIconBtn(Icons.smart_toy_outlined, tooltip: 'NOVA Agent', onTap: () => _openAgent(), color: XC.accent),
         PopupMenuButton<String>(
           color: XC.side,
           icon: Icon(Icons.more_vert_rounded, color: errors > 0 ? XC.warning : XC.dim),
@@ -1388,6 +1564,9 @@ class _XCoderScreenState extends State<XCoderScreen> with WidgetsBindingObserver
             _menuItem('export', Icons.folder_zip_outlined, 'Export project (.zip)', ''),
             _menuItem('projects', Icons.folder_copy_outlined, 'Projects', ''),
             _menuItem('settings', Icons.tune_rounded, 'Settings', ''),
+            const PopupMenuDivider(),
+            _menuItem('agent', Icons.smart_toy_outlined, 'NOVA Agent', ''),
+            _menuItem('guide', Icons.menu_book_rounded, 'Developer Guide', 'F1'),
           ],
         ),
       ]),

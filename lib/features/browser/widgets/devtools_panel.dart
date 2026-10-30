@@ -18,6 +18,7 @@ import 'package:nova_x/core/services/rewards_entitlements.dart';
 import 'package:nova_x/core/services/rewards_service.dart';
 import 'package:nova_x/core/widgets/feature_lock.dart';
 
+import '../../devguide/developer_guide_screen.dart';
 import '../devtools/devtools_bridge.dart';
 import '../devtools/dt_ui.dart';
 import '../devtools/tabs/application_tab.dart';
@@ -209,6 +210,10 @@ class _DevToolsSheetState extends State<DevToolsSheet> with SingleTickerProvider
                   child: Text(host, style: XC.mono(11.5, color: XC.faint), maxLines: 1, overflow: TextOverflow.ellipsis),
                 ),
                 XIconBtn(Icons.ads_click_rounded, tooltip: 'Select an element on the page', onTap: _pick, color: XC.accent),
+                XIconBtn(Icons.menu_book_rounded, tooltip: 'Developer Guide',
+                    onTap: () => Navigator.push(context,
+                        MaterialPageRoute(builder: (_) => const DeveloperGuideScreen(initialSection: 'devtools'))),
+                    size: 19),
                 XIconBtn(Icons.refresh_rounded, tooltip: 'Reload page', onTap: _reload),
                 XIconBtn(_size > 0.9 ? Icons.close_fullscreen_rounded : Icons.open_in_full_rounded,
                     tooltip: _size > 0.9 ? 'Dock' : 'Full height',

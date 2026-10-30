@@ -9,6 +9,7 @@
 import 'package:dio/dio.dart';
 import 'api_service.dart';
 import 'device_clock.dart';
+import 'offline_cache.dart';
 
 // ── Feature + task keys (must match rewards.php) ─────────────────────────────
 class RewardFeature {
@@ -151,6 +152,24 @@ class RewardsService {
   }
 
   // ── GET state ──────────────────────────────────────────────────────────────
+  // ── 3.11.0 offline: the last coin balance seen, per signed-in account ──
+  static Future<String> _balanceKey() async {
+    final u = await ApiService.getCachedUser();
+    final id = u?['id'] ?? u?['user_id'] ?? u?['email'] ?? 'guest';
+    return 'coins_${OfflineCache.keyFor('$id')}';
+  }
+
+  static Future<void> _saveBalance(int balance) async {
+    try { await OfflineCache.putJson(await _balanceKey(), balance); } catch (_) {}
+  }
+
+  /// The last balance saved on this phone for this account (null if none).
+  static Future<(int, DateTime)?> savedBalance() async {
+    final r = await OfflineCache.getJson(await _balanceKey());
+    if (r == null || r.$1 is! num) return null;
+    return ((r.$1 as num).toInt(), r.$2);
+  }
+
   static Future<RewardsState?> fetchState() async {
     try {
       final r = await _dio.get('$_url?action=state', options: await _opts());
@@ -181,8 +200,10 @@ class RewardsService {
         );
       });
 
+      final balance = (m['balance'] is num) ? (m['balance'] as num).toInt() : 0;
+      _saveBalance(balance);
       return RewardsState(
-        balance:        (m['balance'] is num) ? (m['balance'] as num).toInt() : 0,
+        balance:        balance,
         lifetimeEarned: (m['lifetime_earned'] is num) ? (m['lifetime_earned'] as num).toInt() : 0,
         todayGained:    (m['today_gained'] is num) ? (m['today_gained'] as num).toInt() : 0,
         day:            (m['day'] as String?) ?? '',

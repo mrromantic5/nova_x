@@ -8,6 +8,7 @@
 
 import 'package:dio/dio.dart';
 import 'api_service.dart';
+import 'offline_cache.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 class NewsArticle {
@@ -28,6 +29,21 @@ class NewsArticle {
     required this.timeAgo,
     required this.category,
   });
+
+  Map<String, String> toJson() => {
+        't': title, 'd': description, 'u': url, 'i': imageUrl,
+        's': source, 'a': timeAgo, 'c': category,
+      };
+
+  static NewsArticle? fromJson(Object? j) {
+    if (j is! Map) return null;
+    String g(String k) => j[k] is String ? j[k] as String : '';
+    if (g('t').isEmpty || g('u').isEmpty) return null;
+    return NewsArticle(
+      title: g('t'), description: g('d'), url: g('u'), imageUrl: g('i'),
+      source: g('s'), timeAgo: g('a'), category: g('c'),
+    );
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -181,7 +197,40 @@ class NewsService {
   // ── Public API ─────────────────────────────────────────────────────────────
   /// Returns up to 10 articles for [category].
   /// Tries all APIs in cascade order; falls back gracefully.
+  /// 3.11.0 offline: true when the last page-1 result came from the copy
+  /// saved on the phone (no internet), with the time it was saved.
+  static bool lastFromCache = false;
+  static DateTime? lastSavedAt;
+
   static Future<List<NewsArticle>> fetchNews(String category, {int page = 1}) async {
+    if (page > 1) return _fetchLive(category, page: page);
+    final live = await _fetchLive(category, page: 1);
+    if (live.isNotEmpty) {
+      lastFromCache = false;
+      lastSavedAt = DateTime.now();
+      OfflineCache.putJson('news_$category', live.take(20).map((a) => a.toJson()).toList());
+      return live;
+    }
+    final saved = await savedNews(category);
+    if (saved != null && saved.$1.isNotEmpty) {
+      lastFromCache = true;
+      lastSavedAt = saved.$2;
+      return saved.$1;
+    }
+    lastFromCache = false;
+    lastSavedAt = null;
+    return live;
+  }
+
+  /// The last news saved for [category] (shown when offline).
+  static Future<(List<NewsArticle>, DateTime)?> savedNews(String category) async {
+    final r = await OfflineCache.getJson('news_$category');
+    if (r == null || r.$1 is! List) return null;
+    final list = (r.$1 as List).map(NewsArticle.fromJson).whereType<NewsArticle>().toList();
+    return (list, r.$2);
+  }
+
+  static Future<List<NewsArticle>> _fetchLive(String category, {int page = 1}) async {
     if (page <= 1) {
       // 1. GNews — best: images + global coverage + 100 req/day
       var articles = await _fromGNews(category);

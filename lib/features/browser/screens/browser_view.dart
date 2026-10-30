@@ -6,6 +6,7 @@
 //   • Incognito mode (no history, no cookies persisted, cleared on exit)
 //   • Zoom controls (text zoom slider + reset)
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:collection';
 import 'dart:typed_data';
@@ -29,6 +30,7 @@ import 'package:nova_x/features/offline/screens/offline_pages_screen.dart';
 import 'package:nova_x/core/services/tabs_service.dart';
 import 'package:nova_x/features/browser/screens/tabs_screen.dart';
 import '../widgets/devtools_panel.dart';
+import '../devtools/devtools_hooks.dart';
 import 'package:url_launcher/url_launcher.dart' as ul;
 import 'package:nova_x/features/ai/screens/ai_assistant_screen.dart';
 import 'package:nova_x/features/ai/services/nova_media_store.dart';
@@ -131,77 +133,8 @@ class _BrowserViewState extends State<BrowserView>
 })();
 ''';
 
-  // JS that patches console.*, window.onerror and unhandledrejection to
-  // forward everything to Flutter (so the Console tab shows real errors).
-  static const String _consoleHook = r'''
-(function() {
-  if (window.__novax_patched) return;
-  window.__novax_patched = true;
-  function send(type, msg){
-    try {
-      window.flutter_inappwebview.callHandler(
-        'novaxLog', { type: type, msg: msg, time: new Date().toLocaleTimeString() }
-      );
-    } catch(e) {}
-  }
-  function fmt(a){
-    try { return typeof a === 'object' ? JSON.stringify(a) : String(a); }
-    catch(e){ return '[Object]'; }
-  }
-  ['log','warn','error','info','debug'].forEach(function(t) {
-    var orig = console[t] ? console[t].bind(console) : function(){};
-    console[t] = function() {
-      send(t, Array.prototype.slice.call(arguments).map(fmt).join(' '));
-      orig.apply(console, arguments);
-    };
-  });
-  window.addEventListener('error', function(e){
-    send('error', (e.message || 'Error') + (e.filename ? '  ('+e.filename+':'+e.lineno+')' : ''));
-  });
-  window.addEventListener('unhandledrejection', function(e){
-    var r = e.reason; send('error', 'Uncaught (in promise) ' + (r && r.message ? r.message : fmt(r)));
-  });
-})();
-''';
-
-  // JS that records fetch() + XHR network calls and forwards them to Flutter.
-  static const String _netHook = r'''
-(function(){
-  if (window.__novax_net) return;
-  window.__novax_net = true;
-  function send(o){
-    try { window.flutter_inappwebview.callHandler('novaxNet', o); } catch(e){}
-  }
-  if (window.fetch){
-    var of = window.fetch;
-    window.fetch = function(){
-      var args = arguments;
-      var url = (args[0] && args[0].url) ? args[0].url : String(args[0]);
-      var method = (args[1] && args[1].method) ? args[1].method : 'GET';
-      var t0 = Date.now();
-      return of.apply(this, args).then(function(res){
-        send({url:url, method:method, status:res.status, ms:(Date.now()-t0), type:'fetch'});
-        return res;
-      }).catch(function(err){
-        send({url:url, method:method, status:0, ms:(Date.now()-t0), type:'fetch', error:String(err)});
-        throw err;
-      });
-    };
-  }
-  var OX = window.XMLHttpRequest;
-  if (OX){
-    var oo = OX.prototype.open, os = OX.prototype.send;
-    OX.prototype.open = function(m,u){ this.__nx={m:m,u:u}; return oo.apply(this, arguments); };
-    OX.prototype.send = function(){
-      var self=this, t0=Date.now();
-      this.addEventListener('loadend', function(){
-        if(self.__nx) send({url:self.__nx.u, method:self.__nx.m, status:self.status, ms:(Date.now()-t0), type:'xhr'});
-      });
-      return os.apply(this, arguments);
-    };
-  }
-})();
-''';
+  // 3.11.0: the console / network hooks live in devtools/devtools_hooks.dart
+  // (kDevtoolsHook) and are injected at document start.
 
   // Polyfills the Web Speech API (webkitSpeechRecognition / SpeechRecognition),
   // which Android System WebView does NOT implement. Calls bridge to the native
@@ -261,7 +194,22 @@ class _BrowserViewState extends State<BrowserView>
 ''';
 
   // ── Developer Tools ──────────────────────────────────────────────────────
-  void _openDevTools() {
+  bool _devtoolsArmed = false;
+
+  Future<void> _openDevTools({List<int>? inspectPath}) async {
+    final c = _wvc;
+    if (c != null) {
+      // From now on this tab also records request/response details (in memory).
+      if (!_devtoolsArmed) {
+        _devtoolsArmed = true;
+        try {
+          await c.addUserScript(userScript: UserScript(source: kDevtoolsArm,
+              injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START));
+        } catch (_) {}
+      }
+      await DevtoolsScripts.ensure(c);
+    }
+    if (!mounted) return;
     showDevTools(
       context,
       wvc:            _wvc,
@@ -271,8 +219,13 @@ class _BrowserViewState extends State<BrowserView>
       onClearConsole: () => setState(() => _consoleLogs.clear()),
       networkLogs:    _networkLogs,
       onClearNetwork: () => setState(() => _networkLogs.clear()),
+      inspectPath:    inspectPath,
+      changes:        _devtoolsChanges.stream,
     );
   }
+
+  /// Tells an open Dev Tools panel that new console/network entries arrived.
+  final StreamController<void> _devtoolsChanges = StreamController<void>.broadcast();
 
   String _buildUrl(String query) {
     final q = query.trim();
@@ -318,6 +271,7 @@ class _BrowserViewState extends State<BrowserView>
       CookieManager.instance().deleteAllCookies();
     }
     _urlCtrl.dispose();
+    _devtoolsChanges.close();
     try { _speech.stop(); } catch (_) {}
     NovaWake.resumeAfterOtherMic('stt_page');
     NovaWake.resumeAfterOtherMic('web_mic');
@@ -745,6 +699,8 @@ class _BrowserViewState extends State<BrowserView>
       initialUserScripts: UnmodifiableListView([
         UserScript(source: _speechShim,
             injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START),
+        UserScript(source: kDevtoolsHook,
+            injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START),
       ]),
 
       // Grant in-page media permissions (microphone / camera) so getUserMedia
@@ -817,42 +773,76 @@ class _BrowserViewState extends State<BrowserView>
             if (args.isNotEmpty && mounted) {
               try {
                 final data = args[0] is Map
-                    ? args[0] as Map<String, dynamic>
+                    ? Map<String, dynamic>.from(args[0] as Map)
                     : jsonDecode(args[0].toString()) as Map<String, dynamic>;
                 final msg = data['msg']?.toString() ?? '';
-                setState(() {
-                  _consoleLogs.add({
-                    'type': data['type']?.toString() ?? 'log',
-                    'msg':  msg.length > 4000 ? msg.substring(0, 4000) : msg,
-                    'time': data['time']?.toString()  ?? '',
-                  });
-                  if (_consoleLogs.length > 500) _consoleLogs.removeAt(0);
+                _consoleLogs.add({
+                  'type':  data['type']?.toString() ?? 'log',
+                  'msg':   msg.length > 8000 ? msg.substring(0, 8000) : msg,
+                  'time':  data['time']?.toString() ?? '',
+                  'ts':    data['ts'] is num ? (data['ts'] as num).toInt() : DateTime.now().millisecondsSinceEpoch,
+                  'src':   data['src']?.toString() ?? '',
+                  'stack': data['stack']?.toString() ?? '',
+                  'url':   _currentUrl,
                 });
+                if (_consoleLogs.length > 1000) _consoleLogs.removeAt(0);
+                _devtoolsChanges.add(null);
               } catch (_) {}
             }
             return null;
           },
         );
 
+        // Network entries: one row per request, updated by 'start' / 'end'
+        // events and WebSocket 'frame' events (Dev Tools › Network).
         c.addJavaScriptHandler(
           handlerName: 'novaxNet',
           callback: (args) {
             if (args.isNotEmpty && mounted) {
               try {
                 final d = args[0] is Map
-                    ? args[0] as Map<String, dynamic>
+                    ? Map<String, dynamic>.from(args[0] as Map)
                     : jsonDecode(args[0].toString()) as Map<String, dynamic>;
-                setState(() {
-                  _networkLogs.add({
-                    'url':    d['url']?.toString() ?? '',
-                    'method': d['method']?.toString() ?? 'GET',
-                    'status': d['status'] is num ? (d['status'] as num).toInt() : 0,
-                    'ms':     d['ms'] is num ? (d['ms'] as num).toInt() : 0,
-                    'type':   d['type']?.toString() ?? '',
-                  });
-                  if (_networkLogs.length > 300) _networkLogs.removeAt(0);
-                });
+                final id = d['id']?.toString() ?? '';
+                final i = id.isEmpty ? -1 : _networkLogs.lastIndexWhere((e) => e['id'] == id);
+                if (d['phase'] == 'frame') {
+                  if (i >= 0) {
+                    final frames = (_networkLogs[i]['frames'] as List?) ?? <Object?>[];
+                    if (frames.length < 500) {
+                      frames.add({'dir': d['dir'], 'data': d['data'], 'time': d['time']});
+                    }
+                    _networkLogs[i]['frames'] = frames;
+                  }
+                } else {
+                  final row = i >= 0 ? _networkLogs[i] : <String, dynamic>{};
+                  for (final k in ['id', 'url', 'method', 'type', 'start', 'statusText', 'mime', 'error',
+                      'reqHeaders', 'reqBody', 'resHeaders', 'resBody', 'redirected']) {
+                    if (d[k] != null) row[k] = d[k];
+                  }
+                  row['status'] = d['status'] is num ? (d['status'] as num).toInt() : (row['status'] ?? 0);
+                  row['ms']     = d['ms'] is num ? (d['ms'] as num).toInt() : (row['ms'] ?? 0);
+                  row['size']   = d['size'] is num ? (d['size'] as num).toInt() : (row['size'] ?? 0);
+                  row['pending'] = d['phase'] == 'start';
+                  row['page'] = _currentUrl;
+                  if (i < 0) _networkLogs.add(row);
+                  if (_networkLogs.length > 500) _networkLogs.removeAt(0);
+                }
+                _devtoolsChanges.add(null);
               } catch (_) {}
+            }
+            return null;
+          },
+        );
+
+        // Tap-to-inspect: the page tells which element was tapped.
+        c.addJavaScriptHandler(
+          handlerName: 'novaxInspect',
+          callback: (args) {
+            if (args.isNotEmpty && args[0] is Map && mounted) {
+              final path = (args[0] as Map)['path'];
+              if (path is List) {
+                _openDevTools(inspectPath: path.whereType<num>().map((e) => e.toInt()).toList());
+              }
             }
             return null;
           },
@@ -1036,8 +1026,7 @@ class _BrowserViewState extends State<BrowserView>
           if (!_editing) _urlCtrl.text = _hostLabel(u);
         });
         // Inject console patch as early as possible
-        await c.evaluateJavascript(source: _consoleHook);
-        await c.evaluateJavascript(source: _netHook);
+        await c.evaluateJavascript(source: kDevtoolsHook);
         if (_desktopMode)
           await c.evaluateJavascript(source: _desktopViewportJS);
       },
@@ -1054,8 +1043,7 @@ class _BrowserViewState extends State<BrowserView>
         if (mounted) setState(() => _currentUrl = u);
         _syncTab();
         // Re-inject console hook (catches any page that replaced window context)
-        await c.evaluateJavascript(source: _consoleHook);
-        await c.evaluateJavascript(source: _netHook);
+        await c.evaluateJavascript(source: kDevtoolsHook);
         if (_desktopMode)
           await c.evaluateJavascript(source: _desktopViewportJS);
         // Ad blocker: cosmetic filtering — hide common ad containers so blocked

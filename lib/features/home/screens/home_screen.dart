@@ -36,6 +36,7 @@ import 'package:nova_x/features/offline/screens/offline_pages_screen.dart';
 import 'package:nova_x/core/services/api_service.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
 import 'package:nova_x/core/services/news_service.dart';
+import 'package:nova_x/core/services/offline_cache.dart';
 import '../../browser/screens/browser_view.dart';
 import '../../ai/screens/ai_assistant_screen.dart';
 import '../../bookmarks/screens/bookmarks_screen.dart';
@@ -97,6 +98,8 @@ class _HomeScreenState extends State<HomeScreen>
   List<NewsArticle>                    _news             = [];
   final Map<String, List<NewsArticle>> _newsCache        = {};
   bool _loadingNews = false;
+  bool _newsOffline = false;      // 3.11.0: showing saved news (no internet)
+  DateTime? _newsSavedAt;
   int  _newsPage    = 1;
   bool _loadingMore = false;
   bool _hasMoreNews = true;
@@ -470,12 +473,33 @@ class _HomeScreenState extends State<HomeScreen>
       setState(() => _news = _newsCache[_selectedCategory]!);
       return;
     }
-    setState(() { _loadingNews = true; _newsPage = 1; _hasMoreNews = true; });
-    final articles = await NewsService.fetchNews(_selectedCategory, page: 1);
-    if (mounted) {
-      _newsCache[_selectedCategory] = articles;
-      setState(() { _news = articles; _loadingNews = false; });
+    final cat = _selectedCategory;
+    // 3.11.0: show the news saved on the phone at once (works offline),
+    // then replace it with fresh news when the internet answers.
+    if (_news.isEmpty) {
+      final saved = await NewsService.savedNews(cat);
+      if (!mounted || cat != _selectedCategory) return;
+      if (saved != null && saved.$1.isNotEmpty) {
+        setState(() { _news = saved.$1; _newsSavedAt = saved.$2; _newsOffline = false; });
+      }
     }
+    setState(() { _loadingNews = _news.isEmpty; _newsPage = 1; _hasMoreNews = true; });
+    final articles = await NewsService.fetchNews(cat, page: 1);
+    if (!mounted || cat != _selectedCategory) return;
+    final offline = NewsService.lastFromCache;
+    if (articles.isEmpty && _news.isNotEmpty) {
+      // Nothing new and nothing saved for this exact request: keep what is shown.
+      setState(() { _loadingNews = false; _newsOffline = true; _hasMoreNews = false; });
+      return;
+    }
+    if (!offline) _newsCache[cat] = articles;
+    setState(() {
+      _news = articles;
+      _loadingNews = false;
+      _newsOffline = offline;
+      _newsSavedAt = NewsService.lastSavedAt;
+      if (offline) _hasMoreNews = false;
+    });
   }
 
   void _switchCategory(String cat) {
@@ -1193,10 +1217,10 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(15),
-                  child: Image.network(
+                  child: CachedNetImage(
                     'https://www.google.com/s2/favicons?domain=$domain&sz=64',
                     width: 52, height: 52, fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Center(child: Text(
+                    fallback: Center(child: Text(
                       (site['name'] as String? ?? '?')[0],
                       style: GoogleFonts.spaceGrotesk(
                           color: AppTheme.accentCyan,
@@ -1440,6 +1464,7 @@ class _HomeScreenState extends State<HomeScreen>
 
     final color = _catColor[_selectedCategory] ?? AppTheme.accentCyan;
     return Column(children: [
+      if (_newsOffline) _offlineNewsBanner(),
       // Every article rendered as a full-width hero card.
       ..._news.map(_heroNewsCard),
       if (_loadingMore) Padding(
@@ -1463,6 +1488,35 @@ class _HomeScreenState extends State<HomeScreen>
         color: color.withOpacity(0.6), size: 44)),
   );
 
+  Widget _offlineNewsBanner() {
+    final at = _newsSavedAt;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+      child: GestureDetector(
+        onTap: () => _fetchNews(forceRefresh: true),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFB020).withOpacity(0.10),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFFFB020).withOpacity(0.35)),
+          ),
+          child: Row(children: [
+            const Icon(Icons.wifi_off_rounded, color: Color(0xFFFFB020), size: 16),
+            const SizedBox(width: 10),
+            Expanded(child: Text(
+              at == null
+                  ? 'You’re offline — showing saved news'
+                  : 'You’re offline — news saved ${OfflineCache.age(at)}',
+              style: GoogleFonts.inter(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w600),
+            )),
+            Text('Retry', style: GoogleFonts.inter(color: AppTheme.accentCyan, fontSize: 12.5, fontWeight: FontWeight.w700)),
+          ]),
+        ),
+      ),
+    );
+  }
+
   Widget _heroNewsCard(NewsArticle a) {
     final color = _catColor[_selectedCategory] ?? AppTheme.accentCyan;
     return GestureDetector(
@@ -1482,8 +1536,9 @@ class _HomeScreenState extends State<HomeScreen>
               SizedBox(
                 height: 200, width: double.infinity,
                 child: a.imageUrl.isNotEmpty
-                  ? Image.network(a.imageUrl, fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _heroPlaceholder(color))
+                  ? CachedNetImage(a.imageUrl, fit: BoxFit.cover,
+                      width: double.infinity, height: 200,
+                      fallback: _heroPlaceholder(color))
                   : _heroPlaceholder(color),
               ),
               Positioned.fill(child: Container(decoration: BoxDecoration(
@@ -1741,7 +1796,7 @@ class _MenuSheet extends StatelessWidget {
       {'icon': Icons.developer_mode_rounded,    'label': 'Dev Tools',  'color': AppTheme.accentCyan,
        'fn': () { Navigator.pop(context); onPush(const BrowserView(
            initialQuery: 'https://api.browser.t-lyfe.com.ng/devtools.html', autoOpenDevTools: true)); }},
-      {'icon': Icons.code_rounded,              'label': 'X Code Editor', 'color': const Color(0xFF00D4FF),
+      {'icon': Icons.code_rounded,              'label': 'X Coder', 'color': const Color(0xFF00D4FF),
        'fn': () { Navigator.pop(context); onPush(const CodeEditorScreen(sharedWorkspace: true)); }},
       {'icon': Icons.person_off_outlined,       'label': 'Incognito',  'color': AppTheme.accentPurple,
        'fn': () { Navigator.pop(context); onIncognito(); }},
@@ -1807,6 +1862,7 @@ class _PointsChip extends StatefulWidget {
 
 class _PointsChipState extends State<_PointsChip> {
   int? _pts;
+  bool _saved = false; // showing the balance saved on the phone (offline)
 
   @override
   void initState() {
@@ -1815,9 +1871,16 @@ class _PointsChipState extends State<_PointsChip> {
   }
 
   Future<void> _load() async {
+    // 3.11.0: the last known balance first (instant, works offline) …
+    if (_pts == null) {
+      final saved = await RewardsService.savedBalance();
+      if (!mounted) return;
+      if (saved != null) setState(() { _pts = saved.$1; _saved = true; });
+    }
+    // … then the live one when the server answers.
     final s = await RewardsService.fetchState();
-    if (!mounted) return;
-    setState(() => _pts = s?.balance);
+    if (!mounted || s == null) return;
+    setState(() { _pts = s.balance; _saved = false; });
   }
 
   @override
@@ -1842,6 +1905,10 @@ class _PointsChipState extends State<_PointsChip> {
           const Icon(Icons.monetization_on_rounded,
               color: Colors.white, size: 16),
           const SizedBox(width: 4),
+          if (_saved) const Padding(
+            padding: EdgeInsets.only(right: 3),
+            child: Icon(Icons.cloud_off_rounded, color: Colors.black54, size: 11),
+          ),
           Text(_pts == null ? '—' : '$_pts',
               style: GoogleFonts.spaceGrotesk(
                   color: Colors.black87, fontWeight: FontWeight.w800,

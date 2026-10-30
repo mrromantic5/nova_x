@@ -48,8 +48,9 @@
          a recording with microphone narration (asked at that moment). Files go
          to Pictures/ and Movies/NOVA X through MediaStore (no storage
          permission on Android 10+; WRITE_EXTERNAL_STORAGE ≤ 28 below). The
-         optional floating controls over other apps use SYSTEM_ALERT_WINDOW,
-         only after the user turns them on and grants it in Android settings. -->
+         optional floating capture button (shown on screen and over other apps)
+         uses SYSTEM_ALERT_WINDOW, only after the user turns it on and grants
+         it in Android settings. -->
 
     <!-- "Hey NOVA" after a phone restart / app update: offers the one-tap
          "turn Hey NOVA back on" notification (only if the user had it on). -->
@@ -223,6 +224,7 @@
             android:name=".capture.CaptureConsentActivity"
             android:exported="false"
             android:excludeFromRecents="true"
+            android:taskAffinity="com.tlyfe.nova_x.capture"
             android:noHistory="false"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />

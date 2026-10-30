@@ -9,6 +9,8 @@
 //                     backward-compatible extension; 404 ⇒ not deployed yet)
 //   POST /vision      {message, history[], images[{mime, data}]} → {success, reply}
 //                     (Worker 3.3.0+; 404 ⇒ not deployed yet)
+//   POST /code        {task, instruction?, code?, selection?, …} → {success, reply, code, language}
+//                     (Worker 3.11.0+, X Coder; 404 ⇒ falls back to /chat)
 //
 // Errors use {success:false, error, code} with HTTP 400/413/415/429/5xx.
 // All responses are treated as untrusted data.
@@ -55,6 +57,29 @@ class NovaApiException implements Exception {
 
   @override
   String toString() => 'NovaApiException($kind, $statusCode)';
+}
+
+/// Answer of the X Coder assistant (POST /code).
+class NovaCodeResult {
+  const NovaCodeResult({required this.reply, required this.code, required this.language});
+
+  /// The whole Markdown answer.
+  final String reply;
+
+  /// The first fenced code block of the answer ('' when there is none).
+  final String code;
+  final String language;
+
+  bool get hasCode => code.trim().isNotEmpty;
+
+  /// (language, code) of the first ``` block, or ('', '').
+  static (String, String) firstBlock(String text) {
+    final m = RegExp(r'```[ \t]*([\w+#.-]*)[^\n]*\n([\s\S]*?)```').firstMatch(text);
+    if (m == null) return ('', '');
+    var code = m.group(2) ?? '';
+    if (code.endsWith('\n')) code = code.substring(0, code.length - 1);
+    return (m.group(1) ?? '', code);
+  }
 }
 
 /// What the planner decided (already validated client-side).
@@ -170,6 +195,67 @@ class NovaApiClient implements NovaApi {
     }
     AnalyticsService.log('ai_chat', feature: 'nova_ai');
     return reply.trim();
+  }
+
+  /// X Coder assistant (3.11.0). [request] follows the Worker's /code
+  /// contract. Counts as one NOVA AI message. When the Worker is older than
+  /// 3.11.0 (404), the request is sent to /chat as a shorter prompt instead.
+  Future<NovaCodeResult> code(Map<String, Object?> request, {CancelToken? cancel}) async {
+    final instruction = (request['instruction'] as String?) ?? '';
+    await _meter('code:${request['task']}:$instruction:${request['fileName']}');
+    try {
+      final res = await _dio.post<Object>(
+        '/code',
+        data: {...request, 'context': DeviceClock.context()},
+        cancelToken: cancel,
+        options: Options(receiveTimeout: const Duration(seconds: 120)),
+      );
+      final data = _decode(res);
+      final reply = data['reply'];
+      if (reply is! String || reply.trim().isEmpty) {
+        throw const NovaApiException(NovaApiErrorKind.malformed, 'NOVA sent an empty reply. Please try again.');
+      }
+      AnalyticsService.log('ai_code', feature: 'xcoder');
+      return NovaCodeResult(
+        reply: reply.trim(),
+        code: data['code'] is String ? data['code'] as String : NovaCodeResult.firstBlock(reply).$2,
+        language: data['language'] is String ? data['language'] as String : '',
+      );
+    } on DioException catch (e) {
+      final status = e.response?.statusCode ?? 0;
+      if (status == 404 || status == 405) return _codeViaChat(request, cancel);
+      final body = e.response?.data;
+      if ((status == 400 || status == 413) && body is Map && body['error'] is String) {
+        throw NovaApiException(status == 413 ? NovaApiErrorKind.tooLarge : NovaApiErrorKind.badRequest,
+            (body['error'] as String).length > 240 ? (body['error'] as String).substring(0, 240) : body['error'] as String,
+            statusCode: status);
+      }
+      throw mapError(e);
+    }
+  }
+
+  Future<NovaCodeResult> _codeViaChat(Map<String, Object?> r, CancelToken? cancel) async {
+    final lang = (r['language'] as String?) ?? '';
+    final body = StringBuffer()
+      ..writeln('[X Coder · ${r['task']}] ${r['instruction'] ?? ''}')
+      ..writeln('File: ${r['fileName'] ?? ''} ($lang)');
+    final code = ((r['selection'] as String?)?.isNotEmpty ?? false) ? r['selection'] as String : (r['code'] as String? ?? '');
+    if (code.isNotEmpty) body.writeln('```$lang\n$code\n```');
+    var text = body.toString();
+    if (text.length > NovaConfig.maxMessageChars) {
+      text = '${text.substring(0, NovaConfig.maxMessageChars - 4)}\n```';
+    }
+    final data = await _withRetry(() => _dio.post<Object>(
+          '/chat',
+          data: {'message': text, 'history': const [], 'context': DeviceClock.context()},
+          cancelToken: cancel,
+        ));
+    final reply = data['reply'];
+    if (reply is! String || reply.trim().isEmpty) {
+      throw const NovaApiException(NovaApiErrorKind.malformed, 'NOVA sent an empty reply. Please try again.');
+    }
+    final b = NovaCodeResult.firstBlock(reply);
+    return NovaCodeResult(reply: reply.trim(), code: b.$2, language: b.$1);
   }
 
   /// Chat about 1–3 images (NOVA AI chat and the assistant panel). Not

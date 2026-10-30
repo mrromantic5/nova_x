@@ -34,6 +34,10 @@ abstract class TerminalHost {
   Future<void> startPreview(String? rel);
   Future<void> refreshExplorer();
   Future<String?> currentFile();
+
+  /// 3.11.1: `guide [section]` and `nova <question>` / `agent <task>`.
+  Future<void> openGuide(String section);
+  Future<void> askNova(String question, {bool agent = false});
 }
 
 class XTerminal extends ChangeNotifier {
@@ -166,6 +170,20 @@ class XTerminal extends ChangeNotifier {
         await _search(rest);
       case 'tree':
         await _tree(rest.isEmpty ? cwd : (_rel(rest.first) ?? cwd));
+      case 'guide' || 'man' || 'docs':
+        await host.openGuide(rest.isEmpty ? 'terminal' : rest.first);
+      case 'nova' || 'ai':
+        if (rest.isEmpty) {
+          _add('usage: nova <question>   e.g. nova why does app.js crash on load?', TermStyle.warn);
+        } else {
+          await host.askNova(rest.join(' '));
+        }
+      case 'agent':
+        if (rest.isEmpty) {
+          _add('usage: agent <task>   e.g. agent add a dark mode toggle', TermStyle.warn);
+        } else {
+          await host.askNova(rest.join(' '), agent: true);
+        }
       case 'env':
         _env().forEach((k, v) => _add('$k=$v'));
       case 'exit':
@@ -244,6 +262,9 @@ class XTerminal extends ChangeNotifier {
       ('serve [file]', 'preview the site on http://127.0.0.1'),
       ('search <text> [--regex] [--case]', 'find in all project files'),
       ('tree [folder]', 'show the folder tree'),
+      ('nova <question>', 'ask NOVA Coder about your project (Premium)'),
+      ('agent <task>', 'let NOVA Agent change the project (Premium)'),
+      ('guide [section]', 'open the Developer Guide (e.g. guide terminal)'),
       ('cd · pwd · clear · history · env', ''),
       ('Shell (Android toybox)', ''),
       ('ls -la · cat · head · tail · wc · grep -rn · find · sed', ''),
@@ -419,7 +440,7 @@ class XTerminal extends ChangeNotifier {
     final head = input.substring(0, i + 1);
     final word = input.substring(i + 1);
     if (i < 0) {
-      const cmds = ['help', 'clear', 'open', 'run', 'node', 'serve', 'search', 'tree', 'history', 'ls', 'cat', 'mkdir',
+      const cmds = ['help', 'clear', 'open', 'run', 'node', 'serve', 'search', 'tree', 'history', 'nova', 'agent', 'guide', 'ls', 'cat', 'mkdir',
           'touch', 'rm', 'mv', 'cp', 'grep', 'find', 'cd', 'pwd', 'wc', 'head', 'tail', 'echo', 'diff', 'sed'];
       final m = cmds.where((c) => c.startsWith(word)).toList();
       if (m.length == 1) return '${m.first} ';

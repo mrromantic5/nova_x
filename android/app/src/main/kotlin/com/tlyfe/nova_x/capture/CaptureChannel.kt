@@ -165,6 +165,21 @@ class CaptureChannel(private val activity: Activity, messenger: BinaryMessenger)
                     )
                 }
 
+                // ── Floating button ──
+                "setBubbleEnabled" -> {
+                    val r = CaptureBubble.setEnabled(ctx, call.argument<Boolean>("enabled") == true)
+                    CaptureCoordinator.onBubbleChanged()
+                    reply(result, r)
+                }
+                "bubbleStatus" -> {
+                    CaptureBubble.showIfEnabled(ctx)
+                    reply(result, CaptureContract.ok(
+                        "enabled" to CaptureBubble.isEnabled(ctx),
+                        "showing" to CaptureBubble.isShowing,
+                        "permission" to FloatingPermission.granted(ctx),
+                    ))
+                }
+
                 // ── Permissions ──
                 "requestPermissions" -> requestPermissions(call.argument<List<String>>("kinds") ?: emptyList(), result)
                 "openOverlaySettings" -> reply(result, openSettings(
@@ -183,7 +198,8 @@ class CaptureChannel(private val activity: Activity, messenger: BinaryMessenger)
         "deviceAudio" to CaptureAudioSource.deviceAudioSupported(),
         "micGranted" to CaptureCoordinator.granted(ctx, Manifest.permission.RECORD_AUDIO),
         "notificationsGranted" to notificationsGranted(),
-        "overlayPermission" to FloatingControlsOverlay.permitted(ctx),
+        "overlayPermission" to FloatingPermission.granted(ctx),
+        "bubbleEnabled" to CaptureBubble.isEnabled(ctx),
         "needsStoragePermission" to CaptureCoordinator.needsStoragePermission(ctx),
         "lostRecordings" to CaptureCoordinator.takeLostCount(),
     )

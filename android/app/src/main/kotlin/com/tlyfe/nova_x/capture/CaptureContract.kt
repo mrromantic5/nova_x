@@ -139,6 +139,28 @@ data class RecordingConfig(
     val overlayEnabled: Boolean = false,
 ) {
     companion object {
+        /**
+         * The settings saved by the Flutter side (shared_preferences stores them
+         * in "FlutterSharedPreferences" under "flutter.<key>"). Used when a
+         * recording starts from the floating button with no NOVA X screen open.
+         */
+        fun fromFlutterPrefs(ctx: android.content.Context): RecordingConfig = try {
+            val raw = ctx.getSharedPreferences("FlutterSharedPreferences", android.content.Context.MODE_PRIVATE)
+                .getString("flutter.nx_capture_rec_settings", null)
+            if (raw == null) RecordingConfig() else {
+                val o = org.json.JSONObject(raw)
+                val m = HashMap<String, Any?>()
+                val keys = o.keys()
+                while (keys.hasNext()) {
+                    val k = keys.next()
+                    m[k] = o.opt(k)
+                }
+                from(m)
+            }
+        } catch (e: Exception) {
+            RecordingConfig()
+        }
+
         fun from(raw: Any?): RecordingConfig {
             val m = raw as? Map<*, *> ?: return RecordingConfig()
             fun s(k: String) = m[k] as? String

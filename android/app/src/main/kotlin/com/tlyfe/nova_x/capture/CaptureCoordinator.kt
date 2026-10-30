@@ -89,7 +89,6 @@ object CaptureCoordinator {
     private var lostOnStart = 0
     private var cleanedUp = false
 
-    private var overlay: FloatingControlsOverlay? = null
     private var ticks = 0
 
     // Full-device screenshot
@@ -109,8 +108,14 @@ object CaptureCoordinator {
 
     private fun emitState() {
         val snap = snapshot()
-        onMain { for (l in listeners) try { l.onCapture("capture.state", snap) } catch (e: Exception) { } }
+        onMain {
+            CaptureBubble.refresh()
+            for (l in listeners) try { l.onCapture("capture.state", snap) } catch (e: Exception) { }
+        }
     }
+
+    /** The floating button was turned on/off (or closed by the user). */
+    fun onBubbleChanged() = emitState()
 
     private fun emitEvent(type: String, vararg extra: Pair<String, Any?>) {
         val payload = mapOf("type" to type, "sessionId" to sessionId, "state" to state, *extra)
@@ -148,7 +153,9 @@ object CaptureCoordinator {
             "warnings" to ArrayList(warnings),
             "stopReason" to stopReason,
             "screenshotBusy" to (shotDone != null),
-            "overlayShowing" to (overlay?.isShowing == true),
+            "overlayShowing" to CaptureBubble.isShowing,
+            "bubbleShowing" to CaptureBubble.isShowing,
+            "bubbleEnabled" to (app?.let { CaptureBubble.isEnabled(it) } ?: false),
             "hasUnsaved" to (unsavedFile?.exists() == true),
         )
     }
@@ -186,6 +193,7 @@ object CaptureCoordinator {
     fun attach(ctx: Context, activity: Activity?) {
         app = ctx.applicationContext
         if (activity is MainActivity) hostActivity = WeakReference(activity)
+        CaptureBubble.showIfEnabled(ctx)
         if (!cleanedUp && state !in ACTIVE) {
             cleanedUp = true
             val c = ctx.applicationContext
@@ -201,8 +209,27 @@ object CaptureCoordinator {
 
     // ── Recording ─────────────────────────────────────────────────────────────
 
-    fun startRecording(activity: Activity, cfg: RecordingConfig, done: (Map<String, Any?>) -> Unit) {
-        val ctx = activity.applicationContext
+    fun startRecording(activity: Activity, cfg: RecordingConfig, done: (Map<String, Any?>) -> Unit) =
+        startRecordingFrom(activity, cfg, done)
+
+    /**
+     * Start from the floating button (no NOVA X screen open). Android lets an
+     * app with "Display over other apps" show its consent screen from there.
+     * Without the microphone permission the recording simply has no sound.
+     */
+    fun startRecordingFromContext(ctx: Context, cfg: RecordingConfig, done: (Map<String, Any?>) -> Unit) {
+        var c = cfg
+        if (c.audio != CaptureContract.AUDIO_NONE && !granted(ctx, Manifest.permission.RECORD_AUDIO)) {
+            c = c.copy(audio = CaptureContract.AUDIO_NONE)
+            pendingWarning = "The microphone isn't allowed for NOVA X, so this recording has no sound."
+        }
+        startRecordingFrom(ctx.applicationContext, c, done)
+    }
+
+    private var pendingWarning: String? = null
+
+    private fun startRecordingFrom(launcher: Context, cfg: RecordingConfig, done: (Map<String, Any?>) -> Unit) {
+        val ctx = launcher.applicationContext
         app = ctx
         if (state in ACTIVE) {
             return done(CaptureContract.error(CaptureContract.E_BUSY, "A screen recording is already in progress.", "state" to state))
@@ -243,7 +270,9 @@ object CaptureCoordinator {
         setState(AWAITING_CONSENT)
         pendingStart = done
         emitEvent(CaptureContract.EVENT_PERMISSION_REQUIRED, "permission" to "screen_capture")
-        if (!launchConsent(activity, "record")) {
+        pendingWarning?.let { warnings.add(it) }
+        pendingWarning = null
+        if (!launchConsent(launcher, "record")) {
             failRecording(CaptureContract.E_NO_ACTIVITY, "Android's screen-capture request couldn't be shown.")
             return
         }
@@ -251,8 +280,12 @@ object CaptureCoordinator {
         main.postDelayed(consentWatchdog, 120_000)
     }
 
-    private fun launchConsent(activity: Activity, mode: String): Boolean = try {
-        activity.startActivity(Intent(activity, CaptureConsentActivity::class.java).putExtra(CaptureConsentActivity.EXTRA_MODE, mode))
+    private fun launchConsent(launcher: Context, mode: String): Boolean = try {
+        val i = Intent(launcher, CaptureConsentActivity::class.java).putExtra(CaptureConsentActivity.EXTRA_MODE, mode)
+        // From the floating button there is no NOVA X screen: the consent screen
+        // opens in its own task, so the user returns to the app they were in.
+        if (launcher !is Activity) i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+        launcher.startActivity(i)
         true
     } catch (e: Exception) {
         false
@@ -492,7 +525,7 @@ object CaptureCoordinator {
         pauseStart = SystemClock.elapsedRealtime()
         setState(PAUSED)
         emitEvent(CaptureContract.EVENT_RECORDING_PAUSED, "elapsedMs" to elapsedMs())
-        syncOverlay()
+        CaptureBubble.refresh()
         return CaptureContract.ok("state" to state, "elapsedMs" to elapsedMs())
     }
 
@@ -506,7 +539,7 @@ object CaptureCoordinator {
         engine?.resume()
         setState(RECORDING)
         emitEvent(CaptureContract.EVENT_RECORDING_RESUMED, "elapsedMs" to elapsedMs())
-        syncOverlay()
+        CaptureBubble.refresh()
         return CaptureContract.ok("state" to state, "elapsedMs" to elapsedMs())
     }
 
@@ -522,8 +555,6 @@ object CaptureCoordinator {
                     emitEvent(CaptureContract.EVENT_RECORDING_INTERRUPTED, "elapsedMs" to finalElapsed)
                 }
                 emitEvent(CaptureContract.EVENT_RECORDING_STOPPED, "reason" to reason, "elapsedMs" to finalElapsed)
-                overlay?.hide()
-                overlay = null
                 main.removeCallbacks(ticker)
                 engine?.stop() ?: failRecording(CaptureContract.E_SAVE, "The video couldn't be finished.")
                 main.removeCallbacks(stopWatchdog)
@@ -688,8 +719,7 @@ object CaptureCoordinator {
         app?.let { CaptureService.stop(it) }
         serviceMode = null
         main.removeCallbacks(ticker)
-        overlay?.hide()
-        overlay = null
+        CaptureBubble.refresh()
         if (micHeld) {
             NovaMicArbiter.hold("capture_mic", false)
             micHeld = false
@@ -702,7 +732,7 @@ object CaptureCoordinator {
         override fun run() {
             if (!isRecordingActive()) return
             ticks++
-            syncOverlay()
+            CaptureBubble.refresh()
             val ctx = app
             if (ctx != null && ticks % 5 == 0) {
                 val free = CaptureMediaRepository.freeBytes(ctx)
@@ -721,27 +751,6 @@ object CaptureCoordinator {
         }
     }
 
-    private fun syncOverlay() {
-        val ctx = app ?: return
-        val want = config.overlayEnabled && isRecordingActive() &&
-            FloatingControlsOverlay.permitted(ctx) && !NovaMicArbiter.appVisible()
-        if (!want) {
-            if (overlay != null) { overlay?.hide(); overlay = null }
-            return
-        }
-        val o = overlay ?: FloatingControlsOverlay(ctx).also {
-            it.show(object : FloatingControlsOverlay.Actions {
-                override fun onPauseResume() {
-                    if (state == RECORDING) pause(null) else if (state == PAUSED) resume(null)
-                }
-
-                override fun onStop() { stop(null, "user") }
-            })
-            overlay = it
-        }
-        o.update(state == PAUSED, elapsedMs())
-    }
-
     private fun updateNotification() {
         val ctx = app ?: return
         if (CaptureService.running == null) return
@@ -758,8 +767,15 @@ object CaptureCoordinator {
      * [hideApp] NOVA X steps back first, so the screen behind it is captured;
      * [delayMs] gives the user time to open what they want to capture.
      */
-    fun captureScreen(activity: Activity, hideApp: Boolean, delayMs: Int, done: (Map<String, Any?>) -> Unit) {
-        val ctx = activity.applicationContext
+    fun captureScreen(activity: Activity, hideApp: Boolean, delayMs: Int, done: (Map<String, Any?>) -> Unit) =
+        captureScreenFrom(activity, hideApp, delayMs, done)
+
+    /** Screenshot from the floating button (it hides itself for the capture). */
+    fun captureScreenFromContext(ctx: Context, done: (Map<String, Any?>) -> Unit) =
+        captureScreenFrom(ctx.applicationContext, false, 600, done)
+
+    private fun captureScreenFrom(launcher: Context, hideApp: Boolean, delayMs: Int, done: (Map<String, Any?>) -> Unit) {
+        val ctx = launcher.applicationContext
         app = ctx
         if (state in ACTIVE) {
             return done(CaptureContract.error(CaptureContract.E_BUSY_RECORDING,
@@ -780,11 +796,11 @@ object CaptureCoordinator {
         shotDone = done
         shotHide = hideApp
         shotDelay = delayMs.coerceIn(0, 10_000)
-        if (activity is MainActivity) hostActivity = WeakReference(activity)
+        if (launcher is MainActivity) hostActivity = WeakReference(launcher)
         emitEvent(CaptureContract.EVENT_SCREENSHOT_STARTED)
         emitEvent(CaptureContract.EVENT_PERMISSION_REQUIRED, "permission" to "screen_capture")
         emitState()
-        if (!launchConsent(activity, "screenshot")) {
+        if (!launchConsent(launcher, "screenshot")) {
             finishShot(CaptureContract.error(CaptureContract.E_NO_ACTIVITY, "Android's screen-capture request couldn't be shown."))
             return
         }
@@ -800,7 +816,9 @@ object CaptureCoordinator {
             finishShot(CaptureContract.error(CaptureContract.E_INTERRUPTED, "The screenshot couldn't be taken."))
             return
         }
+        CaptureBubble.hideForCapture(true)
         ScreenshotGrabber.grab(ctx, p) { bitmap, code ->
+            CaptureBubble.hideForCapture(false)
             releaseProjection()
             if (bitmap == null) {
                 val msg = when (code) {

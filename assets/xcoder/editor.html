@@ -178,7 +178,10 @@
 
   // ── Keyboard shortcuts (hardware keyboards / DeX) ─────────────────────
   editor.commands.addCommand({name:'nxSave', bindKey:{win:'Ctrl-S', mac:'Cmd-S'}, exec:function(){ send({type:'key', key:'save'}); }});
-  editor.commands.addCommand({name:'nxPalette', bindKey:{win:'Ctrl-Shift-P|F1', mac:'Cmd-Shift-P|F1'}, exec:function(){ send({type:'key', key:'palette'}); }});
+  editor.commands.addCommand({name:'nxPalette', bindKey:{win:'Ctrl-Shift-P', mac:'Cmd-Shift-P'}, exec:function(){ send({type:'key', key:'palette'}); }});
+  editor.commands.addCommand({name:'nxGuide', bindKey:{win:'F1', mac:'F1'}, exec:function(){ send({type:'key', key:'guide'}); }});
+  editor.commands.addCommand({name:'nxAgent', bindKey:{win:'Ctrl-Shift-I', mac:'Cmd-Shift-I'}, exec:function(){ send({type:'key', key:'agent'}); }});
+  editor.commands.addCommand({name:'nxAiComplete', bindKey:{win:'Alt-\\', mac:'Alt-\\'}, exec:function(){ send({type:'key', key:'aiComplete'}); }});
   editor.commands.addCommand({name:'nxQuickOpen', bindKey:{win:'Ctrl-P', mac:'Cmd-P'}, exec:function(){ send({type:'key', key:'quickOpen'}); }});
   editor.commands.addCommand({name:'nxRun', bindKey:{win:'Ctrl-Enter|F5', mac:'Cmd-Enter|F5'}, exec:function(){ send({type:'key', key:'run'}); }});
   editor.commands.addCommand({name:'nxTerminal', bindKey:{win:'Ctrl-`', mac:'Ctrl-`'}, exec:function(){ send({type:'key', key:'terminal'}); }});

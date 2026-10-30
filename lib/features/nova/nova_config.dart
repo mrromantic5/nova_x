@@ -21,6 +21,14 @@ class NovaConfig {
     defaultValue: 'https://nova-voice.techlyfeteam.workers.dev',
   );
 
+  /// NOVA Coder — the AI coding engine of X Coder (3.11.1). Holds its own
+  /// AI key server-side; the app only sends the user's NOVA X token.
+  ///   flutter build apk --dart-define=NOVA_CODER_BASE=https://your-coder-worker.example
+  static const String coderApiBaseUrl = String.fromEnvironment(
+    'NOVA_CODER_BASE',
+    defaultValue: 'https://nova-coder.techlyfeteam.workers.dev',
+  );
+
   // Network timeouts (bounded; retries are limited in NovaApiClient).
   static const Duration connectTimeout = Duration(seconds: 12);
   static const Duration chatTimeout = Duration(seconds: 45);

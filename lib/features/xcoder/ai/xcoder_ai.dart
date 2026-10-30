@@ -1,26 +1,30 @@
 // lib/features/xcoder/ai/xcoder_ai.dart
 //
-// NOVA inside X Coder (Premium). Builds the request for the NOVA AI Worker's
-// POST /code endpoint from the editor state, and computes a line diff so the
-// developer reviews every change before it touches the file. NOVA's answer is
-// only ever inserted as text into the editor — never executed.
+// NOVA inside X Coder (Premium). 3.11.1: answers come from NOVA Coder
+// (backend/nova-coder-worker, streamed, with the project as context); the
+// NOVA AI Worker's /code endpoint is the fallback while NOVA Coder isn't
+// deployed. A line diff lets the developer review every change before it
+// touches the file. Answers are only ever inserted as text — never executed.
 
 import 'package:dio/dio.dart';
 
 import '../../../core/services/rewards_entitlements.dart';
 import '../../nova/services/nova_api.dart';
 import '../editor/ace_editor.dart';
+import 'nova_coder_client.dart';
 
 enum XAiTask {
   generate('generate', 'Generate', 'Write new code from a description'),
   complete('complete', 'Complete', 'Continue the code at the cursor'),
   explain('explain', 'Explain', 'What does this code do?'),
   fix('fix', 'Fix', 'Fix bugs and the problems the editor found'),
+  debug('debug', 'Debug', 'Find the cause of a bug or error, step by step'),
   refactor('refactor', 'Refactor', 'Cleaner code, same behaviour'),
   comment('comment', 'Comment', 'Add useful comments and docs'),
   tests('tests', 'Tests', 'Write unit tests'),
   optimize('optimize', 'Optimize', 'Faster, leaner code'),
   review('review', 'Review', 'Senior-engineer code review'),
+  security('security', 'Security', 'Audit for vulnerabilities (OWASP)'),
   docs('docs', 'Docs', 'README-style documentation'),
   ask('ask', 'Ask', 'Any question about the code');
 
@@ -30,8 +34,8 @@ enum XAiTask {
   final String hint;
 
   /// Tasks whose answer is code meant to go into the file.
-  bool get editsCode => this == generate || this == complete || this == fix || this == refactor ||
-      this == comment || this == optimize;
+  bool get editsCode => this == generate || this == complete || this == fix || this == debug ||
+      this == refactor || this == comment || this == optimize;
 }
 
 class XAiRequest {
@@ -83,22 +87,93 @@ class XAiRequest {
 }
 
 class XCoderAi {
-  XCoderAi({NovaApiClient? client}) : _client = client ?? NovaApiClient();
+  XCoderAi({NovaApiClient? client, NovaCoderClient? coder})
+      : _client = client ?? NovaApiClient(),
+        _coder = coder ?? NovaCoderClient();
 
   final NovaApiClient _client;
+  final NovaCoderClient _coder;
   CancelToken? _cancel;
 
   static bool get available => RewardsEntitlements.isPremium;
 
-  Future<NovaCodeResult> run(XAiRequest r) async {
+  /// The engine that answered last ('NOVA Coder' or 'NOVA AI').
+  String engine = 'NOVA Coder';
+
+  static String defaultPrompt(XAiTask t) => switch (t) {
+        XAiTask.generate => 'Write the code described.',
+        XAiTask.complete => 'Continue the code at the cursor.',
+        XAiTask.explain => 'Explain this code.',
+        XAiTask.fix => 'Fix the bugs and the problems the editor found in this code.',
+        XAiTask.debug => 'Help me debug this code.',
+        XAiTask.refactor => 'Refactor this code.',
+        XAiTask.comment => 'Add documentation comments to this code.',
+        XAiTask.tests => 'Write unit tests for this code.',
+        XAiTask.optimize => 'Optimize this code.',
+        XAiTask.review => 'Review this code.',
+        XAiTask.security => 'Audit this code for security issues.',
+        XAiTask.docs => 'Write documentation for this code.',
+        XAiTask.ask => 'Help me with this code.',
+      };
+
+  /// Runs a task. [onDelta] gets the growing answer while it streams.
+  /// [context] is the project context (see the Worker's contextBlock).
+  Future<NovaCodeResult> run(
+    XAiRequest r, {
+    void Function(String textSoFar)? onDelta,
+    Map<String, Object?>? context,
+    List<Map<String, String>> history = const [],
+  }) async {
     _cancel?.cancel();
     final token = _cancel = CancelToken();
     try {
-      return await _client.code(r.toJson(), cancel: token);
+      final prompt = r.instruction.trim().isEmpty ? defaultPrompt(r.task) : r.instruction.trim();
+      final task = switch (r.task) {
+        XAiTask.ask => 'chat',
+        XAiTask.complete => 'generate',
+        _ => r.task.wire,
+      };
+      final buf = StringBuffer();
+      try {
+        await for (final d in _coder.chatStream(
+          messages: [...history, {'role': 'user', 'content': prompt}],
+          task: task,
+          context: context ?? _contextFrom(r),
+          cancel: token,
+        )) {
+          if (d.done) break;
+          buf.write(d.text);
+          onDelta?.call(buf.toString());
+        }
+        engine = 'NOVA Coder';
+        final reply = buf.toString().trim();
+        if (reply.isEmpty) throw const CoderException('upstream', 'NOVA Coder sent an empty answer.');
+        final b = NovaCodeResult.firstBlock(reply);
+        return NovaCodeResult(reply: reply, code: b.$2, language: b.$1);
+      } on CoderException catch (e) {
+        // Not deployed yet (or its address can't be resolved): use NOVA AI.
+        if (e.code != 'not_deployed' && !(e.code == 'network' && buf.isEmpty)) rethrow;
+        engine = 'NOVA AI';
+        return await _client.code(r.toJson(), cancel: token);
+      }
     } finally {
       if (identical(_cancel, token)) _cancel = null;
     }
   }
+
+  static Map<String, Object?> _contextFrom(XAiRequest r) => {
+        'activeFile': {
+          'path': r.fileName,
+          'language': r.language,
+          if (r.code.isNotEmpty) 'content': r.code,
+          if (r.selection.isNotEmpty) 'selection': r.selection,
+        },
+        if (r.diagnostics.isNotEmpty)
+          'diagnostics': [
+            for (final d in r.diagnostics) {'path': r.fileName, 'row': d.row, 'type': d.type, 'text': d.text}
+          ],
+        if (r.files.isNotEmpty) 'files': [for (final f in r.files) {'path': f.name, 'content': f.snippet}],
+      };
 
   void cancel() {
     _cancel?.cancel();

@@ -38,8 +38,18 @@ class OfflineCache {
     receiveTimeout: const Duration(seconds: 15),
     responseType: ResponseType.bytes,
     followRedirects: true,
+    maxRedirects: 6,
     validateStatus: (s) => s != null && s >= 200 && s < 300,
+    // Some image hosts refuse requests that don't look like a browser, and
+    // ask for formats Flutter can draw (no AVIF/SVG).
+    headers: const {
+      'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36 NOVA-X',
+      'Accept': 'image/webp,image/png,image/jpeg,image/gif,image/*;q=0.8,*/*;q=0.5',
+    },
   ));
+
+  /// Image URLs from feeds sometimes arrive HTML-escaped ("&amp;").
+  static String clean(String url) => url.trim().replaceAll('&amp;', '&');
 
   static Future<Directory> _images() async {
     final d = _dir ??= Directory('${(await getTemporaryDirectory()).path}/nx_offline_images');
@@ -61,11 +71,22 @@ class OfflineCache {
   }
 
   /// Bytes from memory or disk at once (null when not saved yet).
-  static Uint8List? peek(String url) => _memory[url];
+  static Uint8List? peek(String url) => _memory[clean(url)];
+
+  /// Forgets a copy that turned out not to be drawable, so it is fetched again.
+  static Future<void> evict(String url) async {
+    url = clean(url);
+    _memory.remove(url);
+    try {
+      final f = File('${(await _images()).path}/${keyFor(url)}');
+      if (await f.exists()) await f.delete();
+    } catch (_) {}
+  }
 
   /// The image for [url]: memory → disk → network (then saved). Null when
   /// there is no saved copy and the phone is offline.
   static Future<Uint8List?> image(String url) {
+    url = clean(url);
     if (url.isEmpty || !(url.startsWith('https://') || url.startsWith('http://'))) return Future.value(null);
     final hit = _memory[url];
     if (hit != null) return Future.value(hit);
@@ -111,8 +132,9 @@ class OfflineCache {
     final gif = b[0] == 0x47 && b[1] == 0x49 && b[2] == 0x46;
     final webp = b.length > 12 && b[0] == 0x52 && b[1] == 0x49 && b[8] == 0x57 && b[9] == 0x45;
     final ico = b[0] == 0x00 && b[1] == 0x00 && (b[2] == 0x01 || b[2] == 0x02);
-    final svg = utf8.decode(b.sublist(0, b.length < 200 ? b.length : 200), allowMalformed: true).contains('<svg');
-    return png || jpg || gif || webp || ico || svg;
+    final bmp = b[0] == 0x42 && b[1] == 0x4D;
+    // SVG is not saved: Image.memory can't draw it.
+    return png || jpg || gif || webp || ico || bmp;
   }
 
   static void _remember(String url, Uint8List bytes) {
@@ -181,6 +203,10 @@ class OfflineCache {
 }
 
 /// Network image that is kept on the phone, so it also shows offline.
+///
+/// Order: saved copy (memory/disk) → download and save → plain network image
+/// (same as before 3.11.0) if the download/save path fails for any reason.
+/// So being online always shows the picture, and offline shows the saved one.
 class CachedNetImage extends StatefulWidget {
   const CachedNetImage(
     this.url, {
@@ -197,7 +223,7 @@ class CachedNetImage extends StatefulWidget {
   final double? height;
   final BoxFit fit;
 
-  /// Shown while loading and when there is no copy (e.g. first time offline).
+  /// Shown while loading and when there is no picture (e.g. first time offline).
   final Widget? fallback;
   final String? semanticLabel;
 
@@ -207,7 +233,8 @@ class CachedNetImage extends StatefulWidget {
 
 class _CachedNetImageState extends State<CachedNetImage> {
   Uint8List? _bytes;
-  bool _failed = false;
+  bool _network = false; // saved copy unavailable → draw straight from the web
+  int _gen = 0;
 
   @override
   void initState() {
@@ -220,42 +247,74 @@ class _CachedNetImageState extends State<CachedNetImage> {
     super.didUpdateWidget(old);
     if (old.url != widget.url) {
       _bytes = null;
-      _failed = false;
+      _network = false;
       _start();
     }
   }
 
   void _start() {
+    final gen = ++_gen;
     final hit = OfflineCache.peek(widget.url);
     if (hit != null) {
       _bytes = hit;
       return;
     }
     OfflineCache.image(widget.url).then((b) {
-      if (!mounted) return;
+      if (!mounted || gen != _gen) return;
       setState(() {
         _bytes = b;
-        _failed = b == null;
+        _network = b == null;
+      });
+    }, onError: (_) {
+      if (mounted && gen == _gen) setState(() => _network = true);
+    });
+  }
+
+  /// The saved bytes couldn't be drawn: drop them and use the web instead.
+  void _badCopy() {
+    if (_network) return;
+    OfflineCache.evict(widget.url);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() {
+        _bytes = null;
+        _network = true;
       });
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final b = _bytes;
     final fallback = widget.fallback ?? SizedBox(width: widget.width, height: widget.height);
-    if (b == null) return fallback;
-    return Image.memory(
-      b,
-      width: widget.width,
-      height: widget.height,
-      fit: widget.fit,
-      gaplessPlayback: true,
-      semanticLabel: widget.semanticLabel,
-      excludeFromSemantics: widget.semanticLabel == null,
-      errorBuilder: (_, __, ___) => fallback,
-    );
+    final url = OfflineCache.clean(widget.url);
+    final b = _bytes;
+    if (b != null) {
+      return Image.memory(
+        b,
+        width: widget.width,
+        height: widget.height,
+        fit: widget.fit,
+        gaplessPlayback: true,
+        semanticLabel: widget.semanticLabel,
+        excludeFromSemantics: widget.semanticLabel == null,
+        errorBuilder: (_, __, ___) {
+          _badCopy();
+          return fallback;
+        },
+      );
+    }
+    if (_network && (url.startsWith('https://') || url.startsWith('http://'))) {
+      return Image.network(
+        url,
+        width: widget.width,
+        height: widget.height,
+        fit: widget.fit,
+        gaplessPlayback: true,
+        semanticLabel: widget.semanticLabel,
+        excludeFromSemantics: widget.semanticLabel == null,
+        frameBuilder: (_, child, frame, sync) => frame == null && !sync ? fallback : child,
+        errorBuilder: (_, __, ___) => fallback,
+      );
+    }
+    return fallback;
   }
-
-  bool get failed => _failed;
 }

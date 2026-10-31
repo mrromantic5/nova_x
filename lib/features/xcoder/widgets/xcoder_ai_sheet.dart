@@ -70,6 +70,7 @@ class _Turn {
   bool applied = false;
   String streaming = '';
   bool needsPremium = false;
+  String? note; // e.g. "Answered by NOVA AI — …"
 }
 
 class _AiSheetState extends State<_AiSheet> {
@@ -154,6 +155,7 @@ class _AiSheetState extends State<_AiSheet> {
             setState(() => turn.streaming = text);
             _scrollToEnd();
           });
+      turn.note = _ai.fallbackNote;
     } on CoderException catch (e) {
       if (e.code != 'cancelled') turn.error = e.message;
       turn.needsPremium = e.needsPremium;
@@ -314,6 +316,15 @@ class _AiSheetState extends State<_AiSheet> {
               SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: XC.accent)),
               SizedBox(width: 10),
               Text('NOVA is working…', style: TextStyle(color: XC.dim)),
+            ]),
+          ),
+        if (r != null && t.note != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Icon(Icons.info_outline_rounded, size: 14, color: XC.faint),
+              const SizedBox(width: 6),
+              Expanded(child: Text(t.note!, style: XC.ui(11.5, color: XC.faint))),
             ]),
           ),
         if (t.error != null && t.needsPremium)

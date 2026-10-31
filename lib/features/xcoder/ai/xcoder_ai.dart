@@ -100,6 +100,14 @@ class XCoderAi {
   /// The engine that answered last ('NOVA Coder' or 'NOVA AI').
   String engine = 'NOVA Coder';
 
+  /// Why the last answer came from NOVA AI instead of NOVA Coder (null when
+  /// NOVA Coder answered).
+  String? fallbackNote;
+
+  /// NOVA Coder errors that NOVA AI must not paper over: the user has to act
+  /// (buy Premium, wait for tomorrow's quota, send less) or stopped it.
+  static const _noFallback = {'premium', 'quota', 'cancelled', 'too_large', 'bad_request'};
+
   static String defaultPrompt(XAiTask t) => switch (t) {
         XAiTask.generate => 'Write the code described.',
         XAiTask.complete => 'Continue the code at the cursor.',
@@ -134,6 +142,7 @@ class XCoderAi {
         _ => r.task.wire,
       };
       final buf = StringBuffer();
+      fallbackNote = null;
       try {
         await for (final d in _coder.chatStream(
           messages: [...history, {'role': 'user', 'content': prompt}],
@@ -151,9 +160,12 @@ class XCoderAi {
         final b = NovaCodeResult.firstBlock(reply);
         return NovaCodeResult(reply: reply, code: b.$2, language: b.$1);
       } on CoderException catch (e) {
-        // Not deployed yet (or its address can't be resolved): use NOVA AI.
-        if (e.code != 'not_deployed' && !(e.code == 'network' && buf.isEmpty)) rethrow;
+        // NOVA Coder couldn't answer (not deployed, account check failed,
+        // Groq busy, offline…) and nothing was shown yet: answer with NOVA AI
+        // instead of leaving the user with an error.
+        if (_noFallback.contains(e.code) || buf.isNotEmpty) rethrow;
         engine = 'NOVA AI';
+        fallbackNote = 'Answered by NOVA AI — NOVA Coder: ${e.message}';
         return await _client.code(r.toJson(), cancel: token);
       }
     } finally {

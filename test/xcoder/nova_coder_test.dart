@@ -5,6 +5,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nova_x/features/devguide/guide_content.dart';
@@ -34,6 +35,14 @@ void main() {
     test('an error event becomes a CoderException', () async {
       expect(parseCoderSse(_sse([jsonEncode({'t': 'error', 'error': 'interrupted'})])).toList(),
           throwsA(isA<CoderException>()));
+    });
+
+    test('a Stream<Uint8List> (what Dio gives on a phone) is read', () async {
+      final bytes = utf8.encode('data: ${jsonEncode({'t': 'delta', 'v': 'Hi'})}\n\ndata: ${jsonEncode({'t': 'done'})}\n\n');
+      final Stream<Uint8List> dioLike = Stream<Uint8List>.fromIterable([Uint8List.fromList(bytes)]);
+      final out = await parseCoderSse(dioLike).toList();
+      expect(out.first.text, 'Hi');
+      expect(out.last.done, isTrue);
     });
 
     test('junk lines are ignored', () async {

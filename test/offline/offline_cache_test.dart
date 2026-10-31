@@ -53,6 +53,11 @@ void main() {
     expect((saved!.$1 as List).single, containsPair('name', 'Kobby Tech'));
   });
 
+  test('feed image URLs are un-escaped before download', () {
+    expect(OfflineCache.clean(' https://x.test/a.jpg?w=1&amp;s=2 '), 'https://x.test/a.jpg?w=1&s=2');
+    expect(OfflineCache.keyFor(OfflineCache.clean('https://x.test/a?b=1&amp;c=2')), OfflineCache.keyFor('https://x.test/a?b=1&c=2'));
+  });
+
   test('age labels', () {
     expect(OfflineCache.age(DateTime.now()), 'just now');
     expect(OfflineCache.age(DateTime.now().subtract(const Duration(minutes: 5))), '5 min ago');

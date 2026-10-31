@@ -151,8 +151,11 @@ class AgentResult {
 /// Parses an SSE byte stream from NOVA Coder into deltas.
 Stream<CoderDelta> parseCoderSse(Stream<List<int>> bytes) async* {
   var buf = '';
-  await for (final chunk in bytes.transform(const Utf8Decoder(allowMalformed: true))) {
-    buf += chunk;
+  // bind(), not bytes.transform(): on a phone Dio's stream is really a
+  // Stream<Uint8List>, and Stream<Uint8List>.transform(Utf8Decoder) fails at
+  // run time with a type error (that was the "NOVA couldn't answer" on Android).
+  await for (final chunk in const Utf8Decoder(allowMalformed: true).bind(bytes)) {
+    buf += chunk.replaceAll('\r\n', '\n');
     int i;
     while ((i = buf.indexOf('\n\n')) >= 0) {
       final block = buf.substring(0, i);
@@ -226,7 +229,14 @@ class NovaCoderClient {
     } on DioException catch (e) {
       throw await _map(e);
     }
-    yield* parseCoderSse(res.data!.stream);
+    final body = res.data;
+    if (body == null) throw const CoderException('upstream', 'NOVA Coder sent an empty answer.');
+    try {
+      yield* parseCoderSse(body.stream);
+    } on DioException catch (e) {
+      // the connection dropped while the answer was arriving
+      throw await _map(e);
+    }
   }
 
   /// Plain (non-streamed) answer: (reply, model).

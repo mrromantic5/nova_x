@@ -167,6 +167,15 @@ class XCoderAi {
         engine = 'NOVA AI';
         fallbackNote = 'Answered by NOVA AI — NOVA Coder: ${e.message}';
         return await _client.code(r.toJson(), cancel: token);
+      } on NovaApiException {
+        rethrow;
+      } catch (e) {
+        // Anything unexpected on the NOVA Coder path (a parsing or type
+        // error) before text arrived: NOVA AI answers instead.
+        if (buf.isNotEmpty || token.isCancelled) rethrow;
+        engine = 'NOVA AI';
+        fallbackNote = 'Answered by NOVA AI — NOVA Coder had a problem ($e)';
+        return await _client.code(r.toJson(), cancel: token);
       }
     } finally {
       if (identical(_cancel, token)) _cancel = null;

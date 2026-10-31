@@ -36,7 +36,6 @@ import 'package:nova_x/features/offline/screens/offline_pages_screen.dart';
 import 'package:nova_x/core/services/api_service.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
 import 'package:nova_x/core/services/news_service.dart';
-import 'package:nova_x/core/services/offline_cache.dart';
 import '../../browser/screens/browser_view.dart';
 import '../../ai/screens/ai_assistant_screen.dart';
 import '../../bookmarks/screens/bookmarks_screen.dart';
@@ -98,8 +97,7 @@ class _HomeScreenState extends State<HomeScreen>
   List<NewsArticle>                    _news             = [];
   final Map<String, List<NewsArticle>> _newsCache        = {};
   bool _loadingNews = false;
-  bool _newsOffline = false;      // 3.11.0: showing saved news (no internet)
-  DateTime? _newsSavedAt;
+  bool _newsOffline = false;      // last news load failed because the phone is offline
   int  _newsPage    = 1;
   bool _loadingMore = false;
   bool _hasMoreNews = true;
@@ -474,32 +472,23 @@ class _HomeScreenState extends State<HomeScreen>
       return;
     }
     final cat = _selectedCategory;
-    // 3.11.0: show the news saved on the phone at once (works offline),
-    // then replace it with fresh news when the internet answers.
-    if (_news.isEmpty) {
-      final saved = await NewsService.savedNews(cat);
-      if (!mounted || cat != _selectedCategory) return;
-      if (saved != null && saved.$1.isNotEmpty) {
-        setState(() { _news = saved.$1; _newsSavedAt = saved.$2; _newsOffline = false; });
-      }
-    }
-    setState(() { _loadingNews = _news.isEmpty; _newsPage = 1; _hasMoreNews = true; });
+    setState(() { _loadingNews = true; _newsOffline = false; _newsPage = 1; _hasMoreNews = true; });
     final articles = await NewsService.fetchNews(cat, page: 1);
     if (!mounted || cat != _selectedCategory) return;
-    final offline = NewsService.lastFromCache;
-    if (articles.isEmpty && _news.isNotEmpty) {
-      // Nothing new and nothing saved for this exact request: keep what is shown.
-      setState(() { _loadingNews = false; _newsOffline = true; _hasMoreNews = false; });
-      return;
+    // No news: find out whether the phone is offline (shows "Connection failed").
+    final offline = articles.isEmpty && !await _hasInternet();
+    if (!mounted || cat != _selectedCategory) return;
+    if (articles.isNotEmpty) _newsCache[cat] = articles;
+    setState(() { _news = articles; _loadingNews = false; _newsOffline = offline; });
+  }
+
+  static Future<bool> _hasInternet() async {
+    try {
+      final r = await InternetAddress.lookup('google.com').timeout(const Duration(seconds: 4));
+      return r.isNotEmpty && r.first.rawAddress.isNotEmpty;
+    } catch (_) {
+      return false;
     }
-    if (!offline) _newsCache[cat] = articles;
-    setState(() {
-      _news = articles;
-      _loadingNews = false;
-      _newsOffline = offline;
-      _newsSavedAt = NewsService.lastSavedAt;
-      if (offline) _hasMoreNews = false;
-    });
   }
 
   void _switchCategory(String cat) {
@@ -1217,10 +1206,10 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(15),
-                  child: CachedNetImage(
+                  child: Image.network(
                     'https://www.google.com/s2/favicons?domain=$domain&sz=64',
                     width: 52, height: 52, fit: BoxFit.cover,
-                    fallback: Center(child: Text(
+                    errorBuilder: (_, __, ___) => Center(child: Text(
                       (site['name'] as String? ?? '?')[0],
                       style: GoogleFonts.spaceGrotesk(
                           color: AppTheme.accentCyan,
@@ -1441,6 +1430,8 @@ class _HomeScreenState extends State<HomeScreen>
       const SizedBox(height: 20),
     ]);
 
+    if (_news.isEmpty && _newsOffline) return _connectionFailedCard();
+
     if (_news.isEmpty) return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: GestureDetector(
@@ -1464,7 +1455,6 @@ class _HomeScreenState extends State<HomeScreen>
 
     final color = _catColor[_selectedCategory] ?? AppTheme.accentCyan;
     return Column(children: [
-      if (_newsOffline) _offlineNewsBanner(),
       // Every article rendered as a full-width hero card.
       ..._news.map(_heroNewsCard),
       if (_loadingMore) Padding(
@@ -1488,32 +1478,92 @@ class _HomeScreenState extends State<HomeScreen>
         color: color.withOpacity(0.6), size: 44)),
   );
 
-  Widget _offlineNewsBanner() {
-    final at = _newsSavedAt;
+  /// Shown in the news section when the phone has no internet.
+  Widget _connectionFailedCard() {
+    final color = _catColor[_selectedCategory] ?? AppTheme.accentCyan;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-      child: GestureDetector(
-        onTap: () => _fetchNews(forceRefresh: true),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: const Color(0xFFFFB020).withOpacity(0.10),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFFFB020).withOpacity(0.35)),
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(20, 26, 20, 20),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter, end: Alignment.bottomCenter,
+            colors: [AppTheme.bgCard.withOpacity(0.92), AppTheme.bgElevated.withOpacity(0.92)],
           ),
-          child: Row(children: [
-            const Icon(Icons.wifi_off_rounded, color: Color(0xFFFFB020), size: 16),
-            const SizedBox(width: 10),
-            Expanded(child: Text(
-              at == null
-                  ? 'You’re offline — showing saved news'
-                  : 'You’re offline — news saved ${OfflineCache.age(at)}',
-              style: GoogleFonts.inter(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w600),
-            )),
-            Text('Retry', style: GoogleFonts.inter(color: AppTheme.accentCyan, fontSize: 12.5, fontWeight: FontWeight.w700)),
-          ]),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: AppTheme.divider),
+          boxShadow: AppTheme.cardShadow,
         ),
+        child: Column(children: [
+          Text('Connection failed',
+              style: GoogleFonts.inter(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 6),
+          Text('News needs the internet. Check your Wi-Fi or mobile data, then try again.',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 13, height: 1.4)),
+          const SizedBox(height: 26),
+          _unpluggedArt(color),
+          const SizedBox(height: 26),
+          Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton(
+              onPressed: () => _fetchNews(forceRefresh: true),
+              style: FilledButton.styleFrom(
+                backgroundColor: color.withOpacity(0.22),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 14),
+                shape: const StadiumBorder(),
+                side: BorderSide(color: color.withOpacity(0.6)),
+              ),
+              child: Text('Try again', style: GoogleFonts.inter(fontSize: 14.5, fontWeight: FontWeight.w700)),
+            ),
+          ),
+        ]),
       ),
+    );
+  }
+
+  /// A cable pulled out of its socket, with a "no signal" badge.
+  Widget _unpluggedArt(Color color) {
+    Widget bubble(IconData icon, double turns) => Container(
+      width: 64, height: 64,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: AppTheme.bgDark.withOpacity(0.6),
+        border: Border.all(color: AppTheme.divider),
+      ),
+      child: RotatedBox(quarterTurns: (turns * 4).round(),
+          child: Icon(icon, color: AppTheme.textHint, size: 30)),
+    );
+    return SizedBox(
+      height: 110,
+      child: Stack(alignment: Alignment.center, children: [
+        Positioned.fill(child: Center(child: Container(
+          height: 2, margin: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(gradient: LinearGradient(colors: [
+            Colors.transparent, AppTheme.divider, Colors.transparent])),
+        ))),
+        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          bubble(Icons.power_rounded, 0.25),
+          const SizedBox(width: 18),
+          Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 46, height: 46,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: color.withOpacity(0.16),
+                border: Border.all(color: color.withOpacity(0.55)),
+              ),
+              child: Icon(Icons.wifi_off_rounded, color: color, size: 24),
+            ),
+            const SizedBox(height: 6),
+            Text('? ?', style: GoogleFonts.spaceGrotesk(color: AppTheme.textHint, fontSize: 16, fontWeight: FontWeight.w700)),
+          ]),
+          const SizedBox(width: 18),
+          bubble(Icons.power_rounded, 0.75),
+        ]),
+      ]),
     );
   }
 
@@ -1536,9 +1586,8 @@ class _HomeScreenState extends State<HomeScreen>
               SizedBox(
                 height: 200, width: double.infinity,
                 child: a.imageUrl.isNotEmpty
-                  ? CachedNetImage(a.imageUrl, fit: BoxFit.cover,
-                      width: double.infinity, height: 200,
-                      fallback: _heroPlaceholder(color))
+                  ? Image.network(a.imageUrl, fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _heroPlaceholder(color))
                   : _heroPlaceholder(color),
               ),
               Positioned.fill(child: Container(decoration: BoxDecoration(

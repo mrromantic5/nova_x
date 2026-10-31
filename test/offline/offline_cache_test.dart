@@ -1,17 +1,17 @@
 // test/offline/offline_cache_test.dart
 //
-// 3.11.0 offline home: saved news and coin balance survive without
-// internet; image cache file names are stable.
+// Offline snapshots (business listings, coin balance) survive without
+// internet; storage keys are stable. (3.11.3: news and pictures are no
+// longer cached.)
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nova_x/core/services/news_service.dart';
 import 'package:nova_x/core/services/offline_cache.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  test('image cache keys are stable and distinct', () {
+  test('storage keys are stable and distinct', () {
     final a = OfflineCache.keyFor('https://www.google.com/s2/favicons?domain=github.com&sz=64');
     expect(a, OfflineCache.keyFor('https://www.google.com/s2/favicons?domain=github.com&sz=64'));
     expect(a, isNot(OfflineCache.keyFor('https://www.google.com/s2/favicons?domain=gitlab.com&sz=64')));
@@ -28,34 +28,12 @@ void main() {
     expect(await OfflineCache.getJson('t'), isNull);
   });
 
-  test('saved news round-trips', () async {
-    const a = NewsArticle(
-        title: 'T', description: 'D', url: 'https://x.test/a', imageUrl: 'https://x.test/a.jpg', source: 'S', timeAgo: '1h', category: 'Tech');
-    await OfflineCache.putJson('news_Tech', [a.toJson()]);
-    final saved = await NewsService.savedNews('Tech');
-    expect(saved, isNotNull);
-    expect(saved!.$1.single.title, 'T');
-    expect(saved.$1.single.imageUrl, 'https://x.test/a.jpg');
-    expect(await NewsService.savedNews('Sports'), isNull);
-  });
-
-  test('broken entries are skipped', () {
-    expect(NewsArticle.fromJson({'t': '', 'u': 'x'}), isNull);
-    expect(NewsArticle.fromJson('nope'), isNull);
-    expect(NewsArticle.fromJson({'t': 'ok', 'u': 'https://x'})?.title, 'ok');
-  });
-
   test('business listings are kept for offline use', () async {
     await OfflineCache.putJson('businesses', [
       {'id': 1, 'name': 'Kobby Tech', 'category': 'Technology', 'image_url': 'https://x.test/a.png'},
     ]);
     final saved = await OfflineCache.getJson('businesses');
     expect((saved!.$1 as List).single, containsPair('name', 'Kobby Tech'));
-  });
-
-  test('feed image URLs are un-escaped before download', () {
-    expect(OfflineCache.clean(' https://x.test/a.jpg?w=1&amp;s=2 '), 'https://x.test/a.jpg?w=1&s=2');
-    expect(OfflineCache.keyFor(OfflineCache.clean('https://x.test/a?b=1&amp;c=2')), OfflineCache.keyFor('https://x.test/a?b=1&c=2'));
   });
 
   test('age labels', () {

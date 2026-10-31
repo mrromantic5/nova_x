@@ -5,6 +5,7 @@
 // the open file. Code answers are shown as a diff first; nothing changes in
 // the file until the developer taps Apply / Insert.
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -161,8 +162,14 @@ class _AiSheetState extends State<_AiSheet> {
       turn.needsPremium = e.needsPremium;
     } on NovaApiException catch (e) {
       turn.error = e.userMessage;
-    } catch (_) {
-      turn.error = 'NOVA couldn’t answer. Check your connection and try again.';
+    } on DioException catch (e) {
+      turn.error = e.type == DioExceptionType.connectionError || e.type == DioExceptionType.connectionTimeout
+          ? 'You’re offline or NOVA can’t be reached. Check your connection and try again.'
+          : 'NOVA couldn’t answer (${e.response?.statusCode ?? e.type.name}). Please try again.';
+    } catch (e) {
+      // Show what went wrong instead of blaming the connection.
+      final s = e.toString();
+      turn.error = 'NOVA couldn’t answer: ${s.length > 160 ? '${s.substring(0, 160)}…' : s}';
     }
     if (!mounted) return;
     setState(() => _busy = false);

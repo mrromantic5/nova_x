@@ -518,9 +518,9 @@ class _BusinessScreenState extends State<BusinessScreen>
             SizedBox(
               height: 180, width: double.infinity,
               child: imgUrl != null
-                  ? CachedNetImage(imgUrl, fit: BoxFit.cover,
+                  ? Image.network(imgUrl, fit: BoxFit.cover,
                       width: double.infinity, height: 180,
-                      fallback: _imagePlaceholder(180, color))
+                      errorBuilder: (_, __, ___) => _imagePlaceholder(180, color))
                   : _imagePlaceholder(180, color),
             ),
             Positioned(top: 12, left: 12, child: _catBadge(cat, color)),
@@ -648,9 +648,9 @@ class _BusinessScreenState extends State<BusinessScreen>
               decoration: BoxDecoration(borderRadius: BorderRadius.circular(14)),
               clipBehavior: Clip.hardEdge,
               child: imgUrl != null
-                  ? CachedNetImage(imgUrl, fit: BoxFit.cover,
+                  ? Image.network(imgUrl, fit: BoxFit.cover,
                       width: double.infinity, height: 70,
-                      fallback: _imagePlaceholder(70, color))
+                      errorBuilder: (_, __, ___) => _imagePlaceholder(70, color))
                   : _imagePlaceholder(70, color),
             ),
             if (showRank)

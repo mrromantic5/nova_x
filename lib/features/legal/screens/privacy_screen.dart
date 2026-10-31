@@ -238,8 +238,7 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                     'answer, together with your account token to check your plan. The service '
                     'does not store your code; it keeps only a daily request count per account.'),
                 _sub('Offline Copies',
-                    'To work without internet, NOVA X keeps on your phone the latest news it '
-                    'showed you, the icons of your quick-access sites, the public business '
+                    'To work without internet, NOVA X keeps on your phone the public business '
                     'listings you viewed, your NOVA AI chats and your last coin balance. They '
                     'are never uploaded again from this copy and are removed when you clear the '
                     'app\'s storage.'),

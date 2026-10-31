@@ -410,7 +410,7 @@ The dashboard shows a **protection score** and stats (malware blocked, HTTPS upg
     color: Color(0xFF90A4AE),
     body: r'''
 ### Works offline
-X Coder (editor, suggestions, linting, terminal, `node`, preview), this guide, Dev Tools Tools tab, saved news, quick-access icons, business listings and NOVA AI chats you've opened before, coin balance (last known), NOVA Music, screenshots and recordings.
+X Coder (editor, suggestions, linting, terminal, `node`, preview), this guide, Dev Tools Tools tab, business listings and NOVA AI chats you've opened before, coin balance (last known), NOVA Music, screenshots and recordings.
 
 ### Needs internet
 NOVA Coder & Agent, NOVA AI answers, NOVA Cyber scans, speed tests, new news and listings.

@@ -18,6 +18,7 @@ import 'package:nova_x/core/theme/app_theme.dart';
 
 import '../../home/screens/home_screen.dart';
 import '../../permissions/screens/permission_slides_screen.dart';
+import '../services/auth_lock.dart';
 import '../services/password_rules.dart';
 
 enum _Step { email, code, password, done }
@@ -62,6 +63,8 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   void initState() {
     super.initState();
     _emailCtrl.text = widget.initialEmail.trim();
+    _emailCtrl.addListener(_checkLock);
+    _checkLock();
     _codeCtrl.addListener(_onCodeChanged);
     _passCtrl.addListener(_refresh);
     _pass2Ctrl.addListener(_refresh);
@@ -104,6 +107,28 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     });
   }
 
+  // ── Lock (3.11.5): 3 code requests, then 5 min, then 10, 15, … ──────────────
+
+  /// This email may still be locked from earlier (even after closing the app).
+  Future<void> _checkLock() async {
+    if (_step != _Step.email) return;
+    final email = _emailCtrl.text.trim();
+    final until = await AuthLock.until(AuthLock.forgot, email);
+    if (!mounted || email != _emailCtrl.text.trim() || _step != _Step.email) return;
+    if (until != null) {
+      setState(() {
+        _resendAt = until;
+        _info = 'Too many code requests for this email. Please wait for the countdown.';
+      });
+      _startTicker();
+    } else if (_secondsUntil(_resendAt) > 0 && _resendAt != null) {
+      setState(() {
+        _resendAt = null; // a different email isn't locked
+        _info = '';
+      });
+    }
+  }
+
   // ── Step 1: email ───────────────────────────────────────────────────────────
 
   Future<void> _sendCode({bool resend = false}) async {
@@ -124,11 +149,24 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
     if (r.ok) {
       HapticFeedback.lightImpact();
+      // The 3rd request (and every one after a lock) locks this email: the
+      // resend countdown is then the lock time.
+      final locked = r.data['locked'] == true;
+      final wait = r.resendAfter ?? 60;
+      if (locked) await AuthLock.save(AuthLock.forgot, email, wait);
+      if (!mounted) return;
+      final left = r.data['requests_left'];
       setState(() {
         _email = email;
-        _resendAt = DateTime.now().add(Duration(seconds: r.resendAfter ?? 60));
+        _resendAt = DateTime.now().add(Duration(seconds: wait));
         _codeExpiresAt = DateTime.now().add(Duration(seconds: r.expiresIn ?? 900));
-        _info = resend ? 'A new code is on its way to ${PasswordRules.maskEmail(email)}.' : '';
+        _info = locked
+            ? 'Code sent. You can ask for another one in ${PasswordRules.clock(wait)} — '
+              'each further request waits 5 minutes longer.'
+            : resend
+                ? 'A new code is on its way to ${PasswordRules.maskEmail(email)}.'
+                    '${left is num && left > 0 ? ' $left more request${left == 1 ? '' : 's'} before a 5-minute wait.' : ''}'
+                : '';
         _codeCtrl.clear();
         _step = _Step.code;
       });
@@ -139,7 +177,10 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       return;
     }
     if (r.rateLimited && r.retryAfter != null) {
-      _resendAt = DateTime.now().add(Duration(seconds: r.retryAfter!));
+      _resendAt = r.status == 'locked'
+          ? await AuthLock.save(AuthLock.forgot, email, r.retryAfter!)
+          : DateTime.now().add(Duration(seconds: r.retryAfter!));
+      if (!mounted) return;
       _startTicker();
     }
     setState(() => _error = r.message.isEmpty ? 'Something went wrong. Please try again.' : r.message);
@@ -254,6 +295,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
     if (r.ok) {
       HapticFeedback.heavyImpact();
+      // The server lifted both locks for this email.
+      AuthLock.clear(AuthLock.forgot, _email);
+      AuthLock.clear(AuthLock.login, _email);
       _passCtrl.clear();
       _pass2Ctrl.clear();
       setState(() {

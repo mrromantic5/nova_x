@@ -1,5 +1,7 @@
 // lib/features/auth/screens/auth_screen.dart
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -11,6 +13,7 @@ import '../../legal/screens/terms_screen.dart';
 import '../../legal/screens/privacy_screen.dart';
 import '../../home/screens/home_screen.dart';
 import '../../permissions/screens/permission_slides_screen.dart';
+import '../services/auth_lock.dart';
 import 'forgot_password_screen.dart';
 import 'otp_screen.dart';
 
@@ -30,6 +33,11 @@ class _AuthScreenState extends State<AuthScreen>
   bool _obscure3 = true;
   String _error = '';
   bool _agreed  = false;
+
+  // 3.11.5: login lock (too many wrong passwords) — countdown, no submit.
+  DateTime? _lockUntil;
+  String _lockMessage = '';
+  Timer? _lockTick;
 
   // ── Text controllers ────────────────────────────────────────────────────────
   final _loginEmailCtrl = TextEditingController();
@@ -62,6 +70,7 @@ class _AuthScreenState extends State<AuthScreen>
     _loginEmailFocus.addListener(_onLoginEmailFocus);
     _loginPassFocus.addListener(_onLoginPassFocus);
     _loginEmailCtrl.addListener(_onEmailTyped);
+    _loginEmailCtrl.addListener(_checkLoginLock);
     _loginPassCtrl.addListener(_onPasswordTyped);
 
     _regNameFocus.addListener(_onRegNameFocus);
@@ -297,9 +306,46 @@ class _AuthScreenState extends State<AuthScreen>
 
   // ── Auth actions ──────────────────────────────────────────────────────────────
 
+  // ── Login lock (3.11.5) ──────────────────────────────────────────────────────
+
+  int get _lockLeft => AuthLock.secondsLeft(_lockUntil);
+
+  /// The email typed may still be locked from an earlier try (even after the
+  /// app was closed).
+  Future<void> _checkLoginLock() async {
+    final email = _loginEmailCtrl.text.trim();
+    final until = await AuthLock.until(AuthLock.login, email);
+    if (!mounted || email != _loginEmailCtrl.text.trim()) return;
+    if (until == null && _lockUntil == null) return;
+    _setLock(until, until == null ? '' : 'This account is locked after too many wrong passwords.');
+  }
+
+  void _setLock(DateTime? until, String message) {
+    _lockTick?.cancel();
+    setState(() {
+      _lockUntil = until;
+      _lockMessage = message;
+    });
+    if (until == null) return;
+    _lockTick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      if (_lockLeft == 0) {
+        _lockTick?.cancel();
+        setState(() {
+          _lockUntil = null;
+          _lockMessage = '';
+          _error = '';
+        });
+        return;
+      }
+      setState(() {});
+    });
+  }
+
   Future<void> _login() async {
     final email = _loginEmailCtrl.text.trim();
     final pass  = _loginPassCtrl.text;
+    if (_lockLeft > 0) return; // locked: no submission until the countdown ends
     if (email.isEmpty || pass.isEmpty) {
       setState(() => _error = 'Please fill in all fields.');
       _reactFail(fallback: _restingState);
@@ -310,6 +356,7 @@ class _AuthScreenState extends State<AuthScreen>
     if (!mounted) return;
     setState(() => _loading = false);
     if (res['success'] == true) {
+      AuthLock.clear(AuthLock.login, email);
       HapticFeedback.lightImpact();
       _reactSuccess();
       await Future.delayed(const Duration(milliseconds: 600));
@@ -323,6 +370,19 @@ class _AuthScreenState extends State<AuthScreen>
           email:  email,
         ),
       ));
+    } else if (res['locked'] == true) {
+      _reactFail(fallback: _restingState);
+      HapticFeedback.heavyImpact();
+      final secs = (res['retry_after'] as int?) ?? 60;
+      // Only an account lock is remembered per email; a network block isn't.
+      final until = res['lock_status'] == 'locked'
+          ? await AuthLock.save(AuthLock.login, email, secs)
+          : DateTime.now().add(Duration(seconds: secs));
+      if (!mounted) return;
+      _loginPassCtrl.clear();
+      _error = '';
+      _setLock(until, (res['message'] as String?)?.replaceAll(RegExp(r' ?[Tt]ry again in [0-9: hmin]+\.?'), '').trim() ??
+          'Too many wrong passwords.');
     } else {
       _reactFail(fallback: _restingState);
       setState(() => _error = res['message'] as String? ?? 'Login failed.');
@@ -397,6 +457,7 @@ class _AuthScreenState extends State<AuthScreen>
 
   @override
   void dispose() {
+    _lockTick?.cancel();
     _tabs.dispose();
     _loginEmailCtrl.dispose(); _loginPassCtrl.dispose();
     _regNameCtrl.dispose();    _regEmailCtrl.dispose();
@@ -490,6 +551,11 @@ class _AuthScreenState extends State<AuthScreen>
                 ),
               ),
 
+            if (_tabs.index == 0 && _lockLeft > 0) ...[
+              const SizedBox(height: 12),
+              _lockBanner(),
+            ],
+
             if (_error.isNotEmpty) ...[
               const SizedBox(height: 12),
               Container(
@@ -511,21 +577,34 @@ class _AuthScreenState extends State<AuthScreen>
 
             const SizedBox(height: 20),
 
-            GestureDetector(
-              onTap: _loading ? null : (_tabs.index == 0 ? _login : _register),
+            Builder(builder: (_) {
+            final locked = _tabs.index == 0 && _lockLeft > 0;
+            final off = _loading || locked;
+            return GestureDetector(
+              onTap: off ? null : (_tabs.index == 0 ? _login : _register),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
                 height: 54, width: double.infinity,
                 decoration: BoxDecoration(
-                  gradient: _loading ? null : AppTheme.primaryGradient,
-                  color: _loading ? AppTheme.bgCard : null,
+                  gradient: off ? null : AppTheme.primaryGradient,
+                  color: off ? AppTheme.bgCard : null,
                   borderRadius: BorderRadius.circular(16),
-                  boxShadow: _loading ? null : AppTheme.glowShadow,
+                  boxShadow: off ? null : AppTheme.glowShadow,
+                  border: locked ? Border.all(color: AppTheme.divider) : null,
                 ),
                 child: Center(child: _loading
                     ? const SizedBox(width: 24, height: 24,
                         child: CircularProgressIndicator(
                             color: AppTheme.accentCyan, strokeWidth: 2))
+                    : locked
+                    ? Row(mainAxisSize: MainAxisSize.min, children: [
+                        const Icon(Icons.lock_clock_rounded, color: AppTheme.textHint, size: 18),
+                        const SizedBox(width: 8),
+                        Text('Locked · ${AuthLock.clock(_lockLeft)}',
+                            style: GoogleFonts.spaceGrotesk(
+                                color: AppTheme.textHint, fontSize: 15,
+                                fontWeight: FontWeight.w700)),
+                      ])
                     : Text(
                         _tabs.index == 0
                             ? 'Log In to NOVA X'
@@ -534,7 +613,8 @@ class _AuthScreenState extends State<AuthScreen>
                             color: Colors.white, fontSize: 15,
                             fontWeight: FontWeight.w700))),
               ),
-            ),
+            );
+            }),
 
             if (_tabs.index == 1) ...[
               const SizedBox(height: 10),
@@ -663,6 +743,34 @@ class _AuthScreenState extends State<AuthScreen>
   }
 
   // ── Forms ─────────────────────────────────────────────────────────────────────
+
+  /// Shown while the login is locked: why, and a live countdown.
+  Widget _lockBanner() {
+    const amber = Color(0xFFFFB020);
+    final first = _lockMessage.isEmpty ? 'Too many wrong passwords.' : _lockMessage;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: amber.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: amber.withOpacity(0.35)),
+      ),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Padding(
+          padding: EdgeInsets.only(top: 1),
+          child: Icon(Icons.lock_clock_rounded, color: amber, size: 18),
+        ),
+        const SizedBox(width: 10),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(first, style: GoogleFonts.inter(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          Text('You can try again in ${AuthLock.clock(_lockLeft)}. Each further wrong password locks it 5 minutes longer. '
+              'Forgot it? Reset your password instead.',
+              style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11.5, height: 1.35)),
+        ])),
+      ]),
+    );
+  }
 
   Widget _loginForm() => Column(children: [
     _field('Email address', _loginEmailCtrl,

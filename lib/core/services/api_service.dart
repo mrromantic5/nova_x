@@ -149,7 +149,26 @@ class ApiService {
           'message':            d['message'] ?? 'Please verify your email.',
         };
       }
-      return {'success': false, 'message': _msg(e)};
+      // 3.11.5: account locked (too many wrong passwords) or this network
+      // blocked for a while: 429 with the seconds to wait.
+      if (e.response?.statusCode == 429) {
+        final m = d is Map ? d : const {};
+        final wait = m['retry_after'] is num
+            ? (m['retry_after'] as num).toInt()
+            : int.tryParse(e.response?.headers.value('retry-after') ?? '') ?? 60;
+        return {
+          'success':     false,
+          'locked':      true,
+          'lock_status': m['status'] ?? 'locked',
+          'retry_after': wait,
+          'message':     m['message'] ?? 'Too many attempts. Please wait and try again.',
+        };
+      }
+      return {
+        'success': false,
+        'message': _msg(e),
+        if (d is Map && d['attempts_left'] is num) 'attempts_left': (d['attempts_left'] as num).toInt(),
+      };
     }
   }
 

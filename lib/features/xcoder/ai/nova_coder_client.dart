@@ -1,11 +1,8 @@
 // lib/features/xcoder/ai/nova_coder_client.dart
 //
 // Client for NOVA Coder (backend/nova-coder-worker), the AI engine of
-// X Coder. The Worker holds the AI key; the app sends the user's NOVA X
-// token and (3.11.4) a short-lived Premium pass signed by the NOVA X server
-// (subscription.php?action=coder_pass). The Worker checks the pass itself,
-// so it doesn't need to reach the NOVA X server — whose hosting firewall
-// answers Cloudflare with HTTP 403.
+// X Coder. The Worker holds the AI key; the app sends only the user's
+// NOVA X token, and the Worker checks Premium with the NOVA X server.
 //
 //   POST /v1/chat      streamed (SSE) or plain answers, with project context
 //   POST /v1/agent     multi-file plans (need_files → plan / question)
@@ -21,6 +18,7 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 
 import '../../../core/services/api_service.dart';
+import '../../../core/services/device_clock.dart';
 import '../../nova/nova_config.dart';
 
 class CoderException implements Exception {
@@ -154,11 +152,10 @@ class AgentResult {
 /// Parses an SSE byte stream from NOVA Coder into deltas.
 Stream<CoderDelta> parseCoderSse(Stream<List<int>> bytes) async* {
   var buf = '';
-  // bind(), not bytes.transform(): on a phone Dio's stream is really a
-  // Stream<Uint8List>, and Stream<Uint8List>.transform(Utf8Decoder) fails at
-  // run time with a type error (that was the "NOVA couldn't answer" on Android).
+  // bind (not transform): Dio's stream is Stream<Uint8List>, and
+  // Stream<Uint8List>.transform(Utf8Decoder) fails its runtime type check.
   await for (final chunk in const Utf8Decoder(allowMalformed: true).bind(bytes)) {
-    buf += chunk.replaceAll('\r\n', '\n');
+    buf += chunk;
     int i;
     while ((i = buf.indexOf('\n\n')) >= 0) {
       final block = buf.substring(0, i);
@@ -191,15 +188,8 @@ Stream<CoderDelta> parseCoderSse(Stream<List<int>> bytes) async* {
 }
 
 class NovaCoderClient {
-  NovaCoderClient({Dio? dio, String? baseUrl, Future<String?> Function()? token, Dio? passDio})
+  NovaCoderClient({Dio? dio, String? baseUrl, Future<String?> Function()? token})
       : _token = token ?? ApiService.getToken,
-        _passDio = passDio ??
-            Dio(BaseOptions(
-              connectTimeout: const Duration(seconds: 12),
-              receiveTimeout: const Duration(seconds: 20),
-              headers: {'Accept': 'application/json'},
-              validateStatus: (_) => true,
-            )),
         _dio = dio ??
             Dio(BaseOptions(
               baseUrl: baseUrl ?? NovaConfig.coderApiBaseUrl,
@@ -210,62 +200,19 @@ class NovaCoderClient {
             ));
 
   final Dio _dio;
-  final Dio _passDio;
   final Future<String?> Function() _token;
 
-  // ── Premium pass (3.11.4) ───────────────────────────────────────────────
-  // Shared by every client in the app; renewed 5 minutes before it expires
-  // or when the Worker says it is no longer valid.
-  static String? _pass, _passToken;
-  static DateTime? _passUntil;
-  static Future<String?>? _passing;
+  /// Tells NOVA Coder whether the developer is on a phone or a PC (which
+  /// terminal commands work differs).
+  static Map<String, Object?> _withPlatform(Map<String, Object?>? context) =>
+      {...?context, 'platform': DeviceClock.platform};
 
-  Future<String?> _passFor(String token, {bool refresh = false}) {
-    final until = _passUntil;
-    if (!refresh && _pass != null && _passToken == token && until != null &&
-        until.isAfter(DateTime.now().add(const Duration(minutes: 5)))) {
-      return Future.value(_pass);
-    }
-    return _passing ??= _fetchPass(token).whenComplete(() => _passing = null);
-  }
-
-  /// Asks the NOVA X server for a pass. Null when the server doesn't offer
-  /// passes yet or can't be reached: the Worker then checks the account
-  /// itself, as before.
-  Future<String?> _fetchPass(String token) async {
-    _pass = null;
-    _passUntil = null;
-    try {
-      final r = await _passDio.get<Object>(
-        '${ApiService.baseUrl}/subscription.php',
-        queryParameters: {'action': 'coder_pass'},
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
-      );
-      var d = r.data;
-      if (d is String) d = jsonDecode(d);
-      if (r.statusCode != 200 || d is! Map || d['success'] != true) return null;
-      final p = d['pass'];
-      if (p is! String || p.isEmpty) return null;
-      _pass = p;
-      _passToken = token;
-      _passUntil = DateTime.tryParse('${d['expires_at']}') ?? DateTime.now().add(const Duration(minutes: 30));
-      return p;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Future<Options> _opts({ResponseType type = ResponseType.json, bool refreshPass = false}) async {
+  Future<Options> _opts({ResponseType type = ResponseType.json}) async {
     final t = await _token();
     if (t == null || t.isEmpty) {
       throw const CoderException('auth', 'Sign in to NOVA X to use NOVA Coder.');
     }
-    final pass = await _passFor(t, refresh: refreshPass);
-    return Options(headers: {
-      'Authorization': 'Bearer $t',
-      'Content-Type': 'application/json',
-      if (pass != null) 'X-Nova-Pass': pass,
-    }, responseType: type);
+    return Options(headers: {'Authorization': 'Bearer $t', 'Content-Type': 'application/json'}, responseType: type);
   }
 
   /// Streamed chat / task answer.
@@ -276,31 +223,18 @@ class NovaCoderClient {
     String profile = 'pro',
     CancelToken? cancel,
   }) async* {
-    final res = await _openStream(
-        {'messages': messages, 'task': task, 'context': context, 'profile': profile, 'stream': true}, cancel);
-    final body = res.data;
-    if (body == null) throw const CoderException('upstream', 'NOVA Coder sent an empty answer.');
+    final Response<ResponseBody> res;
     try {
-      yield* parseCoderSse(body.stream);
-    } on DioException catch (e) {
-      // the connection dropped while the answer was arriving
-      throw await _map(e);
-    }
-  }
-
-  Future<Response<ResponseBody>> _openStream(Map<String, Object?> data, CancelToken? cancel, {bool retried = false}) async {
-    try {
-      return await _dio.post<ResponseBody>(
+      res = await _dio.post<ResponseBody>(
         '/v1/chat',
-        data: data,
-        options: await _opts(type: ResponseType.stream, refreshPass: retried),
+        data: {'messages': messages, 'task': task, 'context': _withPlatform(context), 'profile': profile, 'stream': true},
+        options: await _opts(type: ResponseType.stream),
         cancelToken: cancel,
       );
     } on DioException catch (e) {
-      final err = await _map(e);
-      if (err.code == 'pass' && !retried) return _openStream(data, cancel, retried: true); // renew once
-      throw err;
+      throw await _map(e);
     }
+    yield* parseCoderSse(res.data!.stream);
   }
 
   /// Plain (non-streamed) answer: (reply, model).
@@ -311,7 +245,7 @@ class NovaCoderClient {
     String profile = 'pro',
     CancelToken? cancel,
   }) async {
-    final m = await _post('/v1/chat', {'messages': messages, 'task': task, 'context': context, 'profile': profile}, cancel);
+    final m = await _post('/v1/chat', {'messages': messages, 'task': task, 'context': _withPlatform(context), 'profile': profile}, cancel);
     final reply = m['reply'];
     if (reply is! String || reply.trim().isEmpty) throw const CoderException('upstream', 'NOVA Coder sent an empty answer.');
     return (reply, m['model']?.toString());
@@ -324,7 +258,7 @@ class NovaCoderClient {
     int round = 1,
     CancelToken? cancel,
   }) async {
-    final m = await _post('/v1/agent', {'instruction': instruction, 'context': context, 'history': history, 'round': round}, cancel);
+    final m = await _post('/v1/agent', {'instruction': instruction, 'context': _withPlatform(context), 'history': history, 'round': round}, cancel);
     return AgentResult.parse(m);
   }
 
@@ -343,9 +277,9 @@ class NovaCoderClient {
     return null;
   }
 
-  Future<Map<String, dynamic>> _post(String path, Map<String, Object?> body, CancelToken? cancel, {bool retried = false}) async {
+  Future<Map<String, dynamic>> _post(String path, Map<String, Object?> body, CancelToken? cancel) async {
     try {
-      final r = await _dio.post<Object>(path, data: body, options: await _opts(refreshPass: retried), cancelToken: cancel);
+      final r = await _dio.post<Object>(path, data: body, options: await _opts(), cancelToken: cancel);
       var d = r.data;
       if (d is String) d = jsonDecode(d);
       if (d is! Map) throw const CoderException('upstream', 'NOVA Coder sent an unexpected answer.');
@@ -353,9 +287,7 @@ class NovaCoderClient {
       if (m['success'] == false) throw CoderException('${m['code'] ?? 'error'}', '${m['error'] ?? 'Something went wrong.'}');
       return m;
     } on DioException catch (e) {
-      final err = await _map(e);
-      if (err.code == 'pass' && !retried) return _post(path, body, cancel, retried: true);
-      throw err;
+      throw await _map(e);
     } on FormatException {
       throw const CoderException('upstream', 'NOVA Coder sent an unexpected answer.');
     }
@@ -399,8 +331,5 @@ class NovaCoderClient {
     };
   }
 
-  void dispose() {
-    _dio.close(force: true);
-    _passDio.close(force: true);
-  }
+  void dispose() => _dio.close(force: true);
 }

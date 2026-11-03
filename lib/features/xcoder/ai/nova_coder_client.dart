@@ -14,11 +14,11 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Platform;
 
 import 'package:dio/dio.dart';
 
 import '../../../core/services/api_service.dart';
-import '../../../core/services/device_clock.dart';
 import '../../nova/nova_config.dart';
 
 class CoderException implements Exception {
@@ -205,7 +205,15 @@ class NovaCoderClient {
   /// Tells NOVA Coder whether the developer is on a phone or a PC (which
   /// terminal commands work differs).
   static Map<String, Object?> _withPlatform(Map<String, Object?>? context) =>
-      {...?context, 'platform': DeviceClock.platform};
+      {...?context, 'platform': platformName};
+
+  /// 'windows' on the PC, 'android' on phones (straight from dart:io, so this
+  /// file builds in both projects without the PC's DeviceClock.platform).
+  static String get platformName => Platform.isWindows
+      ? 'windows'
+      : Platform.isAndroid
+          ? 'android'
+          : Platform.operatingSystem;
 
   Future<Options> _opts({ResponseType type = ResponseType.json}) async {
     final t = await _token();

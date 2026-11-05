@@ -354,12 +354,52 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _loadAll() {
     final p = LocalDB.getProfile();
-    _profileName    = p['name']  as String? ?? '';
+    _profileName    = _accountName.isNotEmpty ? _accountName : (p['name'] as String? ?? '');
+    _loadAccountName();
     _profileImgPath = LocalDB.getProfileImagePath();
     _backgroundPath = LocalDB.getBackgroundImage();
     _speedDial      = LocalDB.getSpeedDial();
     _searchEngine   = LocalDB.getSearchEngine();
     if (mounted) setState(() {});
+  }
+
+  // ── Account name for the greeting (3.11.6) ─────────────────────────────────
+  // Same name as the Profile page (the NOVA X account's username): first the
+  // copy saved on the phone (instant, works offline), then once per app start
+  // the server's profile, so a rename on another device shows up too.
+  String _accountName = '';
+  static bool _profileFetched = false;
+
+  Future<void> _loadAccountName() async {
+    final cached = await ApiService.getCachedUser();
+    if (cached == null) {
+      // signed out: back to the name saved in local settings (if any)
+      if (mounted && _accountName.isNotEmpty) {
+        setState(() {
+          _accountName = '';
+          _profileName = LocalDB.getProfile()['name'] as String? ?? '';
+        });
+      }
+      _profileFetched = false;
+      return;
+    }
+    _applyAccountName(cached['username']);
+    if (_profileFetched) return;
+    final token = await ApiService.getToken();
+    if (token == null || token.isEmpty) return;
+    _profileFetched = true;
+    final prof = await ApiService.getProfile();
+    if (prof == null) _profileFetched = false; // offline: try again next time
+    _applyAccountName(prof?['username']);
+  }
+
+  void _applyAccountName(Object? v) {
+    final name = v is String ? v.trim() : '';
+    if (!mounted || name.isEmpty || name == _accountName) return;
+    setState(() {
+      _accountName = name;
+      _profileName = name;
+    });
   }
 
   // ── Search engine data ─────────────────────────────────────────────────────

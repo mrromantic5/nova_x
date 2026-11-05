@@ -146,9 +146,13 @@ class AceController {
 
   /// Runs a command in the editor page. Returns its (JSON) result or null.
   Future<Object?> cmd(String name, [Map<String, Object?> args = const {}]) async {
-    final c = _wvc;
-    if (c == null) return null;
+    // Wait for the editor page first. Commands sent before the web view
+    // existed used to be dropped silently (e.g. Dev Tools › Sources opened a
+    // file with an empty line 1), because the view is only created after the
+    // first frame.
     if (!isReady) await ready.timeout(const Duration(seconds: 20), onTimeout: () {});
+    final c = _wvc;
+    if (c == null || !isReady) return null;
     try {
       final r = await c.callAsyncJavaScript(
         functionBody: 'return window.nx ? window.nx.cmd(name, args) : null;',

@@ -41,6 +41,7 @@ jobs:
             lib/features/nova_capture \
             lib/features/xcoder \
             lib/features/playback \
+            lib/features/password \
             lib/features/devguide \
             lib/features/business/screens/business_screen.dart \
             lib/features/devtools \
@@ -90,10 +91,11 @@ jobs:
             test/xcoder \
             test/offline \
             test/auth \
-            test/playback
+            test/playback \
+            test/browser
 
       - name: NOVA unit tests
-        run: flutter test test/nova test/nova_capture test/xcoder test/offline test/auth test/playback
+        run: flutter test test/nova test/nova_capture test/xcoder test/offline test/auth test/playback test/browser
 
       - name: Patch flutter_inappwebview ProGuard
         run: |

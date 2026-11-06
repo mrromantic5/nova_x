@@ -106,7 +106,7 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                               color: Colors.white, fontSize: 32,
                               fontWeight: FontWeight.w900, height: 1.1)),
                       const SizedBox(height: 8),
-                      Text('Effective: October 31, 2026  •  v2.11',
+                      Text('Effective: November 6, 2026  •  v2.12',
                           style: GoogleFonts.inter(
                               color: AppTheme.textHint, fontSize: 12)),
                     ],
@@ -237,6 +237,16 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
                     'NOVA Coder service run by Tech Lyfe, which uses a third-party AI provider to '
                     'answer, together with your account token to check your plan. The service '
                     'does not store your code; it keeps only a daily request count per account.'),
+                _sub('AI Playback',
+                    'When you tap the play button on a web page, NOVA X reads that page\'s text on '
+                    'your phone and sends the text, title and address to the NOVA AI service run '
+                    'by Tech Lyfe, which uses a third-party AI provider to write a short '
+                    'conversation about the page. Your phone\'s own voices speak it. The page text '
+                    'is not linked to your account or kept by us; the service may keep the '
+                    'finished conversation for a few hours so the same page plays faster. AI '
+                    'Playback is off in private tabs and on pages with password or card fields, '
+                    'and nothing is sent until you tap play. Your daily play count is kept only '
+                    'on your phone.'),
                 _sub('Offline Copies',
                     'To work without internet, NOVA X keeps on your phone the public business '
                     'listings you viewed, your NOVA AI chats and your last coin balance. They '

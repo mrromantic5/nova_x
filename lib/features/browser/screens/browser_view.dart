@@ -39,6 +39,10 @@ import 'package:nova_x/features/nova/nova_launcher.dart';
 import 'package:nova_x/features/nova/services/nova_wake.dart';
 import 'package:nova_x/features/nova_capture/services/webpage_capture_service.dart';
 import 'package:nova_x/features/nova_capture/widgets/capture_action_sheet.dart';
+import 'package:nova_x/features/playback/playback_engine.dart';
+import 'package:nova_x/features/playback/playback_page_reader.dart';
+import 'package:nova_x/features/playback/playback_player.dart';
+import 'package:nova_x/features/playback/playback_session.dart';
 
 class BrowserView extends StatefulWidget {
   final String initialQuery;
@@ -70,8 +74,13 @@ class BrowserView extends StatefulWidget {
 }
 
 class _BrowserViewState extends State<BrowserView>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   InAppWebViewController? _wvc;
+
+  // ── AI Playback (3.12.0) ──
+  bool _playbackAvailable = false;   // ▶ shown: the page has enough text
+  bool _playbackStarting = false;
+  PlaybackEngine? _playback;
   String? _tabId;
   final TextEditingController _urlCtrl = TextEditingController();
 
@@ -257,6 +266,52 @@ class _BrowserViewState extends State<BrowserView>
     _adBlockEnabled  = LocalDB.getAdBlockEnabled();
     _savePasswords   = LocalDB.getSavePasswordsEnabled();
     WebpageCaptureService.register(_captureTarget);
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  /// AI Playback only plays while NOVA X is on screen.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached) {
+      _playback?.pause();
+    }
+  }
+
+  // ── AI Playback ────────────────────────────────────────────────────────────
+
+  Future<void> _checkPlayback(InAppWebViewController c, String url) async {
+    final ok = !widget.incognito && PlaybackPageReader.isWebPage(url) && await PlaybackPageReader.quickCheck(c);
+    if (mounted && ok != _playbackAvailable) setState(() => _playbackAvailable = ok);
+  }
+
+  Future<void> _onPlaybackTap() async {
+    final active = _playback;
+    if (active != null && active.phase != PlaybackPhase.error) {
+      if (active.script != null) showPlaybackSheet(context, active);
+      return;
+    }
+    final c = _wvc;
+    if (c == null || _playbackStarting) return;
+    _playbackStarting = true;
+    try {
+      _closePlayback();
+      final engine = await PlaybackSession.start(context, c, _currentUrl);
+      if (!mounted) {
+        engine?.dispose();
+        return;
+      }
+      if (engine != null) setState(() => _playback = engine);
+    } finally {
+      _playbackStarting = false;
+    }
+  }
+
+  void _closePlayback() {
+    final e = _playback;
+    if (e == null) return;
+    e.dispose();
+    if (mounted) setState(() => _playback = null);
   }
 
   /// NOVA Capture: lets "Screenshot this page" use this tab.
@@ -264,6 +319,9 @@ class _BrowserViewState extends State<BrowserView>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _playback?.dispose();
+    _playback = null;
     WebpageCaptureService.unregister(_captureTarget);
     // Incognito: clear cookies + cache on exit
     if (widget.incognito && _wvc != null) {
@@ -496,6 +554,12 @@ class _BrowserViewState extends State<BrowserView>
           Expanded(child: _buildWebView()),
           // Zoom bar (shown above bottom bar when active)
           if (_showZoomBar) _buildZoomBar(),
+          if (_playback != null)
+            PlaybackMiniBar(
+              engine: _playback!,
+              onOpen: () => showPlaybackSheet(context, _playback!),
+              onClose: _closePlayback,
+            ),
           _buildReaderToolbar(),
           if (!_readerMode) _buildBottomBar(),
         ]),
@@ -613,7 +677,18 @@ class _BrowserViewState extends State<BrowserView>
             child: const Icon(Icons.person_off_outlined,
                 color: AppTheme.accentPurple, size: 15),
           )
-        else
+        else ...[
+          if (_playbackAvailable || _playback != null) ...[
+            Tooltip(
+              message: 'AI playback',
+              child: _topBtn(
+                _playback != null ? Icons.graphic_eq_rounded : Icons.play_circle_outline_rounded,
+                _onPlaybackTap,
+                color: _playback != null ? AppTheme.accentCyan : Colors.white,
+              ),
+            ),
+            const SizedBox(width: 4),
+          ],
           _topBtn(
             _isBookmarked
                 ? Icons.bookmark_rounded
@@ -621,6 +696,7 @@ class _BrowserViewState extends State<BrowserView>
             _toggleBookmark,
             color: _isBookmarked ? AppTheme.warning : AppTheme.textHint,
           ),
+        ],
 
         const SizedBox(width: 4),
         _topBtn(Icons.more_vert_rounded, _showMoreMenu),
@@ -995,6 +1071,7 @@ class _BrowserViewState extends State<BrowserView>
       },
 
       onLoadStart: (c, url) async {
+        if (_playbackAvailable && mounted) setState(() => _playbackAvailable = false);
         if (url != null && NovaShieldService.isEnabled) {
           final urlStr = url.toString();
           // Layer 3: HTTPS enforcement
@@ -1050,6 +1127,8 @@ class _BrowserViewState extends State<BrowserView>
         // ads don't leave blank gaps. Pairs with the network-level ContentBlockers.
         if (_adBlockEnabled)
           await c.evaluateJavascript(source: PasswordService.adCosmeticJS);
+        // AI Playback: ▶ when the page has enough text (not in incognito)
+        _checkPlayback(c, u);
         // Don't save history in incognito
         if (!widget.incognito) await LocalDB.saveHistoryItem(u, _pageTitle);
         // Inject password detection

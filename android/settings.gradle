@@ -21,7 +21,7 @@ pluginManagement {
 
 plugins {
     id "dev.flutter.flutter-plugin-loader" version "1.0.0" apply false
-    id "com.android.application" version "8.3.2" apply false
+    id "com.android.application" version "8.7.3" apply false  // 3.12.3: ≥ 8.5.1 aligns native libraries for 16 KB pages (Google Play)
     id "org.jetbrains.kotlin.android" version "2.0.21" apply false
 }
 

@@ -47,6 +47,26 @@ void main() {
     });
   });
 
+  group('names are not spoken as labels', () {
+    test('"Ava:" / "Leo -" / "**Ava:**" are removed; names inside a sentence stay', () {
+      expect(PlaybackLine.stripSpeaker('Ava: How do I get it installed?'), 'How do I get it installed?');
+      expect(PlaybackLine.stripSpeaker('Leo - Just download it.'), 'Just download it.');
+      expect(PlaybackLine.stripSpeaker('**Ava:** Is it free?'), 'Is it free?');
+      expect(PlaybackLine.stripSpeaker('Yes, Ava, it is free.'), 'Yes, Ava, it is free.');
+      expect(PlaybackLine.stripSpeaker('M-Pesa works here.'), 'M-Pesa works here.');
+      expect(PlaybackLine.fromJson({'s': 'f', 't': 'Ava: Hi'})!.text, 'Hi');
+    });
+  });
+
+  group('NOVA voices', () {
+    test('Ava female / Leo male per language; regional English; unknown → none', () {
+      expect(PlaybackCloudVoices.pick('en', 'US'), ('en-US-AvaNeural', 'en-US-AndrewNeural'));
+      expect(PlaybackCloudVoices.pick('en', 'NG')!.$1, 'en-NG-EzinneNeural');
+      expect(PlaybackCloudVoices.pick('fr', 'FR')!.$2, 'fr-FR-HenriNeural');
+      expect(PlaybackCloudVoices.pick('xx', ''), isNull);
+    });
+  });
+
   group('voices', () {
     test('gender from Google voice codes and names', () {
       expect(PlaybackVoicePicker.genderOf('en-us-x-sfg-local'), 'f');

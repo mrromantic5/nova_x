@@ -21,7 +21,19 @@ class PlaybackLine {
     final t = j['t'];
     if (t is! String || t.trim().isEmpty) return null;
     if (j['s'] != 'f' && j['s'] != 'm') return null;
-    return PlaybackLine(female: j['s'] == 'f', text: t.trim());
+    final text = stripSpeaker(t);
+    if (text.isEmpty) return null;
+    return PlaybackLine(female: j['s'] == 'f', text: text);
+  }
+
+  /// "Ava: How do I…" → "How do I…" (the hosts never say their own names
+  /// as a label; the player already shows who is speaking).
+  static String stripSpeaker(String t) {
+    var s = t.trim();
+    for (var i = 0; i < 2; i++) {
+      s = s.replaceFirst(RegExp(r'^\**\s*(Ava|Leo|Host\s*[12AB]?|Female|Male)\s*\**\s*(?:[:：]|\s[-–—])\s*', caseSensitive: false), '').trim();
+    }
+    return s;
   }
 }
 

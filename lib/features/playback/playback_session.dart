@@ -71,6 +71,8 @@ class PlaybackSession {
       final key = _keyFor(page, lang);
       var script = _recent[key] ?? (cachedKey != null ? _recent[cachedKey] : null);
       if (script == null) {
+        // The intro plays while NOVA AI writes the conversation: no silent wait.
+        engine.startIntro();
         script = await api.script(page, lang: lang);
         await PlaybackQuota.recordUse();
         _recent[key] = script;
@@ -105,7 +107,7 @@ class PlaybackSession {
           content: Text(
             'Two AI hosts, Ava and Leo, talk you through this page: what it offers and what it can do for you.\n\n'
             'To write their conversation, the page’s text, title and address are sent to NOVA AI. They aren’t saved '
-            'to your account. The voices are your phone’s own.\n\n'
+            'to your account. Ava and Leo speak with NOVA’s natural voices (your phone’s own voices when offline).\n\n'
             'AI Playback is off in private tabs and on pages with password or card fields. '
             'Free plan: ${PlaybackQuota.freeLimit} plays a day. Premium: unlimited.',
             style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 13.5, height: 1.45),

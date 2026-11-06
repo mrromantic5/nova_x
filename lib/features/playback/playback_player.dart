@@ -30,6 +30,8 @@ class PlaybackMiniBar extends StatelessWidget {
       builder: (context, _) {
         final e = engine;
         final preparing = e.phase == PlaybackPhase.preparing;
+        final title = e.script?.title ?? '';
+        final waiting = e.buffering || (e.isPlaying && title.isEmpty);
         final failed = e.phase == PlaybackPhase.error;
         final progress = e.total > 0 ? (e.position / e.total).clamp(0.0, 1.0) : 0.0;
         return Material(
@@ -58,14 +60,14 @@ class PlaybackMiniBar extends StatelessWidget {
                   Expanded(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
                       Text(
-                        failed ? (e.error ?? 'AI Playback stopped.') : (e.script?.title ?? 'Preparing AI playback…'),
+                        failed ? (e.error ?? 'AI Playback stopped.') : (title.isEmpty ? 'Preparing AI playback…' : title),
                         maxLines: failed ? 2 : 1,
                         overflow: TextOverflow.ellipsis,
                         style: GoogleFonts.inter(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.w700),
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        preparing
+                        preparing || waiting
                             ? 'Reading the page and writing the conversation…'
                             : failed
                                 ? 'AI playback'
@@ -142,7 +144,7 @@ class _PlaybackSheetState extends State<_PlaybackSheet> {
               const SizedBox(height: 18),
               Text('AI playback', style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 13)),
               const SizedBox(height: 6),
-              Text(s?.title ?? '',
+              Text((s?.title ?? '').isEmpty ? 'Preparing AI playback…' : s!.title,
                   textAlign: TextAlign.center,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
@@ -235,7 +237,9 @@ class _PlaybackSheetState extends State<_PlaybackSheet> {
                   size: 86,
                   wide: true,
                   onTap: e.toggle,
-                  child: Icon(e.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded, color: Colors.white, size: 40),
+                  child: e.buffering
+                      ? const SizedBox(width: 30, height: 30, child: CircularProgressIndicator(strokeWidth: 2.6, color: Colors.white))
+                      : Icon(e.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded, color: Colors.white, size: 40),
                 ),
                 const SizedBox(width: 22),
                 _RoundButton(size: 64, onTap: () => e.skip(10), child: const Icon(Icons.forward_10_rounded, color: Colors.white, size: 30)),

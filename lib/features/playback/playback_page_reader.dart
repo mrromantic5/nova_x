@@ -48,16 +48,17 @@ class PageSnapshot {
       }
     }
     if (j is! Map || j['ok'] != true) return null;
-    String s(String k) => j[k] is String ? j[k] as String : '';
+    final m = j; // a final Map, so the helper below can read it
+    String s(String k) => m[k] is String ? m[k] as String : '';
     return PageSnapshot(
       url: url,
       title: s('title').trim(),
       lang: s('lang').trim(),
       description: s('description').trim(),
       text: s('text').trim(),
-      headings: j['headings'] is List ? (j['headings'] as List).whereType<String>().toList() : const [],
-      words: j['words'] is num ? (j['words'] as num).toInt() : 0,
-      sensitive: j['sensitive'] == true,
+      headings: m['headings'] is List ? (m['headings'] as List).whereType<String>().toList() : const [],
+      words: m['words'] is num ? (m['words'] as num).toInt() : 0,
+      sensitive: m['sensitive'] == true,
     );
   }
 }

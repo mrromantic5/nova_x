@@ -379,8 +379,8 @@ class _SettingsScreenState extends State<SettingsScreen>
               title: Text('Unlock with biometrics', style: GoogleFonts.inter(
                   color: AppTheme.textPrimary, fontSize:14, fontWeight: FontWeight.w500)),
               subtitle: Text(_biometricLock
-                  ? 'Verify with fingerprint / PIN before using passwords'
-                  : 'No verification before autofill',
+                  ? 'Fingerprint / screen lock to open saved passwords and to autofill'
+                  : 'Saved passwords open without it · autofill still asks',
                   style: GoogleFonts.inter(color: AppTheme.textHint, fontSize:11)),
               trailing: Switch(
                 value: _biometricLock,

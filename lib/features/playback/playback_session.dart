@@ -102,14 +102,13 @@ class PlaybackSession {
           title: Row(children: [
             const Icon(Icons.podcasts_rounded, color: AppTheme.accentCyan),
             const SizedBox(width: 10),
-            Text('AI Playback', style: GoogleFonts.inter(color: Colors.white, fontWeight: FontWeight.w800)),
+            Text('NOVA AI Playback', style: GoogleFonts.inter(color: Colors.white, fontWeight: FontWeight.w800)),
           ]),
           content: Text(
-            'Two AI hosts, Ava and Leo, talk you through this page: what it offers and what it can do for you.\n\n'
-            'To write their conversation, the page’s text, title and address are sent to NOVA AI. They aren’t saved '
-            'to your account. Ava and Leo speak with NOVA’s natural voices (your phone’s own voices when offline).\n\n'
-            'AI Playback is off in private tabs and on pages with password or card fields. '
-            'Free plan: ${PlaybackQuota.freeLimit} plays a day. Premium: unlimited.',
+            'Ava and Leo, your NOVA AI hosts, talk you through this page: what it offers and how it can help you.\n\n'
+            'NOVA AI uses this page’s content to create the conversation. Nothing is saved to your account.\n\n'
+            'Not available in private tabs or on pages with password or payment fields. '
+            'Free plan: ${PlaybackQuota.freeLimit} plays a day · Premium: unlimited.',
             style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 13.5, height: 1.45),
           ),
           actions: [
@@ -134,9 +133,9 @@ class PlaybackSession {
       builder: (ctx) => AlertDialog(
         backgroundColor: AppTheme.bgCard,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text('Daily AI Playback limit reached', style: GoogleFonts.inter(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 17)),
+        title: Text('Daily NOVA AI Playback limit reached', style: GoogleFonts.inter(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 17)),
         content: Text(
-          'You’ve used your ${PlaybackQuota.freeLimit} free AI playbacks for today.$wait\n\nNOVA X Premium gives you unlimited AI Playback.',
+          'You’ve used your ${PlaybackQuota.freeLimit} free NOVA AI Playbacks for today.$wait\n\nNOVA X Premium gives you unlimited NOVA AI Playback.',
           style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 13.5, height: 1.45),
         ),
         actions: [

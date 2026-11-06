@@ -4,10 +4,13 @@
 // bar (play/pause, title, close, progress) and a full sheet (progress bar,
 // −10 s / play / +10 s, speed, 👍 👎, and who is speaking).
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../core/services/ai_feedback_service.dart';
 import '../../core/theme/app_theme.dart';
 import 'playback_engine.dart';
 import 'playback_models.dart';
@@ -70,8 +73,8 @@ class PlaybackMiniBar extends StatelessWidget {
                         preparing || waiting
                             ? 'Reading the page and writing the conversation…'
                             : failed
-                                ? 'AI playback'
-                                : 'AI playback · ${e.current?.speaker ?? ''}',
+                                ? 'NOVA AI Playback'
+                                : 'NOVA AI Playback · ${e.current?.speaker ?? ''}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 11.5),
@@ -120,6 +123,49 @@ class _PlaybackSheet extends StatefulWidget {
 
 class _PlaybackSheetState extends State<_PlaybackSheet> {
   double? _drag; // seconds while the slider is held
+  String? _thanks; // short message after feedback
+  Timer? _thanksTimer;
+  bool _sending = false;
+
+  @override
+  void dispose() {
+    _thanksTimer?.cancel();
+    super.dispose();
+  }
+
+  void _showThanks(String msg) {
+    _thanksTimer?.cancel();
+    setState(() => _thanks = msg);
+    _thanksTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted) setState(() => _thanks = null);
+    });
+  }
+
+  Future<void> _like() async {
+    final e = widget.engine;
+    HapticFeedback.selectionClick();
+    if (e.feedback == 1) return; // already liked
+    e.rate(1);
+    _showThanks('Thanks for your feedback!');
+    final s = e.script;
+    await AiFeedbackService.send(
+        feature: 'playback', rating: 1, contentRef: AiFeedbackService.pageRef(s?.url ?? ''), title: s?.title);
+  }
+
+  Future<void> _dislike() async {
+    final e = widget.engine;
+    HapticFeedback.selectionClick();
+    final comment = await showDialog<String>(context: context, builder: (_) => const _DislikeDialog());
+    if (comment == null || !mounted) return; // cancelled
+    setState(() => _sending = true);
+    final s = e.script;
+    final ok = await AiFeedbackService.send(
+        feature: 'playback', rating: -1, comment: comment, contentRef: AiFeedbackService.pageRef(s?.url ?? ''), title: s?.title);
+    if (!mounted) return;
+    setState(() => _sending = false);
+    if (e.feedback != -1) e.rate(-1);
+    _showThanks(ok ? 'Thanks — your feedback helps us improve NOVA AI Playback.' : 'Couldn’t send your feedback. Check your connection.');
+  }
 
   static const _speeds = [0.75, 1.0, 1.25, 1.5, 2.0];
 
@@ -142,7 +188,7 @@ class _PlaybackSheetState extends State<_PlaybackSheet> {
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
               const SizedBox(height: 18),
-              Text('AI playback', style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 13)),
+              Text('NOVA AI Playback', style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 13, fontWeight: FontWeight.w600)),
               const SizedBox(height: 6),
               Text((s?.title ?? '').isEmpty ? 'Preparing AI playback…' : s!.title,
                   textAlign: TextAlign.center,
@@ -263,23 +309,35 @@ class _PlaybackSheetState extends State<_PlaybackSheet> {
                 const Spacer(),
                 IconButton(
                   tooltip: 'Good playback',
-                  onPressed: () {
-                    HapticFeedback.selectionClick();
-                    e.rate(1);
-                  },
+                  onPressed: _like,
                   icon: Icon(e.feedback == 1 ? Icons.thumb_up_alt_rounded : Icons.thumb_up_off_alt_rounded, color: Colors.white),
                 ),
                 IconButton(
                   tooltip: 'Bad playback',
-                  onPressed: () {
-                    HapticFeedback.selectionClick();
-                    e.rate(-1);
-                  },
-                  icon: Icon(e.feedback == -1 ? Icons.thumb_down_alt_rounded : Icons.thumb_down_off_alt_rounded, color: Colors.white),
+                  onPressed: _sending ? null : _dislike,
+                  icon: _sending
+                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : Icon(e.feedback == -1 ? Icons.thumb_down_alt_rounded : Icons.thumb_down_off_alt_rounded, color: Colors.white),
                 ),
               ]),
+              AnimatedSize(
+                duration: const Duration(milliseconds: 200),
+                child: _thanks == null
+                    ? const SizedBox(width: double.infinity)
+                    : Container(
+                        width: double.infinity,
+                        margin: const EdgeInsets.only(top: 6),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                        decoration: BoxDecoration(color: const Color(0xFF22C55E).withOpacity(0.12), borderRadius: BorderRadius.circular(10)),
+                        child: Row(children: [
+                          const Icon(Icons.check_circle_rounded, color: Color(0xFF22C55E), size: 18),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(_thanks!, style: GoogleFonts.inter(color: Colors.white, fontSize: 12.5))),
+                        ]),
+                      ),
+              ),
               const SizedBox(height: 6),
-              Text('AI-generated from this page’s text. It can make mistakes — check the page for details.',
+              Text('Created by NOVA AI. It can make mistakes — check the page for details.',
                   textAlign: TextAlign.center, style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11)),
             ]),
           ),
@@ -306,6 +364,80 @@ class _RoundButton extends StatelessWidget {
         customBorder: wide ? RoundedRectangleBorder(borderRadius: BorderRadius.circular(size / 2)) : const CircleBorder(),
         child: SizedBox(width: wide ? size * 1.5 : size, height: size, child: Center(child: child)),
       ),
+    );
+  }
+}
+
+/// 👎: what went wrong? Returns the comment ('' allowed), or null if cancelled.
+class _DislikeDialog extends StatefulWidget {
+  const _DislikeDialog();
+
+  @override
+  State<_DislikeDialog> createState() => _DislikeDialogState();
+}
+
+class _DislikeDialogState extends State<_DislikeDialog> {
+  final _ctrl = TextEditingController();
+  final Set<String> _reasons = {};
+  static const _options = ['Not accurate', 'Missed the point', 'Too long', 'Boring', 'Voices', 'Didn’t play well'];
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  String get _comment {
+    final r = _reasons.join(', ');
+    final t = _ctrl.text.trim();
+    if (r.isEmpty) return t;
+    return t.isEmpty ? r : '$r — $t';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AppTheme.bgCard,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: Text('What went wrong?', style: GoogleFonts.inter(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 17)),
+      content: SingleChildScrollView(
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            for (final o in _options)
+              FilterChip(
+                label: Text(o),
+                selected: _reasons.contains(o),
+                onSelected: (v) => setState(() => v ? _reasons.add(o) : _reasons.remove(o)),
+                labelStyle: GoogleFonts.inter(color: Colors.white, fontSize: 12.5),
+                backgroundColor: Colors.white10,
+                selectedColor: AppTheme.accentCyan.withOpacity(0.25),
+                checkmarkColor: Colors.white,
+                side: BorderSide.none,
+              ),
+          ]),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _ctrl,
+            maxLines: 4,
+            maxLength: 600,
+            autofocus: false,
+            style: GoogleFonts.inter(color: Colors.white, fontSize: 14),
+            decoration: InputDecoration(
+              hintText: 'Tell us more (optional)',
+              hintStyle: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 13.5),
+              filled: true,
+              fillColor: Colors.white.withOpacity(0.06),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+              counterStyle: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11),
+            ),
+            onChanged: (_) => setState(() {}),
+          ),
+        ]),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(onPressed: () => Navigator.pop(context, _comment), child: const Text('Send')),
+      ],
     );
   }
 }

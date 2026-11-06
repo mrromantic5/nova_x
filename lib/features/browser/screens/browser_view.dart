@@ -39,6 +39,7 @@ import 'package:nova_x/features/nova/nova_launcher.dart';
 import 'package:nova_x/features/nova/services/nova_wake.dart';
 import 'package:nova_x/features/nova_capture/services/webpage_capture_service.dart';
 import 'package:nova_x/features/nova_capture/widgets/capture_action_sheet.dart';
+import 'package:nova_x/features/password/password_prompts.dart';
 import 'package:nova_x/features/playback/playback_engine.dart';
 import 'package:nova_x/features/playback/playback_page_reader.dart';
 import 'package:nova_x/features/playback/playback_player.dart';
@@ -99,7 +100,11 @@ class _BrowserViewState extends State<BrowserView>
 
   // ── Password Manager ────────────────────────────────────────────────────
   bool   _savePasswords  = true;
-  Map<String,String>? _savedCreds;
+  // Password manager (3.12.3): offered once per site per tab; no prompt on
+  // top of another; the same login isn't offered for saving twice.
+  final Set<String> _pwOffered = {};
+  final Set<String> _pwAsked = {};
+  bool _pwSheetOpen = false;
 
   // ── Reader Mode ──────────────────────────────────────────────────────────
   bool   _readerMode     = false;
@@ -836,7 +841,7 @@ class _BrowserViewState extends State<BrowserView>
                 final user   = d['username']?.toString() ?? '';
                 final pass   = d['password']?.toString() ?? '';
                 if (domain.isNotEmpty && pass.isNotEmpty && mounted)
-                  _showSavePasswordPrompt(domain, user, pass);
+                  _onLoginSubmitted(domain, user, pass);
               } catch (_) {}
               return null;
             },
@@ -1141,14 +1146,1703 @@ class _BrowserViewState extends State<BrowserView>
           if (js.isNotEmpty)
             await c.evaluateJavascript(source: js);
         }
-        // Check for saved credentials for this domain
-        if (!widget.incognito && _savePasswords) {
-          final creds = await PasswordService.getCredentials(LocalDB.extractDomain(u));
-          if (creds != null && mounted) {
-            _savedCreds = creds;
-            _showAutofillSnack(LocalDB.extractDomain(u));
+        // Saved password for this site: offered when the page shows a login form
+        if (!widget.incognito && _savePasswords) _offerSavedPassword(c, u);
+        // Auto-open Developer Tools when launched from the home shortcut
+        if (widget.autoOpenDevTools && !_devToolsAutoOpened && mounted) {
+          _devToolsAutoOpened = true;
+          Future.delayed(const Duration(milliseconds: 250), () {
+            if (mounted) _openDevTools();
+          });
+        }
+      },
+
+      onProgressChanged: (_, p) {
+        if (mounted) setState(() => _progress = p / 100);
+      },
+
+      onDownloadStartRequest: (controller, request) async {
+        if (widget.incognito) {
+          _snack('Downloads are disabled in incognito mode');
+          return;
+        }
+        final url  = request.url.toString();
+        final name = url.split('/').last.split('?').first;
+        await LocalDB.addDownload({
+          'url':       url,
+          'filename':  name.isNotEmpty ? name : 'download',
+          'mime':      request.mimeType ?? 'unknown',
+          'size':      request.contentLength ?? 0,
+          'timestamp': DateTime.now().toIso8601String(),
+          'status':    'intercepted',
+        });
+        _snack('Download captured: ${name.isNotEmpty ? name : 'file'}');
+      },
+
+      onReceivedError: (_, req, __) {
+        if (req.isForMainFrame == true && mounted) {
+          setState(() => _pageTitle = 'Page unavailable');
+        }
+      },
+    );
+  }
+
+  // ── Zoom bar ───────────────────────────────────────────────────────────────
+  Widget _buildZoomBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppTheme.bgElevated,
+        border: Border(
+          top:    BorderSide(color: AppTheme.warning.withOpacity(0.3)),
+          bottom: BorderSide(color: AppTheme.divider),
+        ),
+      ),
+      child: Row(children: [
+        GestureDetector(
+          onTap: () => _applyTextZoom((_textZoom - 10).clamp(50, 200)),
+          child: Container(
+            width: 32, height: 32,
+            decoration: BoxDecoration(
+              color: AppTheme.bgCard,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppTheme.divider),
+            ),
+            child: const Icon(Icons.remove, color: AppTheme.textSecondary, size: 16),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(children: [
+            Slider(
+              value: _textZoom,
+              min: 50, max: 200,
+              divisions: 15,
+              activeColor: AppTheme.warning,
+              inactiveColor: AppTheme.divider,
+              onChanged: _applyTextZoom,
+            ),
+          ]),
+        ),
+        const SizedBox(width: 8),
+        GestureDetector(
+          onTap: () => _applyTextZoom((_textZoom + 10).clamp(50, 200)),
+          child: Container(
+            width: 32, height: 32,
+            decoration: BoxDecoration(
+              color: AppTheme.bgCard,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppTheme.divider),
+            ),
+            child: const Icon(Icons.add, color: AppTheme.textSecondary, size: 16),
+          ),
+        ),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 42,
+          child: Text('${_textZoom.toInt()}%',
+              style: GoogleFonts.inter(
+                  color: AppTheme.warning,
+                  fontSize: 13, fontWeight: FontWeight.w700),
+              textAlign: TextAlign.center),
+        ),
+        const SizedBox(width: 4),
+        GestureDetector(
+          onTap: () { _applyTextZoom(100); setState(() => _showZoomBar = false); },
+          child: const Icon(Icons.close_rounded, color: AppTheme.textHint, size: 18),
+        ),
+      ]),
+    );
+  }
+
+  // ── Bottom nav ─────────────────────────────────────────────────────────────
+  // ── Tabs ─────────────────────────────────────────────────────────────────
+  void _syncTab() {
+    if (widget.incognito) return;          // never persist private tabs
+    if (_currentUrl.isEmpty) return;
+    final svc = TabsService.instance;
+    if (_tabId == null) {
+      _tabId = svc.openTab(_currentUrl, title: _pageTitle).id;
+    } else {
+      svc.updateTab(_tabId!, url: _currentUrl, title: _pageTitle);
+    }
+  }
+
+  Future<void> _openTabs() async {
+    _syncTab();
+    final r = await Navigator.push<TabsResult>(
+        context, MaterialPageRoute(builder: (_) => const TabsScreen()));
+    if (!mounted || r == null) return;
+    if (r.newTab) {
+      Navigator.pushReplacement(context, MaterialPageRoute(
+          builder: (_) => BrowserView(
+              initialQuery: 'https://www.google.com', incognito: r.incognito)));
+    } else if (r.url != null && r.url!.isNotEmpty) {
+      Navigator.pushReplacement(context, MaterialPageRoute(
+          builder: (_) => BrowserView(initialQuery: r.url!, tabId: r.tabId)));
+    }
+  }
+
+  Widget _tabsBtn() {
+    return ListenableBuilder(
+      listenable: TabsService.instance,
+      builder: (_, __) {
+        final n = TabsService.instance.tabs.length;
+        final c = widget.incognito ? const Color(0xFF9988CC) : AppTheme.textSecondary;
+        return GestureDetector(
+          onTap: _openTabs,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Container(
+                width: 20, height: 20,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  border: Border.all(color: c, width: 2),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text('$n',
+                    style: GoogleFonts.inter(
+                        color: c, fontSize: 10, fontWeight: FontWeight.w700)),
+              ),
+              const SizedBox(height: 2),
+              Text('Tabs', style: GoogleFonts.inter(color: c, fontSize: 9)),
+            ]),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildBottomBar() {
+    return Container(
+      color: widget.incognito ? const Color(0xFF120F2A) : AppTheme.bgDark,
+      padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).padding.bottom + 4, top: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          _bBtn(Icons.arrow_back_ios_new_rounded, 'Back', () async {
+            if (await _wvc?.canGoBack() ?? false) _wvc?.goBack();
+          }, enabled: _canBack),
+          _bBtn(Icons.arrow_forward_ios_rounded, 'Fwd', () async {
+            if (await _wvc?.canGoForward() ?? false) _wvc?.goForward();
+          }, enabled: _canForward),
+          _bBtn(Icons.home_rounded, 'Home', () => Navigator.pop(context)),
+          _bBtn(Icons.refresh_rounded, 'Reload', () => _wvc?.reload()),
+          _tabsBtn(),
+          _bBtn(
+            _isBookmarked
+                ? Icons.bookmark_rounded
+                : Icons.bookmark_border_rounded,
+            'Save',
+            _toggleBookmark,
+            color: _isBookmarked ? AppTheme.warning : null,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _bBtn(IconData icon, String label, VoidCallback onTap,
+      {bool enabled = true, Color? color}) {
+    final c = !enabled
+        ? AppTheme.divider
+        : (color ??
+            (widget.incognito ? const Color(0xFF9988CC) : AppTheme.textSecondary));
+    return GestureDetector(
+      onTap: enabled ? onTap : null,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, color: c, size: 20),
+          const SizedBox(height: 2),
+          Text(label, style: GoogleFonts.inter(color: c, fontSize: 9)),
+        ]),
+      ),
+    );
+  }
+
+  // ── More menu ──────────────────────────────────────────────────────────────
+  void _showMoreMenu() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.62,
+        minChildSize: 0.4,
+        maxChildSize: 0.92,
+        expand: false,
+        builder: (_, scrollCtrl) => Container(
+        decoration: BoxDecoration(
+          color: widget.incognito ? const Color(0xFF130F24) : AppTheme.bgCard,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: SingleChildScrollView(
+          controller: scrollCtrl,
+          padding: const EdgeInsets.fromLTRB(24, 12, 24, 28),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+            width: 40, height: 4,
+            margin: const EdgeInsets.only(bottom: 12),
+            decoration: BoxDecoration(
+                color: AppTheme.textHint,
+                borderRadius: BorderRadius.circular(2)),
+          ),
+
+          // Incognito banner
+          if (widget.incognito) ...[
+            Container(
+              padding: const EdgeInsets.all(12),
+              margin: const EdgeInsets.only(bottom: 8),
+              decoration: BoxDecoration(
+                color: AppTheme.accentPurple.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                    color: AppTheme.accentPurple.withOpacity(0.3)),
+              ),
+              child: Row(children: [
+                const Icon(Icons.privacy_tip_outlined,
+                    color: AppTheme.accentPurple, size: 16),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'You\'re browsing privately. History, cookies and cache will be cleared when you close this tab.',
+                    style: GoogleFonts.inter(
+                        color: AppTheme.accentPurple.withOpacity(0.85),
+                        fontSize: 11, height: 1.4),
+                  ),
+                ),
+              ]),
+            ),
+          ],
+
+          // Site info
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(_hostLabel(_currentUrl),
+                style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11),
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+          ),
+
+          // Menu items
+          _menuTile(Icons.copy_rounded, 'Copy URL', _copyUrl),
+
+          _menuTile(Icons.save_alt_rounded, 'Save page offline', () {
+            Navigator.pop(context);
+            _savePageOffline();
+          }),
+
+          _menuTile(Icons.offline_pin_rounded, 'Offline pages', () {
+            Navigator.pop(context);
+            Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const OfflinePagesScreen()));
+          }),
+
+          _menuTile(Icons.refresh_rounded, 'Reload page', () {
+            Navigator.pop(context); _wvc?.reload();
+          }),
+
+          _menuTile(
+            _desktopMode
+                ? Icons.phone_android_rounded
+                : Icons.desktop_windows_outlined,
+            _desktopMode ? 'Switch to mobile site' : 'Request desktop site',
+            () { Navigator.pop(context); _toggleDesktopMode(); },
+            color: _desktopMode ? AppTheme.accentCyan : AppTheme.textSecondary,
+          ),
+
+          if (!widget.incognito)
+            _menuTile(
+              _isBookmarked
+                  ? Icons.bookmark_rounded
+                  : Icons.bookmark_border_rounded,
+              _isBookmarked ? 'Remove bookmark' : 'Add bookmark',
+              () { Navigator.pop(context); _toggleBookmark(); },
+              color: _isBookmarked ? AppTheme.warning : AppTheme.textSecondary,
+            ),
+
+          // ── ZOOM ──────────────────────────────────────────────────────────
+          _menuTile(
+            Icons.zoom_in_rounded,
+            _showZoomBar
+                ? 'Hide zoom controls'
+                : 'Zoom (${_textZoom.toInt()}%)',
+            () {
+              Navigator.pop(context);
+              setState(() => _showZoomBar = !_showZoomBar);
+            },
+            color: _textZoom != 100 ? AppTheme.warning : AppTheme.textSecondary,
+          ),
+
+          // ── DEVELOPER TOOLS ───────────────────────────────────────────────
+          _menuTile(
+            Icons.developer_mode_rounded,
+            'Developer tools',
+            () {
+              Navigator.pop(context);
+              _openDevTools();
+            },
+            color: AppTheme.accentCyan,
+          ),
+
+          // ── NEW INCOGNITO TAB ─────────────────────────────────────────────
+          _menuTile(
+            Icons.person_off_outlined,
+            'New incognito tab',
+            () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => BrowserView(
+                    initialQuery: _currentUrl,
+                    incognito: true,
+                  ),
+                ),
+              );
+            },
+            color: AppTheme.accentPurple,
+          ),
+
+          // ── NOVA SHIELD ────────────────────────────────────────────────
+          ListTile(
+            contentPadding: EdgeInsets.zero, dense: true,
+            leading: Container(
+              width: 34, height: 34,
+              decoration: BoxDecoration(
+                gradient: NovaShieldService.isEnabled
+                    ? AppTheme.primaryGradient : null,
+                color: NovaShieldService.isEnabled ? null : AppTheme.bgElevated,
+                borderRadius: BorderRadius.circular(10)),
+              child: const Icon(Icons.shield_rounded,
+                  color: Colors.white, size: 17)),
+            title: Text('NOVA Shield', style: GoogleFonts.spaceGrotesk(
+                color: AppTheme.textPrimary, fontSize: 14,
+                fontWeight: FontWeight.w700)),
+            subtitle: Text(
+              NovaShieldService.isEnabled
+                  ? '${NovaShieldService.protectionLevel} protection — ON'
+                  : 'Protection disabled',
+              style: GoogleFonts.inter(
+                  color: NovaShieldService.isEnabled
+                      ? AppTheme.success : AppTheme.textHint, fontSize: 11)),
+            trailing: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: AppTheme.success.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: AppTheme.success.withOpacity(0.3))),
+              child: Text('NEW', style: GoogleFonts.inter(
+                  color: AppTheme.success, fontSize: 9,
+                  fontWeight: FontWeight.w800))),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => const NovaShieldScreen()));
+            },
+          ),
+
+          // ── NOVA CYBER ─────────────────────────────────────────────────────
+          ListTile(
+            contentPadding: EdgeInsets.zero, dense: true,
+            leading: Container(
+              width: 34, height: 34,
+              decoration: BoxDecoration(
+                gradient: AppTheme.primaryGradient,
+                borderRadius: BorderRadius.circular(10)),
+              child: const Icon(Icons.security_rounded,
+                  color: Colors.white, size: 17)),
+            title: Text('NOVA Cyber', style: GoogleFonts.spaceGrotesk(
+                color: AppTheme.textPrimary, fontSize: 14,
+                fontWeight: FontWeight.w700)),
+            subtitle: Text('Website security scanner',
+                style: GoogleFonts.inter(
+                    color: AppTheme.textHint, fontSize: 11)),
+            trailing: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: AppTheme.accentCyan.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                    color: AppTheme.accentCyan.withOpacity(0.3))),
+              child: Text('CYBER', style: GoogleFonts.inter(
+                  color: AppTheme.accentCyan, fontSize: 9,
+                  fontWeight: FontWeight.w800))),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => CyberScreen(initialUrl: _currentUrl)));
+            },
+          ),
+
+          // ── FIND IN PAGE (bonus) ──────────────────────────────────────────
+          // ── COOKIE EDITOR ──────────────────────────────────────────────────
+          _menuTile(Icons.cookie_outlined, 'Cookie Editor',
+            () { Navigator.pop(context);
+              Navigator.push(context, MaterialPageRoute(
+                builder: (_) => CookieEditorScreen(url: _currentUrl))); },
+            color: AppTheme.warning),
+
+          // ── READER MODE ─────────────────────────────────────────────────────
+          _menuTile(Icons.menu_book_rounded,
+            _readerMode ? 'Exit Reader Mode' : 'Reader Mode',
+            () { Navigator.pop(context); _toggleReaderMode(); },
+            color: _readerMode ? AppTheme.warning : AppTheme.textSecondary),
+
+          // ── SUMMARISE WITH NOVA ────────────────────────────────────────────
+          _menuTile(Icons.auto_awesome_rounded, 'Summarise with NOVA',
+            () { Navigator.pop(context); _summariseWithNova(); },
+            color: AppTheme.accentCyan),
+          _menuTile(Icons.image_search_rounded, 'Ask NOVA about this page',
+            () { Navigator.pop(context); _askNovaAboutPage(); },
+            color: AppTheme.accentCyan),
+
+          // ── NOVA CAPTURE (screenshots + screen recording) ──────────────────
+          _menuTile(Icons.screenshot_monitor_rounded, 'Screenshot & record',
+            () { Navigator.pop(context); CaptureActionSheet.show(context, page: _captureTarget); },
+            color: const Color(0xFFFF3B4E)),
+
+          // ── AD BLOCKER ──────────────────────────────────────────────────────
+          ListTile(
+            contentPadding: EdgeInsets.zero, dense: true,
+            leading: Container(width:34, height:34,
+              decoration: BoxDecoration(
+                color: (_adBlockEnabled ? AppTheme.success : AppTheme.textHint).withOpacity(0.12),
+                borderRadius: BorderRadius.circular(10)),
+              child: Icon(Icons.shield_rounded,
+                color: _adBlockEnabled ? AppTheme.success : AppTheme.textHint, size: 18)),
+            title: Text('Ad Blocker', style: GoogleFonts.inter(
+                color: AppTheme.textPrimary, fontSize:14)),
+            subtitle: Text(_adBlockEnabled ? 'ON — ads blocked' : 'OFF',
+                style: GoogleFonts.inter(color: AppTheme.textHint, fontSize:11)),
+            trailing: Switch(
+              value: _adBlockEnabled,
+              onChanged: (v) async {
+                await LocalDB.setAdBlockEnabled(v);
+                setState(() => _adBlockEnabled = v);
+                Navigator.pop(context);
+                await _wvc?.reload();
+                _snack(v ? '🛡️ Ad Blocker ON' : 'Ad Blocker OFF');
+              },
+              activeColor: AppTheme.success,
+            ),
+          ),
+
+          // ── CLEAR PAGE DATA ─────────────────────────────────────────────────
+          _menuTile(Icons.cleaning_services_rounded, 'Clear page data',
+            () async { Navigator.pop(context);
+              await CookieManager.instance().deleteAllCookies();
+              await _wvc?.clearCache();
+              await _wvc?.evaluateJavascript(
+                  source: 'localStorage.clear();sessionStorage.clear();');
+              await _wvc?.reload();
+              _snack('🧹 Cookies, cache & storage cleared'); },
+            color: AppTheme.danger),
+
+          // ── FIND IN PAGE ────────────────────────────────────────────────────
+          _menuTile(
+            Icons.search_rounded,
+            'Find in page',
+            () {
+              Navigator.pop(context);
+              _showFindInPage();
+            },
+          ),
+        ]),
+        ),   // SingleChildScrollView
+        ),   // Container (DraggableScrollable builder)
+      ),
+    );
+  }
+
+  /// Reads the page's visible text (bounded) and asks NOVA to summarise it.
+  /// The text is treated as untrusted content and can never trigger actions.
+  Future<void> _summariseWithNova() async {
+    String text = '';
+    try {
+      final r = await _wvc?.evaluateJavascript(source:
+          "(function(){try{return (document.body&&document.body.innerText||'').slice(0,12000);}catch(e){return '';}})()");
+      if (r is String) text = r;
+    } catch (_) {}
+    if (!mounted) return;
+    await showNovaAssistant(context,
+        summarise: NovaPageContent(title: _pageTitle, url: _currentUrl, text: text));
+  }
+
+  /// Captures what is on screen (+ the page's visible text) and opens NOVA AI
+  /// with it attached. Only when the user asks; never in private tabs.
+  Future<void> _askNovaAboutPage() async {
+    if (widget.incognito) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Not available in private tabs, so nothing from them is kept.')));
+      return;
+    }
+    final wvc = _wvc;
+    if (wvc == null) return;
+    Uint8List? shot;
+    String text = '';
+    // Smaller JPEG until it fits what NOVA AI accepts (≈ 2 MB).
+    for (final quality in const [75, 55, 35]) {
+      try {
+        shot = await wvc.takeScreenshot(
+            screenshotConfiguration: ScreenshotConfiguration(
+                compressFormat: CompressFormat.JPEG, quality: quality));
+      } catch (_) {
+        shot = null;
+      }
+      if (shot == null || shot.length <= NovaMediaStore.maxBytes) break;
+    }
+    if (shot != null && shot.length > NovaMediaStore.maxBytes) shot = null;
+    try {
+      final r = await wvc.evaluateJavascript(source:
+          "(function(){try{return (document.body&&document.body.innerText||'').slice(0,12000);}catch(e){return '';}})()");
+      if (r is String) text = r;
+    } catch (_) {}
+    if (!mounted) return;
+    if (shot == null || shot.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text("Couldn't capture this page. Try again when it has loaded.")));
+      return;
+    }
+    final Uint8List image = shot;
+    Navigator.push(context, MaterialPageRoute(
+      builder: (_) => AiAssistantScreen(
+        pageCapture: NovaPageCapture(image: image, title: _pageTitle, url: _currentUrl, text: text),
+      ),
+    ));
+  }
+
+  Widget _menuTile(IconData icon, String label, VoidCallback onTap,
+      {Color color = AppTheme.textSecondary}) {
+    return ListTile(
+      leading: Icon(icon, color: color, size: 20),
+      title:   Text(label,
+          style: GoogleFonts.inter(color: AppTheme.textPrimary, fontSize: 14)),
+      onTap:   onTap,
+      contentPadding: EdgeInsets.zero,
+      dense: true,
+    );
+  }
+
+  // ── Password Manager (3.12.3) ─────────────────────────────────────────────
+
+  /// "Use saved password?" when this page has an empty login form and a
+  /// password is saved for the site. Once per site per tab, never on top of
+  /// another prompt. Fingerprint / face / screen lock before filling.
+  Future<void> _offerSavedPassword(InAppWebViewController c, String url) async {
+    final domain = LocalDB.extractDomain(url);
+    if (domain.isEmpty || !url.startsWith('http') || _pwOffered.contains(domain) || _pwSheetOpen) return;
+    final creds = await PasswordService.getCredentials(domain);
+    if (creds == null || (creds['password'] ?? '').isEmpty || !mounted) return;
+    await Future.delayed(const Duration(milliseconds: 400)); // let the form render
+    final has = await c.evaluateJavascript(source: PasswordService.hasLoginFieldJS).catchError((_) => false);
+    if (has != true || !mounted || _pwSheetOpen) return;
+    final here = await c.getUrl();
+    if (here == null || LocalDB.extractDomain(here.toString()) != domain) return;
+
+    _pwOffered.add(domain);
+    _pwSheetOpen = true;
+    final choice = await showUseSavedPasswordSheet(context,
+        domain: domain, username: creds['username'] ?? '', passwordLength: (creds['password'] ?? '').length);
+    _pwSheetOpen = false;
+    if (choice == null || !mounted) return;
+
+    final ok = await BiometricService.confirm('Confirm it’s you to sign in to $domain');
+    if (!mounted) return;
+    if (!ok) {
+      _snack('Password not filled — verification was cancelled');
+      return;
+    }
+    // 3.9.1: only into the same site (the tab may have moved on meanwhile).
+    final now = await _wvc?.getUrl();
+    if (now == null || LocalDB.extractDomain(now.toString()) != domain) {
+      _snack('This page is a different site — password not filled');
+      return;
+    }
+    final raw = await _wvc?.evaluateJavascript(
+        source: PasswordService.autofillJS(creds['username'] ?? '', creds['password'] ?? '',
+            submit: choice == UsePasswordChoice.signIn));
+    Map<String, dynamic> r = const {};
+    try {
+      r = Map<String, dynamic>.from(jsonDecode(raw?.toString() ?? '{}') as Map);
+    } catch (_) {}
+    if (!mounted) return;
+    if (r['filled'] != true) {
+      _snack('Couldn’t find the sign-in fields on this page');
+    } else if (r['submitted'] != true) {
+      _snack('Password filled');
+    }
+  }
+
+  /// A login form was sent: offer to save (new) or update (changed password).
+  /// The password NOVA X just filled — or any saved one — isn't asked again.
+  Future<void> _onLoginSubmitted(String domain, String user, String pass) async {
+    if (_pwSheetOpen || await PasswordService.isNever(domain)) return;
+    final saved = await PasswordService.getCredentials(domain);
+    final kind = PasswordService.compare(saved, user, pass);
+    if (kind == 'same' || !mounted) return;
+    final key = '$domain|${user.toLowerCase()}|${pass.hashCode}';
+    if (!_pwAsked.add(key)) return; // already asked about this login in this tab
+
+    _pwSheetOpen = true;
+    final choice = await showSavePasswordSheet(context,
+        domain: domain, username: user.isEmpty ? (saved?['username'] ?? '') : user, password: pass, update: kind == 'update');
+    _pwSheetOpen = false;
+    if (!mounted) return;
+    if (choice == SavePasswordChoice.save) {
+      await PasswordService.saveCredentials(domain, user.isEmpty ? (saved?['username'] ?? '') : user, pass);
+      _pwOffered.add(domain); // just signed in: don't offer to fill on the next page
+      _snack(kind == 'update' ? 'Password updated for $domain' : 'Password saved for $domain');
+    } else if (choice == SavePasswordChoice.never) {
+      await PasswordService.setNever(domain, true);
+      _snack('NOVA X won’t offer to save passwords for $domain');
+    }
+  }
+
+  // ── Reader Mode ──────────────────────────────────────────────────────────
+  bool   _readerMode     = false;
+  String _readerTheme    = 'dark';
+  double _readerFontSize = 18.0;
+  String? _readerOriginalUrl;
+
+  // ── DevTools ──────────────────────────────────────────────────────────────
+  final List<Map<String, dynamic>> _consoleLogs = [];
+  final List<Map<String, dynamic>> _networkLogs = [];
+
+  // In-page voice bridge (Web Speech API -> native speech_to_text)
+  final SpeechToText _speech = SpeechToText();
+  bool _speechAvail = false;
+  bool _devToolsAutoOpened = false;
+
+  // ── Zoom ──────────────────────────────────────────────────────────────────
+  double _textZoom    = 100; // 50 – 200
+  bool   _showZoomBar = false;
+
+  // ── UAs ───────────────────────────────────────────────────────────────────
+  static const String _desktopUA =
+      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
+      '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+  // Forces a wide desktop layout that zooms out to fit the screen (Kiwi-style).
+  // Without this, sites with `width=device-width` ignore the desktop UA and
+  // never zoom out. We override the viewport to a fixed width and let
+  // loadWithOverviewMode scale it down to the screen.
+  static const String _desktopViewportJS = r'''
+(function(){
+  try{
+    var W = 1024;
+    var v = document.querySelector('meta[name="viewport"]');
+    if(!v){ v = document.createElement('meta'); v.setAttribute('name','viewport');
+            (document.head||document.documentElement).appendChild(v); }
+    v.setAttribute('content','width='+W+', initial-scale='+(window.screen.width/W).toFixed(3)+', user-scalable=yes');
+    document.documentElement.style.minWidth = W+'px';
+  }catch(e){}
+})();
+''';
+
+  // 3.11.0: the console / network hooks live in devtools/devtools_hooks.dart
+  // (kDevtoolsHook) and are injected at document start.
+
+  // Polyfills the Web Speech API (webkitSpeechRecognition / SpeechRecognition),
+  // which Android System WebView does NOT implement. Calls bridge to the native
+  // speech_to_text plugin. Injected at document START so sites that feature-check
+  // on load see the API as available.
+  static const String _speechShim = r'''
+(function(){
+  if (window.__nxSpeechPatched) return; window.__nxSpeechPatched = true;
+  function R(){
+    this.lang='en-US'; this.continuous=false; this.interimResults=false;
+    this.maxAlternatives=1; this._active=false;
+    this.onresult=null; this.onerror=null; this.onend=null; this.onstart=null;
+    this.onspeechstart=null; this.onspeechend=null; this.onaudiostart=null;
+    this.onaudioend=null; this.onnomatch=null; this.onsoundstart=null; this.onsoundend=null;
+  }
+  R.prototype.start=function(){
+    if(this._active) return; this._active=true; window.__nxActiveRec=this;
+    try{ this.onstart && this.onstart(new Event('start')); }catch(e){}
+    try{ this.onaudiostart && this.onaudiostart(new Event('audiostart')); }catch(e){}
+    try{ window.flutter_inappwebview.callHandler('nxSpeechStart', this.lang||'en-US'); }
+    catch(e){ try{ this.onerror && this.onerror({error:'not-allowed'}); }catch(_){ } this._active=false; }
+  };
+  R.prototype.stop=function(){ this._active=false;
+    try{ window.flutter_inappwebview.callHandler('nxSpeechStop',''); }catch(e){} };
+  R.prototype.abort=function(){ this.stop(); };
+  R.prototype.addEventListener=function(t,cb){ this['on'+t]=cb; };
+  R.prototype.removeEventListener=function(t){ this['on'+t]=null; };
+  R.prototype.dispatchEvent=function(){ return true; };
+  window.__nxSpeechResult=function(text, isFinal){
+    var rec=window.__nxActiveRec; if(!rec) return;
+    var alt={transcript:String(text||''), confidence:0.9};
+    var res=[alt]; res[0]=alt; res.length=1; res.isFinal=!!isFinal;
+    res.item=function(i){return res[i];};
+    var list=[res]; list[0]=res; list.length=1; list.item=function(i){return list[i];};
+    var ev; try{ ev=new Event('result'); }catch(e){ ev={type:'result'}; }
+    ev.results=list; ev.resultIndex=0;
+    try{ rec.onresult && rec.onresult(ev); }catch(e){}
+    if(isFinal){ rec._active=false;
+      try{ rec.onspeechend && rec.onspeechend(new Event('speechend')); }catch(e){}
+      try{ rec.onend && rec.onend(new Event('end')); }catch(e){}
+      window.__nxActiveRec=null; }
+  };
+  window.__nxSpeechError=function(err){
+    var rec=window.__nxActiveRec; if(!rec) return; rec._active=false;
+    try{ rec.onerror && rec.onerror({error:String(err||'no-speech')}); }catch(e){}
+    try{ rec.onend && rec.onend(new Event('end')); }catch(e){}
+    window.__nxActiveRec=null;
+  };
+  window.__nxSpeechEnd=function(){
+    var rec=window.__nxActiveRec; if(!rec) return; rec._active=false;
+    try{ rec.onend && rec.onend(new Event('end')); }catch(e){}
+    window.__nxActiveRec=null;
+  };
+  window.SpeechRecognition = R;
+  window.webkitSpeechRecognition = R;
+})();
+''';
+
+  // ── Developer Tools ──────────────────────────────────────────────────────
+  bool _devtoolsArmed = false;
+
+  Future<void> _openDevTools({List<int>? inspectPath}) async {
+    final c = _wvc;
+    if (c != null) {
+      // From now on this tab also records request/response details (in memory).
+      if (!_devtoolsArmed) {
+        _devtoolsArmed = true;
+        try {
+          await c.addUserScript(userScript: UserScript(source: kDevtoolsArm,
+              injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START));
+        } catch (_) {}
+      }
+      await DevtoolsScripts.ensure(c);
+    }
+    if (!mounted) return;
+    showDevTools(
+      context,
+      wvc:            _wvc,
+      url:            _currentUrl,
+      pageTitle:      _pageTitle,
+      consoleLogs:    _consoleLogs,
+      onClearConsole: () => setState(() => _consoleLogs.clear()),
+      networkLogs:    _networkLogs,
+      onClearNetwork: () => setState(() => _networkLogs.clear()),
+      inspectPath:    inspectPath,
+      changes:        _devtoolsChanges.stream,
+    );
+  }
+
+  /// Tells an open Dev Tools panel that new console/network entries arrived.
+  final StreamController<void> _devtoolsChanges = StreamController<void>.broadcast();
+
+  String _buildUrl(String query) {
+    final q = query.trim();
+    if (q.isEmpty) return 'https://www.google.com';
+    if (q.startsWith('http://') || q.startsWith('https://')) return q;
+    final domainRx =
+        RegExp(r'^[a-zA-Z0-9][a-zA-Z0-9\-\.]+\.[a-zA-Z]{2,}(/.*)?$');
+    if (domainRx.hasMatch(q) && !q.contains(' ')) return 'https://$q';
+    return LocalDB.buildSearchUrl(q);
+  }
+
+  String _hostLabel(String url) => url
+      .replaceFirst('https://', '')
+      .replaceFirst('http://', '')
+      .replaceFirst('www.', '')
+      .split('/')[0];
+
+  // ── Init / dispose ─────────────────────────────────────────────────────────
+  @override
+  void initState() {
+    super.initState();
+    _tabId = widget.tabId;
+    TabsService.instance.ensureLoaded();
+    final initial = _buildUrl(widget.initialQuery);
+    _currentUrl   = initial;
+    _urlCtrl.text = _hostLabel(initial);
+    _isSecure     = initial.startsWith('https://');
+    _isBookmarked    = widget.incognito ? false : LocalDB.isBookmarked(initial);
+    _adBlockEnabled  = LocalDB.getAdBlockEnabled();
+    _savePasswords   = LocalDB.getSavePasswordsEnabled();
+    WebpageCaptureService.register(_captureTarget);
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  /// AI Playback only plays while NOVA X is on screen.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached) {
+      _playback?.pause();
+    }
+  }
+
+  // ── AI Playback ────────────────────────────────────────────────────────────
+
+  Future<void> _checkPlayback(InAppWebViewController c, String url) async {
+    final ok = !widget.incognito && PlaybackPageReader.isWebPage(url) && await PlaybackPageReader.quickCheck(c);
+    if (mounted && ok != _playbackAvailable) setState(() => _playbackAvailable = ok);
+  }
+
+  Future<void> _onPlaybackTap() async {
+    final active = _playback;
+    if (active != null && active.phase != PlaybackPhase.error) {
+      if (active.script != null) showPlaybackSheet(context, active);
+      return;
+    }
+    final c = _wvc;
+    if (c == null || _playbackStarting) return;
+    _playbackStarting = true;
+    try {
+      _closePlayback();
+      final engine = await PlaybackSession.start(context, c, _currentUrl);
+      if (!mounted) {
+        engine?.dispose();
+        return;
+      }
+      if (engine != null) setState(() => _playback = engine);
+    } finally {
+      _playbackStarting = false;
+    }
+  }
+
+  void _closePlayback() {
+    final e = _playback;
+    if (e == null) return;
+    e.dispose();
+    if (mounted) setState(() => _playback = null);
+  }
+
+  /// NOVA Capture: lets "Screenshot this page" use this tab.
+  late final _BrowserCaptureTarget _captureTarget = _BrowserCaptureTarget(this);
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _playback?.dispose();
+    _playback = null;
+    WebpageCaptureService.unregister(_captureTarget);
+    // Incognito: clear cookies + cache on exit
+    if (widget.incognito && _wvc != null) {
+      _wvc!.clearCache();
+      CookieManager.instance().deleteAllCookies();
+    }
+    _urlCtrl.dispose();
+    _devtoolsChanges.close();
+    try { _speech.stop(); } catch (_) {}
+    NovaWake.resumeAfterOtherMic('stt_page');
+    NovaWake.resumeAfterOtherMic('web_mic');
+    _wvc = null;
+    super.dispose();
+  }
+
+  // ── Actions ────────────────────────────────────────────────────────────────
+  Future<void> _toggleBookmark() async {
+    if (widget.incognito) { _snack('Bookmarks are disabled in incognito mode'); return; }
+    HapticFeedback.mediumImpact();
+    if (_isBookmarked) {
+      await LocalDB.removeBookmark(_currentUrl);
+    } else {
+      await LocalDB.addBookmark(_currentUrl, _pageTitle);
+    }
+    if (mounted) setState(() => _isBookmarked = !_isBookmarked);
+    _snack(_isBookmarked ? '★ Bookmark added' : 'Bookmark removed');
+  }
+
+  Future<void> _toggleDesktopMode() async {
+    setState(() => _desktopMode = !_desktopMode);
+    await _wvc?.setSettings(
+      settings: InAppWebViewSettings(
+        userAgent: _desktopMode ? _desktopUA : '',  // '' resets to default mobile UA
+      ),
+    );
+    await _wvc?.reload();
+    _snack(_desktopMode ? '🖥️ Desktop site' : '📱 Mobile site');
+  }
+
+  Future<void> _applyTextZoom(double zoom) async {
+    setState(() => _textZoom = zoom);
+    await _wvc?.setSettings(
+      settings: InAppWebViewSettings(textZoom: zoom.toInt()),
+    );
+  }
+
+  void _navigateTo(String query) {
+    final url = _buildUrl(query);
+    _wvc?.loadUrl(urlRequest: URLRequest(url: WebUri(url)));
+    setState(() {
+      _editing    = false;
+      _currentUrl = url;
+      _urlCtrl.text = _hostLabel(url);
+      _isSecure   = url.startsWith('https://');
+    });
+    FocusScope.of(context).unfocus();
+  }
+
+  void _copyUrl() {
+    Clipboard.setData(ClipboardData(text: _currentUrl));
+    _snack('URL copied');
+  }
+
+  // ── Save page for offline reading (Chrome-style MHTML archive) ─────────────
+  Future<void> _savePageOffline() async {
+    if (widget.incognito) {
+      _snack('Offline save is disabled in incognito mode');
+      return;
+    }
+    final c = _wvc;
+    if (c == null || _currentUrl.isEmpty) {
+      _snack('Page is not ready yet');
+      return;
+    }
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      final offDir = Directory('${docs.path}/offline');
+      if (!await offDir.exists()) await offDir.create(recursive: true);
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      final path = '${offDir.path}/page_$stamp.mht';
+      _snack('Saving page for offline…');
+      final saved = await c.saveWebArchive(filePath: path, autoname: false);
+      if (saved == null) {
+        _snack('Could not save this page offline');
+        return;
+      }
+      await OfflineService.instance.ensureLoaded();
+      await OfflineService.instance.add(OfflinePage(
+        id: '$stamp',
+        url: _currentUrl,
+        title: _pageTitle.isNotEmpty && _pageTitle != 'Loading…'
+            ? _pageTitle
+            : _hostLabel(_currentUrl),
+        path: saved,
+        savedAt: stamp,
+      ));
+      if (mounted) _snack('✓ Saved for offline');
+    } catch (_) {
+      if (mounted) _snack('Offline save failed');
+    }
+  }
+
+  void _snack(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg, style: GoogleFonts.inter(color: Colors.white)),
+      backgroundColor: AppTheme.bgElevated,
+      behavior: SnackBarBehavior.floating,
+      duration: const Duration(seconds: 2),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    ));
+  }
+
+  // ── 3.9.1 security: site permissions ─────────────────────────────────────
+  // Websites no longer get the microphone or camera silently. The person is
+  // asked once per site for this tab (like Chrome); the answer is kept only
+  // while the tab is open. Incognito tabs never remember anything else.
+  final Map<String, bool> _sitePerms = {};
+
+  static String _siteOf(String url) {
+    final u = Uri.tryParse(url);
+    if (u == null || u.host.isEmpty) return '';
+    return u.host.toLowerCase();
+  }
+
+  Future<bool> _askSitePermission(String site, String what, IconData icon) async {
+    if (site.isEmpty || !mounted) return false;
+    final key = '$site|$what';
+    final known = _sitePerms[key];
+    if (known != null) return known;
+    final allow = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: AppTheme.bgElevated,
+      isDismissible: true,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Icon(icon, color: AppTheme.accentCyan, size: 22),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text('$site wants to use your $what',
+                    style: GoogleFonts.inter(color: AppTheme.textPrimary, fontSize: 15, fontWeight: FontWeight.w700)),
+              ),
+            ]),
+            const SizedBox(height: 8),
+            Text('Only allow sites you trust. You can change this by reloading the tab.',
+                style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 12.5)),
+            const SizedBox(height: 16),
+            Row(children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: Text('Block', style: GoogleFonts.inter(color: AppTheme.textPrimary)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accentCyan),
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: Text('Allow', style: GoogleFonts.inter(color: Colors.black, fontWeight: FontWeight.w700)),
+                ),
+              ),
+            ]),
+          ]),
+        ),
+      ),
+    );
+    final ok = allow == true;
+    _sitePerms[key] = ok;
+    return ok;
+  }
+
+  /// Asks before a web page hands the person over to another app.
+  Future<bool> _confirmExternalApp(String site) async {
+    if (!mounted) return false;
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: AppTheme.bgElevated,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Leave NOVA X?',
+                style: GoogleFonts.inter(color: AppTheme.textPrimary, fontSize: 15, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 6),
+            Text('${site.isEmpty ? 'This page' : site} wants to open another app.',
+                style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 12.5)),
+            const SizedBox(height: 16),
+            Row(children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: Text('Stay', style: GoogleFonts.inter(color: AppTheme.textPrimary)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accentCyan),
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: Text('Open app', style: GoogleFonts.inter(color: Colors.black, fontWeight: FontWeight.w700)),
+                ),
+              ),
+            ]),
+          ]),
+        ),
+      ),
+    );
+    return ok == true;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: widget.incognito
+          ? const Color(0xFF0D0C1A)   // darker purple tint for incognito
+          : AppTheme.bgDark,
+      resizeToAvoidBottomInset: true,
+      body: Stack(children: [
+        Column(children: [
+          _buildTopBar(),
+          _buildProgressBar(),
+          Expanded(child: _buildWebView()),
+          // Zoom bar (shown above bottom bar when active)
+          if (_showZoomBar) _buildZoomBar(),
+          if (_playback != null)
+            PlaybackMiniBar(
+              engine: _playback!,
+              onOpen: () => showPlaybackSheet(context, _playback!),
+              onClose: _closePlayback,
+            ),
+          _buildReaderToolbar(),
+          if (!_readerMode) _buildBottomBar(),
+        ]),
+      ]),
+    );
+  }
+
+  // ── Top bar ────────────────────────────────────────────────────────────────
+  Widget _buildTopBar() {
+    return Container(
+      color: widget.incognito ? const Color(0xFF120F2A) : AppTheme.bgDark,
+      padding: EdgeInsets.only(
+        top: MediaQuery.of(context).padding.top + 8,
+        left: 10, right: 10, bottom: 8,
+      ),
+      child: Row(children: [
+        _topBtn(Icons.arrow_back_ios_new_rounded, () async {
+          if (await _wvc?.canGoBack() ?? false) {
+            _wvc?.goBack();
+          } else {
+            Navigator.pop(context);
+          }
+        }),
+        const SizedBox(width: 8),
+
+        // URL bar
+        Expanded(
+          child: GestureDetector(
+            onTap: () {
+              setState(() {
+                _editing = true;
+                _urlCtrl.text = _currentUrl;
+                _urlCtrl.selection = TextSelection(
+                    baseOffset: 0, extentOffset: _urlCtrl.text.length);
+              });
+            },
+            child: Container(
+              height: 42,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                color: widget.incognito
+                    ? const Color(0xFF1C1535)
+                    : AppTheme.bgCard,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(
+                  color: widget.incognito
+                      ? AppTheme.accentPurple.withOpacity(0.3)
+                      : AppTheme.divider,
+                ),
+              ),
+              child: Row(children: [
+                // Incognito spy icon OR lock icon
+                Icon(
+                  widget.incognito
+                      ? Icons.privacy_tip_outlined
+                      : (_isSecure ? Icons.lock_rounded : Icons.lock_open_rounded),
+                  color: widget.incognito
+                      ? AppTheme.accentPurple
+                      : (_isSecure ? AppTheme.secure : AppTheme.textHint),
+                  size: 13,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: _editing
+                      ? TextField(
+                          controller: _urlCtrl,
+                          autofocus: true,
+                          style: GoogleFonts.inter(color: Colors.white, fontSize: 13),
+                          onSubmitted: _navigateTo,
+                          textInputAction: TextInputAction.go,
+                          keyboardType: TextInputType.url,
+                          autocorrect: false,
+                          decoration: const InputDecoration(
+                            border: InputBorder.none,
+                            isDense: true,
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        )
+                      : Text(
+                          _hostLabel(_currentUrl),
+                          style: GoogleFonts.inter(
+                              color: widget.incognito
+                                  ? const Color(0xFFBBABDD)
+                                  : AppTheme.textSecondary,
+                              fontSize: 13, fontWeight: FontWeight.w500),
+                          overflow: TextOverflow.ellipsis, maxLines: 1,
+                        ),
+                ),
+                // Indicators
+                if (_desktopMode)
+                  const Icon(Icons.desktop_windows_outlined,
+                      color: AppTheme.accentCyan, size: 13),
+                if (_textZoom != 100) ...[
+                  const SizedBox(width: 4),
+                  Text('${_textZoom.toInt()}%',
+                      style: GoogleFonts.inter(
+                          color: AppTheme.warning, fontSize: 10,
+                          fontWeight: FontWeight.w700)),
+                ],
+              ]),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+
+        // Incognito badge (instead of bookmark in incognito)
+        if (widget.incognito)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+            decoration: BoxDecoration(
+              color: AppTheme.accentPurple.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppTheme.accentPurple.withOpacity(0.4)),
+            ),
+            child: const Icon(Icons.person_off_outlined,
+                color: AppTheme.accentPurple, size: 15),
+          )
+        else ...[
+          if (_playbackAvailable || _playback != null) ...[
+            Tooltip(
+              message: 'NOVA AI Playback',
+              child: _topBtn(
+                _playback != null ? Icons.graphic_eq_rounded : Icons.play_circle_outline_rounded,
+                _onPlaybackTap,
+                color: _playback != null ? AppTheme.accentCyan : Colors.white,
+              ),
+            ),
+            const SizedBox(width: 4),
+          ],
+          _topBtn(
+            _isBookmarked
+                ? Icons.bookmark_rounded
+                : Icons.bookmark_border_rounded,
+            _toggleBookmark,
+            color: _isBookmarked ? AppTheme.warning : AppTheme.textHint,
+          ),
+        ],
+
+        const SizedBox(width: 4),
+        _topBtn(Icons.more_vert_rounded, _showMoreMenu),
+      ]),
+    );
+  }
+
+  Widget _topBtn(IconData icon, VoidCallback onTap,
+      {Color color = AppTheme.textHint}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 36, height: 36,
+        decoration: BoxDecoration(
+          color: widget.incognito
+              ? const Color(0xFF1C1535)
+              : AppTheme.bgCard,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(icon, color: color, size: 17),
+      ),
+    );
+  }
+
+  // ── Progress bar ──────────────────────────────────────────────────────────
+  Widget _buildProgressBar() {
+    if (_progress >= 1.0 || _progress == 0) return const SizedBox.shrink();
+    return LinearProgressIndicator(
+      value: _progress,
+      color: widget.incognito ? AppTheme.accentPurple : AppTheme.accentCyan,
+      backgroundColor: Colors.transparent,
+      minHeight: 2,
+    );
+  }
+
+  // ── WebView ────────────────────────────────────────────────────────────────
+  Widget _buildWebView() {
+    return InAppWebView(
+      // A local page (e.g. the Lens photo upload) loads directly; otherwise the URL.
+      initialUrlRequest: widget.htmlContent == null ? URLRequest(url: WebUri(_currentUrl)) : null,
+      initialData: widget.htmlContent == null
+          ? null
+          : InAppWebViewInitialData(
+              data: widget.htmlContent!,
+              mimeType: 'text/html',
+              encoding: 'utf-8',
+              baseUrl: WebUri('https://www.google.com'),
+            ),
+      initialSettings: InAppWebViewSettings(
+        javaScriptEnabled:            true,
+        domStorageEnabled:            !widget.incognito,
+        databaseEnabled:              !widget.incognito,
+        cacheEnabled:                 !widget.incognito,
+        clearCache:                   widget.incognito,
+        useWideViewPort:              true,
+        loadWithOverviewMode:         true,
+        supportZoom:                  true,
+        builtInZoomControls:          true,
+        displayZoomControls:          false,
+        allowsInlineMediaPlayback:    true,
+        mediaPlaybackRequiresUserGesture: false,
+        // 3.9.1: insecure (http) scripts on secure pages are blocked, and web
+        // pages can't read files on the phone (file://).
+        mixedContentMode:             MixedContentMode.MIXED_CONTENT_COMPATIBILITY_MODE,
+        allowFileAccess:              false,
+        allowFileAccessFromFileURLs:  false,
+        allowUniversalAccessFromFileURLs: false,
+        allowContentAccess:           true,
+        safeBrowsingEnabled:          true,
+        textZoom:                     _textZoom.toInt(),
+        userAgent:                    _desktopMode ? _desktopUA : '',
+        contentBlockers:              _adBlockEnabled
+            ? PasswordService.buildAdBlockers() : [],
+      ),
+
+      initialUserScripts: UnmodifiableListView([
+        UserScript(source: _speechShim,
+            injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START),
+        UserScript(source: kDevtoolsHook,
+            injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START),
+      ]),
+
+      // Grant in-page media permissions (microphone / camera) so getUserMedia
+      // and voice features work inside the WebView.
+      // 3.9.1: the person decides (per site, for this tab). Only the
+      // microphone, camera and protected video playback can be granted;
+      // anything else a page asks for is refused.
+      onPermissionRequest: (controller, request) async {
+        final site = _siteOf(request.origin.toString());
+        final wanted = request.resources;
+        final mic = wanted.contains(PermissionResourceType.MICROPHONE);
+        final cam = wanted.contains(PermissionResourceType.CAMERA);
+        final drm = wanted.contains(PermissionResourceType.PROTECTED_MEDIA_ID);
+        final grant = <PermissionResourceType>[];
+        if (mic || cam) {
+          final what = mic && cam ? 'camera and microphone' : (cam ? 'camera' : 'microphone');
+          final ok = await _askSitePermission(site, what,
+              cam ? Icons.videocam_rounded : Icons.mic_rounded);
+          if (ok) {
+            if (mic) grant.add(PermissionResourceType.MICROPHONE);
+            if (cam) grant.add(PermissionResourceType.CAMERA);
           }
         }
+        if (drm && !widget.incognito &&
+            await _askSitePermission(site, 'protected video playback', Icons.lock_rounded)) {
+          grant.add(PermissionResourceType.PROTECTED_MEDIA_ID);
+        }
+        if (grant.isEmpty) {
+          return PermissionResponse(resources: wanted, action: PermissionResponseAction.DENY);
+        }
+        // A page using the microphone (calls, voice notes): "Hey NOVA" steps
+        // aside so the page gets the mic.
+        if (grant.contains(PermissionResourceType.MICROPHONE)) {
+          await NovaWake.pauseForOtherMic('web_mic', max: const Duration(minutes: 10));
+        }
+        return PermissionResponse(resources: grant, action: PermissionResponseAction.GRANT);
+      },
+
+      onWebViewCreated: (c) {
+        _wvc = c;
+        // Register the console log handler BEFORE any page loads
+        // Password detection handler
+        if (!widget.incognito && _savePasswords) {
+          c.addJavaScriptHandler(
+            handlerName: 'novaxPwDetect',
+            callback: (args) async {
+              if (args.isEmpty || !mounted) return null;
+              try {
+                final d = args[0] is Map
+                    ? Map<String,dynamic>.from(args[0] as Map)
+                    : jsonDecode(args[0].toString()) as Map<String,dynamic>;
+                // 3.9.1: the site is taken from the tab's real address, not
+                // from the page (a page could claim to be another site).
+                final cur    = await _wvc?.getUrl();
+                final domain = cur == null || !cur.toString().startsWith('http')
+                    ? '' : LocalDB.extractDomain(cur.toString());
+                final user   = d['username']?.toString() ?? '';
+                final pass   = d['password']?.toString() ?? '';
+                if (domain.isNotEmpty && pass.isNotEmpty && mounted)
+                  _onLoginSubmitted(domain, user, pass);
+              } catch (_) {}
+              return null;
+            },
+          );
+        }
+
+        c.addJavaScriptHandler(
+          handlerName: 'novaxLog',
+          callback: (args) {
+            if (args.isNotEmpty && mounted) {
+              try {
+                final data = args[0] is Map
+                    ? Map<String, dynamic>.from(args[0] as Map)
+                    : jsonDecode(args[0].toString()) as Map<String, dynamic>;
+                final msg = data['msg']?.toString() ?? '';
+                _consoleLogs.add({
+                  'type':  data['type']?.toString() ?? 'log',
+                  'msg':   msg.length > 8000 ? msg.substring(0, 8000) : msg,
+                  'time':  data['time']?.toString() ?? '',
+                  'ts':    data['ts'] is num ? (data['ts'] as num).toInt() : DateTime.now().millisecondsSinceEpoch,
+                  'src':   data['src']?.toString() ?? '',
+                  'stack': data['stack']?.toString() ?? '',
+                  'url':   _currentUrl,
+                });
+                if (_consoleLogs.length > 1000) _consoleLogs.removeAt(0);
+                _devtoolsChanges.add(null);
+              } catch (_) {}
+            }
+            return null;
+          },
+        );
+
+        // Network entries: one row per request, updated by 'start' / 'end'
+        // events and WebSocket 'frame' events (Dev Tools › Network).
+        c.addJavaScriptHandler(
+          handlerName: 'novaxNet',
+          callback: (args) {
+            if (args.isNotEmpty && mounted) {
+              try {
+                final d = args[0] is Map
+                    ? Map<String, dynamic>.from(args[0] as Map)
+                    : jsonDecode(args[0].toString()) as Map<String, dynamic>;
+                final id = d['id']?.toString() ?? '';
+                final i = id.isEmpty ? -1 : _networkLogs.lastIndexWhere((e) => e['id'] == id);
+                if (d['phase'] == 'frame') {
+                  if (i >= 0) {
+                    final frames = (_networkLogs[i]['frames'] as List?) ?? <Object?>[];
+                    if (frames.length < 500) {
+                      frames.add({'dir': d['dir'], 'data': d['data'], 'time': d['time']});
+                    }
+                    _networkLogs[i]['frames'] = frames;
+                  }
+                } else {
+                  final row = i >= 0 ? _networkLogs[i] : <String, dynamic>{};
+                  for (final k in ['id', 'url', 'method', 'type', 'start', 'statusText', 'mime', 'error',
+                      'reqHeaders', 'reqBody', 'resHeaders', 'resBody', 'redirected']) {
+                    if (d[k] != null) row[k] = d[k];
+                  }
+                  row['status'] = d['status'] is num ? (d['status'] as num).toInt() : (row['status'] ?? 0);
+                  row['ms']     = d['ms'] is num ? (d['ms'] as num).toInt() : (row['ms'] ?? 0);
+                  row['size']   = d['size'] is num ? (d['size'] as num).toInt() : (row['size'] ?? 0);
+                  row['pending'] = d['phase'] == 'start';
+                  row['page'] = _currentUrl;
+                  if (i < 0) _networkLogs.add(row);
+                  if (_networkLogs.length > 500) _networkLogs.removeAt(0);
+                }
+                _devtoolsChanges.add(null);
+              } catch (_) {}
+            }
+            return null;
+          },
+        );
+
+        // Tap-to-inspect: the page tells which element was tapped.
+        c.addJavaScriptHandler(
+          handlerName: 'novaxInspect',
+          callback: (args) {
+            if (args.isNotEmpty && args[0] is Map && mounted) {
+              final path = (args[0] as Map)['path'];
+              if (path is List) {
+                _openDevTools(inspectPath: path.whereType<num>().map((e) => e.toInt()).toList());
+              }
+            }
+            return null;
+          },
+        );
+
+        // ── Voice bridge: page calls webkitSpeechRecognition → native STT ──
+        c.addJavaScriptHandler(
+          handlerName: 'nxSpeechStart',
+          callback: (args) async {
+            final raw = args.isNotEmpty ? args[0].toString() : 'en-US';
+            final locale = RegExp(r'^[A-Za-z]{2,3}([-_][A-Za-z0-9]{2,8})?$').hasMatch(raw)
+                ? raw.replaceAll('-', '_') : 'en_US';
+            // 3.9.1: a page only hears the microphone after the person allows it.
+            final cur = await _wvc?.getUrl();
+            final site = _siteOf(cur?.toString() ?? '');
+            if (!await _askSitePermission(site, 'microphone', Icons.mic_rounded)) {
+              _wvc?.evaluateJavascript(
+                  source: "window.__nxSpeechError && window.__nxSpeechError('not-allowed')");
+              return null;
+            }
+            try {
+              if (!_speechAvail) {
+                _speechAvail = await _speech.initialize(
+                  onError: (e) {
+                    _wvc?.evaluateJavascript(
+                        source: 'window.__nxSpeechError && window.__nxSpeechError(${jsonEncode(e.errorMsg)})');
+                  },
+                  onStatus: (s) {
+                    if (s == 'done' || s == 'notListening') {
+                      NovaWake.resumeAfterOtherMic('stt_page');
+                      _wvc?.evaluateJavascript(
+                          source: 'window.__nxSpeechEnd && window.__nxSpeechEnd()');
+                    }
+                  },
+                );
+              }
+              if (!_speechAvail) {
+                _wvc?.evaluateJavascript(
+                    source: "window.__nxSpeechError && window.__nxSpeechError('not-allowed')");
+                return null;
+              }
+              await NovaWake.pauseForOtherMic('stt_page');
+              await _speech.listen(
+                localeId: locale,
+                partialResults: true,
+                cancelOnError: true,
+                onResult: (r) {
+                  _wvc?.evaluateJavascript(
+                      source: 'window.__nxSpeechResult && window.__nxSpeechResult('
+                          '${jsonEncode(r.recognizedWords)}, ${r.finalResult})');
+                },
+              );
+            } catch (_) {
+              _wvc?.evaluateJavascript(
+                  source: "window.__nxSpeechError && window.__nxSpeechError('audio-capture')");
+            }
+            return null;
+          },
+        );
+        c.addJavaScriptHandler(
+          handlerName: 'nxSpeechStop',
+          callback: (args) async {
+            try { await _speech.stop(); } catch (_) {}
+            NovaWake.resumeAfterOtherMic('stt_page');
+            _wvc?.evaluateJavascript(source: 'window.__nxSpeechEnd && window.__nxSpeechEnd()');
+            return null;
+          },
+        );
+      },
+
+      // ── Handle special URL schemes (intent://, market://, snssdk://, etc.) ──
+      shouldOverrideUrlLoading: (controller, navigationAction) async {
+        final uri = navigationAction.request.url;
+        if (uri == null) return NavigationActionPolicy.ALLOW;
+        final scheme = uri.scheme.toLowerCase();
+
+        // 3.9.1: pages may not open data: addresses as the whole tab (a
+        // common phishing trick; Chrome blocks it too) or local files.
+        if ((scheme == 'data' && navigationAction.isForMainFrame) ||
+            scheme == 'file' || scheme == 'content') {
+          return NavigationActionPolicy.CANCEL;
+        }
+
+        // Standard schemes — let WebView handle normally
+        if (scheme == 'https' || scheme == 'http' ||
+            scheme == 'data'  || scheme == 'blob' ||
+            scheme == 'about' || scheme == 'javascript') {
+          return NavigationActionPolicy.ALLOW;
+        }
+        final fromSite = _siteOf(_currentUrl);
+
+        // intent:// — Android intent URL (Play Store, app deep links, etc.)
+        if (scheme == 'intent') {
+          try {
+            final uriStr = uri.toString();
+            // Extract fallback browser_fallback_url if present
+            final fallbackMatch =
+                RegExp(r'browser_fallback_url=([^;]+)').firstMatch(uriStr);
+            if (fallbackMatch != null) {
+              // 3.9.1: the fallback opens in this tab, and only if it is a web address.
+              final fallback = Uri.decodeFull(fallbackMatch.group(1)!);
+              final fallbackUri = Uri.tryParse(fallback);
+              if (fallbackUri != null &&
+                  (fallbackUri.scheme == 'https' || fallbackUri.scheme == 'http')) {
+                await controller.loadUrl(urlRequest: URLRequest(url: WebUri(fallback)));
+                return NavigationActionPolicy.CANCEL;
+              }
+            }
+            // Try launching the intent URL directly via Android (after asking)
+            if (await ul.canLaunchUrl(uri) && await _confirmExternalApp(fromSite)) {
+              await ul.launchUrl(uri,
+                  mode: ul.LaunchMode.externalApplication);
+            }
+          } catch (_) {}
+          return NavigationActionPolicy.CANCEL;
+        }
+
+        // market:// — Direct Play Store scheme
+        if (scheme == 'market') {
+          try {
+            final playUrl = Uri.parse(
+                'https://play.google.com/store/apps/details?' +
+                uri.toString().replaceFirst('market://details?', ''));
+            await ul.launchUrl(playUrl,
+                mode: ul.LaunchMode.externalApplication);
+          } catch (_) {}
+          return NavigationActionPolicy.CANCEL;
+        }
+
+        // mailto:, tel:, sms: — native handlers
+        if (scheme == 'mailto' || scheme == 'tel' || scheme == 'sms') {
+          try {
+            if (await ul.canLaunchUrl(uri)) {
+              await ul.launchUrl(uri,
+                  mode: ul.LaunchMode.externalApplication);
+            }
+          } catch (_) {}
+          return NavigationActionPolicy.CANCEL;
+        }
+
+        // Any other unknown scheme (snssdk://, fb://, tg://, whatsapp://, etc.)
+        // Open with the native app after asking; silently cancel if not possible
+        try {
+          if (await ul.canLaunchUrl(uri) && await _confirmExternalApp(fromSite)) {
+            await ul.launchUrl(uri,
+                mode: ul.LaunchMode.externalApplication);
+          }
+        } catch (_) {}
+        return NavigationActionPolicy.CANCEL;
+      },
+
+      onLoadStart: (c, url) async {
+        if (_playbackAvailable && mounted) setState(() => _playbackAvailable = false);
+        if (url != null && NovaShieldService.isEnabled) {
+          final urlStr = url.toString();
+          // Layer 3: HTTPS enforcement
+          final httpsUrl = NovaShieldService.enforceHttps(urlStr);
+          if (httpsUrl != null) {
+            await NovaShieldService.recordHttpsUpgrade();
+            await c.loadUrl(urlRequest: URLRequest(url: WebUri(httpsUrl)));
+            return;
+          }
+          // Layer 1+2: Domain threat check via Cloudflare DoH
+          if (!urlStr.startsWith('data:') && !urlStr.startsWith('about:') &&
+              !urlStr.startsWith('blob:')) {
+            final threat = await NovaShieldService.checkDomain(urlStr);
+            if (threat.isThreat && mounted) {
+              // Block the navigation and show warning
+              await c.loadData(
+                data: _buildBlockPage(threat.domain, threat.threatType),
+                mimeType: 'text/html', encoding: 'utf-8');
+              return;
+            }
+          }
+        }
+        if (url == null || !mounted) return;
+        final u = url.toString();
+        setState(() {
+          _currentUrl = u;
+          _isSecure   = u.startsWith('https://');
+          _isBookmarked = widget.incognito ? false : LocalDB.isBookmarked(u);
+          if (!_editing) _urlCtrl.text = _hostLabel(u);
+        });
+        // Inject console patch as early as possible
+        await c.evaluateJavascript(source: kDevtoolsHook);
+        if (_desktopMode)
+          await c.evaluateJavascript(source: _desktopViewportJS);
+      },
+
+      onTitleChanged: (_, title) {
+        if (title != null && mounted) setState(() => _pageTitle = title);
+      },
+
+      onLoadStop: (c, url) async {
+        if (url == null || !mounted) return;
+        final u = url.toString();
+        _canBack    = await c.canGoBack();
+        _canForward = await c.canGoForward();
+        if (mounted) setState(() => _currentUrl = u);
+        _syncTab();
+        // Re-inject console hook (catches any page that replaced window context)
+        await c.evaluateJavascript(source: kDevtoolsHook);
+        if (_desktopMode)
+          await c.evaluateJavascript(source: _desktopViewportJS);
+        // Ad blocker: cosmetic filtering — hide common ad containers so blocked
+        // ads don't leave blank gaps. Pairs with the network-level ContentBlockers.
+        if (_adBlockEnabled)
+          await c.evaluateJavascript(source: PasswordService.adCosmeticJS);
+        // AI Playback: ▶ when the page has enough text (not in incognito)
+        _checkPlayback(c, u);
+        // Don't save history in incognito
+        if (!widget.incognito) await LocalDB.saveHistoryItem(u, _pageTitle);
+        // Inject password detection
+        if (!widget.incognito && _savePasswords)
+          await c.evaluateJavascript(source: PasswordService.pwDetectJS);
+        // NOVA Shield: inject all protection layers
+        if (NovaShieldService.isEnabled) {
+          final js = NovaShieldService.buildProtectionBundle(
+              incognito: widget.incognito);
+          if (js.isNotEmpty)
+            await c.evaluateJavascript(source: js);
+        }
+        // Saved password for this site: offered when the page shows a login form
+        if (!widget.incognito && _savePasswords) _offerSavedPassword(c, u);
         // Auto-open Developer Tools when launched from the home shortcut
         if (widget.autoOpenDevTools && !_devToolsAutoOpened && mounted) {
           _devToolsAutoOpened = true;

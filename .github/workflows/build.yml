@@ -399,15 +399,15 @@ jobs:
           sed -i 's/minSdk = 21/minSdk = 24/g'                                          "$F"
           sed -i 's/minSdk = 22/minSdk = 24/g'                                          "$F"
           sed -i 's/minSdk = 23/minSdk = 24/g'                                          "$F"
-          # ── ndkVersion → 27.0.12077973 ──────────────────────────────────
+          # ── ndkVersion → 28.2.13676358 (NDK r28 builds 16 KB-aligned native code: Google Play) ──────────────────────────────────
           # Flutter 3.32.0 defaults to NDK 26.3.11579264 but all plugins
-          # (firebase, geolocator, speech_to_text etc.) require 27.0.12077973.
+          # (firebase, geolocator, speech_to_text etc.) require 28.2.13676358.
           # Replace flutter.ndkVersion variable OR inject after android { block.
-          sed -i 's/ndkVersion = flutter\.ndkVersion/ndkVersion = "27.0.12077973"/g'   "$F"
-          sed -i 's/ndkVersion flutter\.ndkVersion/ndkVersion "27.0.12077973"/g'        "$F"
+          sed -i 's/ndkVersion = flutter\.ndkVersion/ndkVersion = "28.2.13676358"/g'   "$F"
+          sed -i 's/ndkVersion flutter\.ndkVersion/ndkVersion "28.2.13676358"/g'        "$F"
           # If ndkVersion not present at all, inject it after android { line
           if ! grep -q "ndkVersion" "$F"; then
-            sed -i '/^android {/a\    ndkVersion = "27.0.12077973"' "$F"
+            sed -i '/^android {/a\    ndkVersion = "28.2.13676358"' "$F"
             echo "✓ ndkVersion injected into android block"
           fi
           # ── HARD VERIFICATION — fail fast if minSdk is still below 24 ───
@@ -417,7 +417,7 @@ jobs:
             cat "$F"
             exit 1
           fi
-          echo "✓ compileSdk=36, targetSdk=36, minSdk=24, ndkVersion=27.0.12077973 applied"
+          echo "✓ compileSdk=36, targetSdk=36, minSdk=24, ndkVersion=28.2.13676358 applied"
           grep -E "compileSdk|targetSdk|minSdk|ndkVersion" "$F"
 
       # ── AppCompat — required by the AppCompat themes (local_auth) ─────────
@@ -741,7 +741,7 @@ jobs:
             sed -i 's/minSdkVersion 21/minSdkVersion 24/g'   "$f"
             sed -i 's/minSdkVersion 23/minSdkVersion 24/g'   "$f"
             sed -i 's/flutter\.targetSdkVersion/36/g'        "$f"
-            sed -i 's/flutter\.ndkVersion/"27.0.12077973"/g'  "$f"
+            sed -i 's/flutter\.ndkVersion/"28.2.13676358"/g'  "$f"
             echo "Patched:"
             grep -n "compileSdk\|minSdk\|targetSdk" "$f" || true
           done
@@ -889,6 +889,31 @@ jobs:
 
       - name: Build Release AAB
         run: flutter build appbundle --release --split-debug-info=build/symbols --obfuscate
+
+      # Google Play rejects bundles whose 64-bit native libraries don't support
+      # 16 KB memory pages. Check before uploading, and name any bad library.
+      - name: Check 16 KB page size support (Google Play)
+        run: |
+          set -e
+          AAB=build/app/outputs/bundle/release/app-release.aab
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          rm -rf /tmp/aab && mkdir -p /tmp/aab && unzip -q "$AAB" -d /tmp/aab
+          BAD=0
+          while IFS= read -r so; do
+            MIN=$(readelf -lW "$so" | awk '$1=="LOAD"{print $NF}' | while read a; do printf "%d\n" "$a"; done | sort -n | head -1)
+            if [ -z "$MIN" ] || [ "$MIN" -lt 16384 ]; then
+              echo "::error::Not 16 KB aligned: ${so#/tmp/aab/} (LOAD alignment $MIN)"
+              BAD=1
+            else
+              echo "✓ ${so#/tmp/aab/}"
+            fi
+          done < <(find /tmp/aab -name '*.so' \( -path '*arm64-v8a*' -o -path '*x86_64*' \))
+          ZA=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)zipalign
+          if [ -x "$ZA" ] && [ -f "$APK" ]; then
+            if "$ZA" -c -P 16 -v 4 "$APK" > /tmp/za.txt 2>&1; then echo "✓ APK zip alignment OK for 16 KB pages"
+            else grep -i "\.so" /tmp/za.txt | grep -iv "OK" | head -20; echo "::error::APK native libraries are not 16 KB zip-aligned"; BAD=1; fi
+          fi
+          exit $BAD
 
       - name: Archive Artifacts
         uses: actions/upload-artifact@v4

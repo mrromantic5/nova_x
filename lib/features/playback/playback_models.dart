@@ -31,7 +31,7 @@ class PlaybackLine {
   static String stripSpeaker(String t) {
     var s = t.trim();
     for (var i = 0; i < 2; i++) {
-      s = s.replaceFirst(RegExp(r'^\**\s*(Ava|Leo|Host\s*[12AB]?|Female|Male)\s*\**\s*(?:[:：]|\s[-–—])\s*', caseSensitive: false), '').trim();
+      s = s.replaceFirst(RegExp(r'^\**\s*(Ava|Leo|Host\s*[12AB]?|Female|Male)\s*\**\s*(?:[:：]|\s[-–—])\s*\**\s*', caseSensitive: false), '').trim();
     }
     return s;
   }

@@ -4,6 +4,7 @@
 // daily limit and the page snapshot.
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nova_x/core/services/ai_feedback_service.dart';
 import 'package:nova_x/features/playback/playback_engine.dart';
 import 'package:nova_x/features/playback/playback_models.dart';
 import 'package:nova_x/features/playback/playback_page_reader.dart';
@@ -129,6 +130,13 @@ void main() {
       await PlaybackQuota.recordUse();
       PlaybackQuota.isPremium = () => false;
       expect(await PlaybackQuota.left(), 10);
+    });
+  });
+
+  group('feedback', () {
+    test('the page address sent with feedback has no query or #part', () {
+      expect(AiFeedbackService.pageRef('https://shop.test/item/42?token=abc&u=me#reviews'), 'https://shop.test/item/42');
+      expect(AiFeedbackService.pageRef('not a url'), '');
     });
   });
 

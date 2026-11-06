@@ -680,7 +680,7 @@ class _BrowserViewState extends State<BrowserView>
         else ...[
           if (_playbackAvailable || _playback != null) ...[
             Tooltip(
-              message: 'AI playback',
+              message: 'NOVA AI Playback',
               child: _topBtn(
                 _playback != null ? Icons.graphic_eq_rounded : Icons.play_circle_outline_rounded,
                 _onPlaybackTap,

@@ -4,6 +4,8 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart' as fss;
 import 'dart:convert';
 
+import 'package:shared_preferences/shared_preferences.dart';
+
 class PasswordService {
   // Prefix all calls with fss. to avoid AndroidOptions ambiguity
   static const _storage = fss.FlutterSecureStorage(
@@ -71,6 +73,38 @@ class PasswordService {
     }
   }
 
+  // ── "Never for this site" (3.12.3) ─────────────────────────────────────────
+  static const _neverKey = 'nx_pw_never_sites';
+
+  static Future<bool> isNever(String domain) async {
+    try {
+      return ((await SharedPreferences.getInstance()).getStringList(_neverKey) ?? const []).contains(domain);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> setNever(String domain, bool never) async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      final list = (p.getStringList(_neverKey) ?? <String>[]).where((d) => d != domain).toList();
+      if (never) list.add(domain);
+      await p.setStringList(_neverKey, list);
+    } catch (_) {}
+  }
+
+  /// What a submitted login means for the saved password of [domain]:
+  /// 'same' (nothing to do), 'update' (same user, new password), 'new'.
+  static String compare(Map<String, String>? saved, String username, String password) {
+    if (saved == null) return 'new';
+    final su = (saved['username'] ?? '').trim(), sp = saved['password'] ?? '';
+    // The saved password was used (e.g. NOVA X just filled it): nothing to ask,
+    // even if the page's username field was read differently.
+    if (sp == password) return 'same';
+    if (su.toLowerCase() == username.trim().toLowerCase() || username.trim().isEmpty) return 'update';
+    return 'new';
+  }
+
   static String _sanitizeDomain(String domain) =>
       domain.replaceAll(RegExp(r'[^a-zA-Z0-9\.\-]'), '_');
 
@@ -85,8 +119,15 @@ class PasswordService {
       if (!form) return;
       var pwInput = form.querySelector('input[type="password"]');
       if (!pwInput || !pwInput.value) return;
-      var userInput = form.querySelector(
-        'input[type="email"], input[name*="user" i], input[name*="email" i], input[name*="login" i], input[type="text"]:not([type="password"])'
+      // The username is the text/email/phone field just before the password.
+      var all = Array.prototype.slice.call(form.querySelectorAll('input'));
+      var userInput = null;
+      for (var i = all.indexOf(pwInput) - 1; i >= 0; i--) {
+        var t = (all[i].type || 'text').toLowerCase();
+        if (['text', 'email', 'tel', 'number'].indexOf(t) >= 0 && all[i].value) { userInput = all[i]; break; }
+      }
+      if (!userInput) userInput = form.querySelector(
+        'input[autocomplete="username"], input[type="email"], input[name*="user" i], input[name*="email" i], input[name*="login" i]'
       );
       window.flutter_inappwebview.callHandler('novaxPwDetect', {
         username: userInput ? userInput.value : '',
@@ -98,33 +139,58 @@ class PasswordService {
 })();
 ''';
 
+  // ── JS: is there an empty, visible password field to fill? ─────────────────
+  static const String hasLoginFieldJS = r"""
+(function(){try{
+  var f=document.querySelectorAll('input[type=password]');
+  for(var i=0;i<f.length;i++){var el=f[i];
+    if(el.disabled||el.readOnly||el.value) continue;
+    var r=el.getBoundingClientRect(), s=getComputedStyle(el);
+    if(r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none') return true;}
+  return false;
+}catch(e){return false;}})();
+""";
+
   // ── JS: autofill fields ──────────────────────────────────────────────────────
-  static String autofillJS(String username, String password) {
+  /// Fills the visible login form: the password field and the username/email
+  /// field just before it (same form). Values are set through the native
+  /// setter so React/Vue/Angular forms notice them. With [submit], the form
+  /// is then sent (like "Sign in" in other browsers). Returns a JSON string
+  /// {"filled":bool,"user":bool,"submitted":bool}.
+  static String autofillJS(String username, String password, {bool submit = false}) {
     // 3.9.1: JSON-encoded, so a quote, backslash or line break in a saved
     // password can never break out of the string and run as page script.
     final safeU = jsonEncode(username);
     final safeP = jsonEncode(password);
     return """
 (function() {
-  var filled = false;
-  var inputs = document.querySelectorAll('input');
-  for (var i = 0; i < inputs.length; i++) {
-    var inp  = inputs[i];
-    var name = (inp.name || inp.id || inp.placeholder || '').toLowerCase();
-    if (!filled && (inp.type === 'email' ||
-        name.includes('user') || name.includes('email') ||
-        name.includes('login') || name.includes('account'))) {
-      inp.value = $safeU;
-      inp.dispatchEvent(new Event('input',  {bubbles: true}));
-      inp.dispatchEvent(new Event('change', {bubbles: true}));
-      filled = true;
+  try {
+    var U = $safeU, P = $safeP, SUBMIT = ${submit ? 'true' : 'false'};
+    function visible(el){var r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none';}
+    var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    function put(el, v){ el.focus(); setter.call(el, v);
+      el.dispatchEvent(new Event('input', {bubbles:true})); el.dispatchEvent(new Event('change', {bubbles:true})); el.blur(); }
+    var pws = Array.prototype.filter.call(document.querySelectorAll('input[type=password]'), function(e){return visible(e)&&!e.disabled&&!e.readOnly;});
+    if (!pws.length) return JSON.stringify({filled:false,user:false,submitted:false});
+    var pw = pws[0];
+    var scope = pw.form || document;
+    var all = Array.prototype.slice.call(scope.querySelectorAll('input'));
+    var idx = all.indexOf(pw), user = null;
+    for (var i = idx - 1; i >= 0; i--) {
+      var t = (all[i].type || 'text').toLowerCase();
+      if (['text','email','tel','number'].indexOf(t) >= 0 && visible(all[i]) && !all[i].disabled && !all[i].readOnly) { user = all[i]; break; }
     }
-    if (inp.type === 'password') {
-      inp.value = $safeP;
-      inp.dispatchEvent(new Event('input',  {bubbles: true}));
-      inp.dispatchEvent(new Event('change', {bubbles: true}));
+    if (!user) user = scope.querySelector('input[autocomplete=username],input[type=email],input[name*=user i],input[name*=email i],input[name*=login i],input[id*=user i],input[id*=email i]');
+    if (user && U) put(user, U);
+    put(pw, P);
+    var sent = false;
+    if (SUBMIT && pw.form && (user || !U)) {
+      var btn = pw.form.querySelector('button[type=submit],input[type=submit],button:not([type])');
+      setTimeout(function(){ try { if (btn) btn.click(); else if (pw.form.requestSubmit) pw.form.requestSubmit(); else pw.form.submit(); } catch(e){} }, 250);
+      sent = true;
     }
-  }
+    return JSON.stringify({filled:true,user:!!(user&&U),submitted:sent});
+  } catch (e) { return JSON.stringify({filled:false,user:false,submitted:false}); }
 })();
 """;
   }

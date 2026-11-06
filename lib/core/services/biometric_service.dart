@@ -40,4 +40,25 @@ class BiometricService {
       return false;
     }
   }
+
+  /// 3.12.3: always asks for the fingerprint / face / screen lock before a
+  /// saved password is used — even if "Biometric lock" is off in Settings
+  /// (that setting only guards opening the password list). Phones with no
+  /// screen lock at all can't confirm anything, so the fill goes ahead there,
+  /// as in other browsers.
+  static Future<bool> confirm(String reason) async {
+    try {
+      if (!await _auth.isDeviceSupported()) return true;
+      return await _auth.authenticate(
+        localizedReason: reason,
+        options: const AuthenticationOptions(
+          biometricOnly: false, // fingerprint / face, or PIN / pattern / password
+          stickyAuth: true,
+          useErrorDialogs: true,
+        ),
+      );
+    } catch (_) {
+      return false; // fail closed
+    }
+  }
 }

@@ -12,12 +12,17 @@ void main() {
     const user = "a'b\"c";
     const pass = "p\\';alert(1);//\n</script>`\${x}";
     final js = PasswordService.autofillJS(user, pass);
-    expect(js, contains('inp.value = ${jsonEncode(user)};'));
-    expect(js, contains('inp.value = ${jsonEncode(pass)};'));
-    // The value line is one valid JSON string that decodes back unchanged.
-    final line = js.split('\n').firstWhere((l) => l.contains('inp.value = "p'));
-    final literal = line.trim().substring('inp.value = '.length, line.trim().length - 1);
-    expect(jsonDecode(literal), pass);
+    // 3.12.3: both values are JSON literals on one line: var U = …, P = …, SUBMIT = …;
+    final line = js.split('\n').firstWhere((l) => l.trim().startsWith('var U = '));
+    final m = RegExp(r'^var U = (".*"), P = (".*"), SUBMIT = (true|false);$').firstMatch(line.trim());
+    expect(m, isNotNull, reason: line);
+    expect(m!.group(1), jsonEncode(user));
+    expect(m.group(2), jsonEncode(pass));
+    // Each literal decodes back unchanged, so nothing can break out into page script.
+    expect(jsonDecode(m.group(1)!), user);
+    expect(jsonDecode(m.group(2)!), pass);
+    expect(m.group(3), 'false');
+    expect(js.contains('</script>'), isTrue); // only inside the JSON string
   });
 
   test('version fallback matches pubspec.yaml', () {

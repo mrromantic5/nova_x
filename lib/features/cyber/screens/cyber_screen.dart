@@ -11,6 +11,7 @@
 //   Code scan      a project .zip or picked files, read on the phone
 //   History        earlier reports on this phone
 
+import '../../../core/widgets/windows_download_card.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -856,6 +857,12 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
       const SizedBox(height: 8),
       Text('Tip: zip only your source code — node_modules, vendor, .git and build folders are skipped anyway.',
           style: p.ui(size: 11.5, color: p.textFaint)),
+      // 3.13.1: on PC NOVA Cyber scans a whole project folder directly.
+      if (_codeFiles == null)
+        const WindowsDownloadCard(
+          reason: 'On Windows, NOVA Cyber scans a whole project folder directly.',
+          margin: EdgeInsets.fromLTRB(0, 14, 0, 0),
+        ),
       const SizedBox(height: 14),
       if (_codeError != null) Padding(padding: const EdgeInsets.only(bottom: 14), child: _errorBox(p, _codeError!)),
       if (_codeRunning) SizedBox(height: 300, child: _console(p)),

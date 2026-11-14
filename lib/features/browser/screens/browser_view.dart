@@ -48,6 +48,9 @@ import 'package:nova_x/features/guide/guide_screen.dart';
 import 'package:nova_x/features/pro/page_tools.dart';
 import 'package:nova_x/features/pro/pro_tab.dart';
 import 'package:nova_x/features/security/download_safety.dart';
+import 'package:nova_x/features/downloads/download_manager.dart';
+import 'package:nova_x/features/downloads/download_names.dart';
+import 'package:nova_x/features/downloads/screens/downloads_screen.dart';
 import 'package:nova_x/features/security/security_center_screen.dart';
 import 'package:nova_x/features/security/site_controls.dart';
 import 'package:nova_x/features/security/web_protections.dart';
@@ -1274,37 +1277,13 @@ class _BrowserViewState extends State<BrowserView>
       },
 
       onDownloadStartRequest: (controller, request) async {
-        if (widget.incognito) {
-          _snack('Downloads are disabled in incognito mode');
-          return;
-        }
+        // 3.13.1: real downloads (progress, pause, resume, cancel) saved to
+        // the phone — see features/downloads/download_manager.dart.
         if (widget.safeView) {
           _snack('Downloads are blocked in Safe View');
           return;
         }
-        final url  = request.url.toString();
-        final name = (request.suggestedFilename?.isNotEmpty ?? false)
-            ? request.suggestedFilename!
-            : url.split('/').last.split('?').first;
-        // 3.13.0 Download safety: app files (APK) show where they come from
-        // first. NOVA X never installs apps itself.
-        if (DownloadSafety.isApp(name, request.mimeType) && await DownloadSafety.enabled()) {
-          if (!mounted) return;
-          final keep = await DownloadSafety.confirmApp(context, name: name, url: url, page: _currentUrl);
-          if (!keep) {
-            _snack('Download cancelled');
-            return;
-          }
-        }
-        await LocalDB.addDownload({
-          'url':       url,
-          'filename':  name.isNotEmpty ? name : 'download',
-          'mime':      request.mimeType ?? 'unknown',
-          'size':      request.contentLength ?? 0,
-          'timestamp': DateTime.now().toIso8601String(),
-          'status':    'intercepted',
-        });
-        _snack('Download captured: ${name.isNotEmpty ? name : 'file'}');
+        await _startDownload(controller, request);
       },
 
       onReceivedError: (_, req, __) {
@@ -1313,6 +1292,121 @@ class _BrowserViewState extends State<BrowserView>
         }
       },
     );
+  }
+
+  // ── 3.13.1 Downloads ───────────────────────────────────────────────────────
+  Future<void> _startDownload(InAppWebViewController controller, DownloadStartRequest request) async {
+    final url = request.url.toString();
+    final mime = request.mimeType;
+    final name = DownloadNames.resolve(
+      suggested: request.suggestedFilename,
+      contentDisposition: request.contentDisposition,
+      url: url,
+      mime: mime,
+    );
+    // 3.13.0 Download safety: app files (APK) show where they come from
+    // first. NOVA X never installs apps itself.
+    if (DownloadSafety.isApp(name, mime) && await DownloadSafety.enabled()) {
+      if (!mounted) return;
+      final keep = await DownloadSafety.confirmApp(context, name: name, url: url, page: _currentUrl);
+      if (!keep) {
+        _snack('Download cancelled');
+        return;
+      }
+    }
+    final dm = DownloadManager.instance;
+    await dm.ensureLoaded();
+    var dest = dm.defaultDest;
+    if (dest == null) {
+      if (!mounted) return;
+      dest = await DownloadPrompts.askDestination(context, name);
+      if (dest == null) return;
+    }
+    try {
+      if (url.startsWith('data:')) {
+        final data = UriData.parse(url);
+        final bytes = data.contentAsBytes();
+        if (bytes.length > DownloadManager.maxInlineBytes) {
+          _snack('This file is too large to save from the page');
+          return;
+        }
+        await dm.startBytes(
+          bytes: bytes,
+          suggestedName: name,
+          mime: mime ?? data.mimeType,
+          sourceUrl: url,
+          dest: dest,
+          incognito: widget.incognito,
+        );
+      } else if (url.startsWith('blob:')) {
+        // A blob only exists inside the page, so read it there (as data).
+        final r = await controller.callAsyncJavaScript(
+          functionBody: '''
+var res = await fetch(u);
+var b = await res.blob();
+if (b.size > max) return {error: 'too_large'};
+return await new Promise(function (ok, bad) {
+  var fr = new FileReader();
+  fr.onload = function () { ok({data: fr.result, type: b.type || ''}); };
+  fr.onerror = function () { bad(String(fr.error)); };
+  fr.readAsDataURL(b);
+});
+''',
+          arguments: {'u': url, 'max': DownloadManager.maxInlineBytes},
+        );
+        final v = r?.value;
+        if (v is! Map || v['data'] is! String) {
+          _snack(v is Map && v['error'] == 'too_large'
+              ? 'This file is too large to save from the page'
+              : 'Couldn\'t read this file from the page');
+          return;
+        }
+        final data = UriData.parse(v['data'] as String);
+        final blobType = (v['type'] ?? '').toString();
+        await dm.startBytes(
+          bytes: data.contentAsBytes(),
+          suggestedName: name,
+          mime: blobType.isNotEmpty ? blobType : (mime ?? data.mimeType),
+          sourceUrl: _currentUrl,
+          dest: dest,
+          incognito: widget.incognito,
+        );
+      } else {
+        String ua = '';
+        try {
+          ua = _desktopMode ? _desktopUA : await InAppWebViewController.getDefaultUserAgent();
+        } catch (_) {}
+        await dm.start(
+          url: url,
+          suggestedName: name,
+          mime: mime,
+          contentLength: request.contentLength,
+          userAgent: ua,
+          referer: _currentUrl,
+          dest: dest,
+          incognito: widget.incognito,
+        );
+      }
+    } catch (_) {
+      _snack('Download failed to start');
+      return;
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text('Downloading $name',
+            maxLines: 1, overflow: TextOverflow.ellipsis, style: GoogleFonts.inter(color: Colors.white)),
+        backgroundColor: AppTheme.bgElevated,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        action: SnackBarAction(
+          label: 'View',
+          textColor: AppTheme.accentCyan,
+          onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const DownloadsScreen())),
+        ),
+      ));
   }
 
   // ── Zoom bar ───────────────────────────────────────────────────────────────

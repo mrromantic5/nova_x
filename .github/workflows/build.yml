@@ -90,6 +90,8 @@ jobs:
             lib/features/security \
             lib/features/guide \
             lib/features/pro \
+            lib/features/downloads \
+            lib/core/widgets/windows_download_card.dart \
             test/cyber \
             test/security \
             test/guide \

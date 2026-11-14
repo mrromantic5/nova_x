@@ -1,4 +1,5 @@
 // lib/features/profile/screens/profile_screen.dart
+import 'package:nova_x/core/widgets/windows_download_card.dart';
 import 'dart:io';
 import 'package:nova_x/core/services/rewards_service.dart';
 import 'package:flutter/material.dart';
@@ -469,6 +470,8 @@ class _ProfileScreenState extends State<ProfileScreen>
       ),
       const SizedBox(height: 12),
       _buildSupportSection(inset: 0),
+      const SizedBox(height: 24),
+      const WindowsDownloadCard(margin: EdgeInsets.zero),
     ]),
   );
 
@@ -515,6 +518,12 @@ class _ProfileScreenState extends State<ProfileScreen>
       _section('HELP & SUPPORT', _buildSupportSection()),
       const SizedBox(height: 28),
       _section('DANGER ZONE', _buildDangerZone()),
+      const SizedBox(height: 24),
+      // 3.13.1: the Windows version (opens in NOVA X's browser).
+      const WindowsDownloadCard(
+        reason: 'Use your NOVA X account, coins and Premium on your PC.',
+        margin: EdgeInsets.fromLTRB(20, 0, 20, 0),
+      ),
       const SizedBox(height: 40),
     ]);
   }

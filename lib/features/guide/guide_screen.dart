@@ -5,6 +5,7 @@
 // highlighted). Android (3.13.0): same guide as NOVA X for PC, phone layout;
 // opened from the menu, Settings › Help and every "Read more" link.
 
+import '../../core/widgets/windows_download_card.dart';
 import 'package:flutter/material.dart';
 
 import '../cyber/ui/cyber_palette.dart';
@@ -279,6 +280,12 @@ class _FeatureGuideScreenState extends State<FeatureGuideScreen> {
                     ),
                     for (final s in visible.where((s) => s.category == cat)) _section(p, s),
                   ],
+                // 3.13.1: the Windows version.
+                if (_query.isEmpty)
+                  const WindowsDownloadCard(
+                    reason: 'Everything in this guide, plus PC-only tools, on Windows.',
+                    margin: EdgeInsets.fromLTRB(0, 18, 0, 0),
+                  ),
               ]),
             ),
           ),

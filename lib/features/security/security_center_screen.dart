@@ -6,6 +6,7 @@
 // Shield, fingerprint protection, download safety, the malware-filtering
 // DNS check, and a self-test that proves each protection works on this phone.
 
+import '../../core/widgets/windows_download_card.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/services/nova_shield_service.dart';
@@ -397,6 +398,11 @@ class _SecurityCenterScreenState extends State<SecurityCenterScreen> {
             },
           ),
         ]),
+      ),
+      // 3.13.1: the Windows version.
+      const WindowsDownloadCard(
+        reason: 'The same protections for your PC browsing, with the same account.',
+        margin: EdgeInsets.fromLTRB(0, 4, 0, 0),
       ),
     ]);
   }

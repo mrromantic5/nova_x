@@ -1,5 +1,8 @@
 // lib/features/settings/screens/settings_screen.dart
+import 'package:nova_x/core/widgets/windows_download_card.dart';
 import 'package:nova_x/features/guide/guide_screen.dart';
+import 'package:nova_x/features/downloads/download_manager.dart';
+import 'package:nova_x/features/downloads/screens/downloads_screen.dart';
 import 'package:nova_x/features/security/security_center_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:nova_x/core/services/default_browser_service.dart';
@@ -450,10 +453,15 @@ class _SettingsScreenState extends State<SettingsScreen>
                   () async { await LocalDB.clearBookmarks(); _snack('Bookmarks cleared'); }),
             ),
             _actionTile(
+              Icons.folder_rounded, 'Download location',
+              'Where downloaded files are saved', const Color(0xFFF59E0B),
+              () => DownloadPrompts.locationSettings(context),
+            ),
+            _actionTile(
               Icons.download_outlined, 'Clear Downloads',
-              'Remove download records', AppTheme.primaryBlue,
-              _confirm('Clear Downloads', 'Remove all download records?',
-                  () async { await LocalDB.clearDownloads(); _snack('Downloads cleared'); }),
+              'Clear the download list (files stay on your phone)', AppTheme.primaryBlue,
+              _confirm('Clear Downloads', 'Clear the download list? Saved files stay on your phone.',
+                  () async { await DownloadManager.instance.clearAll(); _snack('Downloads cleared'); }),
             ),
             _actionTile(
               Icons.manage_search_rounded, 'Clear Search History',
@@ -489,7 +497,7 @@ class _SettingsScreenState extends State<SettingsScreen>
                 await InAppWebViewController.clearAllCache();
                 await LocalDB.clearHistory();
                 await LocalDB.clearBookmarks();
-                await LocalDB.clearDownloads();
+                await DownloadManager.instance.clearAll();
                 await LocalDB.clearSearchHistory();
                 if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                   content: Text('🧹 All browser data cleared',
@@ -562,6 +570,11 @@ class _SettingsScreenState extends State<SettingsScreen>
             _infoTile(Icons.business_outlined,      'Company',   'Tech Lyfe'),
             _infoTile(Icons.code_rounded,           'Engine',    'NOVA X Engine ${AppInfo.version}'),
           ]),
+          // 3.13.1: the Windows version (opens in NOVA X's browser).
+          const WindowsDownloadCard(
+            reason: 'Tabs, NOVA AI and NOVA Shield on your PC, with the same account.',
+            margin: EdgeInsets.fromLTRB(0, 14, 0, 24),
+          ),
         ],
       ),
     );

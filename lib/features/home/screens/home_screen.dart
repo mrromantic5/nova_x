@@ -8,6 +8,7 @@
 //   • Business name search opens the business's website
 //   • Dynamic time-based subtitle (changes every 3 hours)
 
+import 'package:nova_x/core/widgets/windows_download_card.dart';
 import 'package:nova_x/features/guide/guide_screen.dart';
 import 'package:nova_x/features/security/security_center_screen.dart';
 import 'dart:async';
@@ -129,6 +130,7 @@ class _HomeScreenState extends State<HomeScreen>
   };
 
   // ── Dynamic subtitle ───────────────────────────────────────────────────────
+  // 3.13.1: plain, professional lines (no emojis).
   String _buildSubtitle() {
     final h   = DateTime.now().hour;
     final day = DateTime.now().day;
@@ -137,46 +139,33 @@ class _HomeScreenState extends State<HomeScreen>
     if (h >= 5 && h < 12) {
       msgs = [
         'Where would you like to go today?',
-        "How's your morning going? ☕",
-        'Any plans this morning?',
-        'Ready to explore the web? 🚀',
-        'Start your day with something great!',
-        'Coffee and browsing — perfect combo ☕',
-        "Morning! What's on your mind?",
-        'Rise and browse! 🌄',
+        'Start your day with something great.',
+        'Ready to explore the web?',
+        "What's on your mind this morning?",
+        'Search, browse and discover.',
       ];
     } else if (h >= 12 && h < 17) {
       msgs = [
-        'Having a productive afternoon? 💪',
         'Where would you like to go today?',
-        "Afternoon browse? Let's go!",
-        "What's on your agenda today?",
-        'Keep the momentum going! 🔥',
-        'Halfway through the day — explore!',
-        'What did you miss this morning?',
-        'Power through! The web awaits 💻',
+        "What's on your agenda this afternoon?",
+        'Pick up where you left off.',
+        'Search, browse and discover.',
+        'Find what you need, fast.',
       ];
     } else if (h >= 17 && h < 21) {
       msgs = [
-        'Wind down with some browsing 🌆',
         "What's on your evening agenda?",
-        'Evening already? Time flies! ⏰',
-        'Relax and explore the web 🌅',
+        'Unwind and discover something new.',
         "What's interesting tonight?",
-        'Treat yourself to some browsing time 🌇',
-        'Unwind and discover something new!',
-        "Evening vibes — let's surf 🌊",
+        'Search, browse and discover.',
+        'Catch up on what you missed today.',
       ];
     } else {
       msgs = [
-        'Burning the midnight oil? 🌙',
-        'Late night browsing session? 🦉',
-        'Night owl mode activated! 🌙',
-        'The web never sleeps 💫',
-        "What are you curious about tonight? ✨",
-        'Shh… the world is sleeping 🤫',
-        'Stars are out — so is the internet 🌟',
-        "Still up? Let's explore 🔦",
+        'What are you curious about tonight?',
+        'The web is always open.',
+        'Search, browse and discover.',
+        'Find what you need, fast.',
       ];
     }
     return msgs[rng.nextInt(msgs.length)];
@@ -742,10 +731,10 @@ class _HomeScreenState extends State<HomeScreen>
     final h = DateTime.now().hour;
     final name = _profileName.split(' ').first;
     final disp = name.isNotEmpty ? ', $name' : '';
-    if (h >= 5  && h < 12) return '☀️ Good morning$disp!';
-    if (h >= 12 && h < 17) return '🌤️ Good afternoon$disp!';
-    if (h >= 17 && h < 21) return '🌆 Good evening$disp!';
-    return '🌙 Good night$disp!';
+    if (h >= 5  && h < 12) return 'Good morning$disp';
+    if (h >= 12 && h < 17) return 'Good afternoon$disp';
+    if (h >= 17 && h < 21) return 'Good evening$disp';
+    return 'Good night$disp';
   }
 
   Color _avatarColor() {
@@ -1303,24 +1292,23 @@ class _HomeScreenState extends State<HomeScreen>
 
   // ── Feature row ────────────────────────────────────────────────────────────
   Widget _buildFeatureRow() {
+    // 3.13.1: four tools, each with its own colour. NOVA Capture and Rewards
+    // are in the menu (Rewards also from the coin chip at the top).
     final items = [
       {'icon': Icons.developer_mode_rounded,   'label': 'Dev Tools',
+       'color': const Color(0xFF22C55E),
        'fn': () => _push(BrowserView(
              initialQuery: 'https://api.browser.t-lyfe.com.ng/devtools.html',
              autoOpenDevTools: true))},
       {'icon': Icons.code_rounded,             'label': 'X Coder',
+       'color': const Color(0xFFF59E0B),
        'fn': () => _push(const CodeEditorScreen(sharedWorkspace: true))},
       {'icon': Icons.speed_rounded,            'label': 'NOVA Network',
+       'color': const Color(0xFF06B6D4),
        'fn': () => _push(const NovaNetworkScreen())},
-      {'icon': Icons.screenshot_monitor_rounded, 'label': 'NOVA Capture',
-       'fn': () => _push(const CaptureDashboard())},
-      // 3.13.0: NOVA Cyber on the home screen, as on PC (website & code
-      // security). NOVA Music stays in the menu.
       {'icon': Icons.security_rounded,         'label': 'NOVA Cyber',
        'color': const Color(0xFF6366F1),
        'fn': () => _push(const CyberScreen())},
-      {'icon': Icons.monetization_on_rounded,  'label': 'Rewards',
-       'fn': () => _push(const RewardsScreen())},
     ];
     const _kDarkBg     = Color(0xFF1A1D26);
     const _kDarkBorder = Color(0xFF2A2D3A);
@@ -1889,6 +1877,9 @@ class _MenuSheet extends StatelessWidget {
        'fn': () { Navigator.pop(context); onPush(const SecurityCenterScreen()); }},
       {'icon': Icons.menu_book_outlined,         'label': 'Guide', 'color': AppTheme.accentCyan,
        'fn': () { Navigator.pop(context); onPush(const FeatureGuideScreen()); }},
+      // 3.13.1: NOVA X Browser for Windows (download page opens in NOVA X).
+      {'icon': Icons.desktop_windows_rounded,    'label': 'Windows app', 'color': const Color(0xFF38BDF8),
+       'fn': () { Navigator.pop(context); onPush(const BrowserView(initialQuery: WindowsDownload.url)); }},
       {'icon': Icons.speed_rounded,             'label': 'NOVA Network', 'color': const Color(0xFF39FFB0),
        'fn': () { Navigator.pop(context); onPush(const NovaNetworkScreen()); }},
       {'icon': Icons.screenshot_monitor_rounded, 'label': 'NOVA Capture', 'color': const Color(0xFFFF3B4E),

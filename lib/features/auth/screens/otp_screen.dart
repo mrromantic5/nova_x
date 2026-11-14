@@ -140,9 +140,12 @@ class _OtpScreenState extends State<OtpScreen>
                 AppTheme.accentPurple.withOpacity(0.10), Colors.transparent])),
           )),
 
-          SafeArea(child: SingleChildScrollView(
+          // 3.13.0 tablets & foldables: a readable width, centred, on wide windows.
+          SafeArea(child: Center(child: SingleChildScrollView(
             padding: const EdgeInsets.symmetric(horizontal: 28),
-            child: Column(children: [
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 480),
+              child: Column(children: [
               const SizedBox(height: 40),
 
               Container(
@@ -299,7 +302,8 @@ class _OtpScreenState extends State<OtpScreen>
               ),
               const SizedBox(height: 40),
             ]),
-          )),
+            ),
+          ))),
         ]),
       ),
     );

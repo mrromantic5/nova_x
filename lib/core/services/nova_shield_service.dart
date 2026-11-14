@@ -24,13 +24,11 @@
 //           Strips or spoofs the Referer header so sites cannot track
 //           which pages led users to them.
 //
-//  Layer 6: Security Header Injection
-//           Injects CSP, X-Frame-Options, and X-Content-Type-Options
-//           headers on every page, hardening pages that don't set them.
-//
-//  Layer 7: Fingerprint Noise
-//           Injects minor JavaScript noise into navigator.userAgent,
-//           screen dimensions, and canvas to reduce browser fingerprinting.
+//  3.13.0: fingerprint protection moved to the Security Center
+//           (lib/features/security/fingerprint_guard.dart: real canvas /
+//           audio / WebGL protection). The old "noise" layer only set
+//           Do-Not-Track and claimed more, so it was removed, as was the
+//           made-up protection score.
 //
 //  Stats tracking (local, never uploaded):
 //           Counts malware blocks, HTTPS upgrades, trackers blocked,
@@ -377,37 +375,6 @@ class NovaShieldService {
     final buf = StringBuffer();
     if (webrtcBlocking)        buf.write(webrtcPreventionJS);
     if (referrerSpoofing)      buf.write(referrerSpoofJS);
-    if (fingerprintProtection) buf.write(buildFingerprintNoiseJS());
     return buf.toString();
-  }
-
-  // ── Protection level description ─────────────────────────────────────────
-  static String get protectionLevel {
-    if (!isEnabled) return 'Off';
-    int score = 0;
-    if (isEnabled)            score += 2;
-    if (httpsOnlyEnabled)     score += 2;
-    if (webrtcBlocking)       score += 2;
-    if (fingerprintProtection)score += 2;
-    if (referrerSpoofing)     score += 1;
-    if (activeProvider == DnsProvider.cloudflareMalware ||
-        activeProvider == DnsProvider.quad9) score += 1;
-    if (score >= 9) return 'Maximum';
-    if (score >= 6) return 'Strong';
-    if (score >= 3) return 'Standard';
-    return 'Basic';
-  }
-
-  static int get protectionScore {
-    if (!isEnabled) return 0;
-    int s = 0;
-    if (isEnabled)            s += 20;
-    if (httpsOnlyEnabled)     s += 20;
-    if (webrtcBlocking)       s += 20;
-    if (fingerprintProtection)s += 15;
-    if (referrerSpoofing)     s += 10;
-    if (activeProvider == DnsProvider.cloudflareMalware) s += 10;
-    if (activeProvider == DnsProvider.quad9)             s += 15;
-    return s.clamp(0, 100);
   }
 }

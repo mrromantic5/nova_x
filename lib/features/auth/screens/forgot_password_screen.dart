@@ -397,8 +397,12 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
             left: -80,
             child: _glow(250, AppTheme.accentPurple.withValues(alpha: 0.12)),
           ),
+          // 3.13.0 tablets & foldables: on wide windows the steps stay a readable width, centred.
           SafeArea(
-            child: Column(children: [
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               _topBar(),
               Expanded(
                 child: SingleChildScrollView(
@@ -419,6 +423,8 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                 ),
               ),
             ]),
+              ),
+            ),
           ),
         ]),
       ),

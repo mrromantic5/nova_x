@@ -1,5 +1,4 @@
 // lib/features/shield/screens/nova_shield_screen.dart
-import 'dart:math' as math;
 import 'package:nova_x/core/services/rewards_entitlements.dart';
 import 'package:nova_x/core/services/rewards_service.dart';
 import 'package:nova_x/core/widgets/feature_lock.dart';
@@ -7,6 +6,11 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:nova_x/core/services/nova_shield_service.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
+import 'package:nova_x/features/guide/guide_screen.dart';
+import 'package:nova_x/features/security/security_center_screen.dart';
+import 'package:nova_x/features/security/site_controls.dart';
+import 'package:nova_x/features/shield/engine/shield_engine.dart';
+import 'package:nova_x/features/shield/engine/shield_lists.dart';
 
 class NovaShieldScreen extends StatefulWidget {
   const NovaShieldScreen({super.key});
@@ -20,9 +24,14 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
   late Animation<double>   _scoreAnim;
   bool _loading = false;
 
+  bool _updatingLists = false;
+
   @override
   void initState() {
     super.initState();
+    // 3.13.0: real numbers only (blocked requests come from NOVA Shield).
+    NovaShieldEngine.instance.ensureReady().then((_) { if (mounted) setState(() {}); });
+    SiteControls.instance.ensureLoaded().then((_) { if (mounted) setState(() {}); });
     _pulseCtrl = AnimationController(vsync: this,
         duration: const Duration(seconds: 3))..repeat(reverse: true);
     _scoreCtrl = AnimationController(vsync: this,
@@ -60,12 +69,11 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
 
   @override
   Widget build(BuildContext context) {
-    final score    = NovaShieldService.protectionScore;
-    final level    = NovaShieldService.protectionLevel;
     final enabled  = NovaShieldService.isEnabled;
     final stats    = NovaShieldService.stats;
-    final scoreColor = score >= 80 ? AppTheme.success
-        : score >= 50 ? AppTheme.warning : AppTheme.danger;
+    final engine   = NovaShieldEngine.instance;
+    final fpOn     = SiteControls.instance.fingerprintDefault != FingerprintLevel.off;
+    const scoreColor = AppTheme.accentCyan;
 
     return Scaffold(
       backgroundColor: AppTheme.bgDark,
@@ -92,6 +100,7 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
               TextButton(
                 onPressed: () async {
                   await NovaShieldService.resetStats();
+                  await NovaShieldEngine.instance.resetLifetime();
                   setState(() {});
                 },
                 child: Text('Reset Stats', style: GoogleFonts.inter(
@@ -114,8 +123,6 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
                     children: [
                       Row(children: [
                         _tag('PRIVACY & SECURITY', AppTheme.accentCyan),
-                        const SizedBox(width: 8),
-                        _tag('STRONGER THAN BRAVE', AppTheme.success),
                       ]),
                       const SizedBox(height: 8),
                       ShaderMask(
@@ -127,7 +134,7 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
                                 color: Colors.white, fontSize: 30,
                                 fontWeight: FontWeight.w900)),
                       ),
-                      Text('7-Layer Protection Engine  •  Encrypted DNS',
+                      Text('Malware check  •  HTTPS upgrade  •  Ad & tracker blocking',
                           style: GoogleFonts.inter(
                               color: AppTheme.textHint, fontSize: 11)),
                     ],
@@ -141,60 +148,14 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
             sliver: SliverList(delegate: SliverChildListDelegate([
 
-              // ── Protection score gauge ─────────────────────────────────
-              Center(child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 24),
-                child: AnimatedBuilder(
-                  animation: _scoreAnim,
-                  builder: (_, __) => Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      // Pulse ring
-                      if (enabled) AnimatedBuilder(
-                        animation: _pulseCtrl,
-                        builder: (_, __) => Container(
-                          width: 160 + _pulseCtrl.value * 20,
-                          height: 160 + _pulseCtrl.value * 20,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: scoreColor.withOpacity(
-                                  0.15 - _pulseCtrl.value * 0.12),
-                              width: 1.5,
-                            ),
-                          ),
-                        ),
-                      ),
-                      // Score ring
-                      CustomPaint(
-                        size: const Size(150, 150),
-                        painter: _ScoreRingPainter(
-                          progress: _scoreAnim.value,
-                          score: score,
-                          color: scoreColor,
-                        ),
-                      ),
-                      // Centre content
-                      Column(mainAxisSize: MainAxisSize.min, children: [
-                        Icon(enabled
-                            ? Icons.shield_rounded
-                            : Icons.shield_outlined,
-                            color: enabled ? scoreColor : AppTheme.textHint,
-                            size: 28),
-                        const SizedBox(height: 4),
-                        Text('${(score * _scoreAnim.value).round()}',
-                            style: GoogleFonts.spaceGrotesk(
-                                color: scoreColor, fontSize: 32,
-                                fontWeight: FontWeight.w900)),
-                        Text(enabled ? level : 'OFF',
-                            style: GoogleFonts.inter(
-                                color: scoreColor.withOpacity(0.7),
-                                fontSize: 11, fontWeight: FontWeight.w700)),
-                      ]),
-                    ],
-                  ),
-                ),
-              )),
+              // ── Real numbers (3.13.0: the old score wasn't a measurement) ──
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 20),
+                child: Row(children: [
+                  Expanded(child: _bigNumber('${engine.blockedToday()}', 'ads & trackers\nblocked today', scoreColor)),
+                  Expanded(child: _bigNumber('${stats.malwareBlocked}', 'dangerous sites\nstopped', AppTheme.danger)),
+                ]),
+              ),
 
               // ── Master toggle ──────────────────────────────────────────
               Container(
@@ -234,8 +195,8 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
                         color: AppTheme.textPrimary, fontSize: 17,
                         fontWeight: FontWeight.w800)),
                     Text(enabled
-                        ? 'All ${_countActive()} layers active'
-                        : 'Protection disabled',
+                        ? 'Malware check${NovaShieldService.httpsOnlyEnabled ? ' and HTTPS upgrade' : ''} on'
+                        : 'Malware check off',
                         style: GoogleFonts.inter(
                             color: enabled
                                 ? AppTheme.accentCyan : AppTheme.textHint,
@@ -262,8 +223,8 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
                 children: [
                   _statCard('${stats.malwareBlocked}',   'Malware Blocked',   Icons.dangerous_rounded,       AppTheme.danger),
                   _statCard('${stats.httpsUpgrades}',    'HTTPS Upgrades',    Icons.lock_rounded,             AppTheme.success),
-                  _statCard('${stats.dnsEncrypted}',     'DNS Encrypted',     Icons.dns_rounded,              AppTheme.accentCyan),
-                  _statCard('${stats.webrtcBlocked}',    'IP Leaks Blocked',  Icons.hide_source_rounded,      AppTheme.accentPurple),
+                  _statCard('${stats.dnsEncrypted}',     'Sites Checked',     Icons.dns_rounded,              AppTheme.accentCyan),
+                  _statCard('${engine.lifetimeTotal}',   'Ads & Trackers Blocked', Icons.block_rounded,       AppTheme.accentPurple),
                 ],
               ),
               const SizedBox(height: 24),
@@ -285,9 +246,18 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
               const SizedBox(height: 10),
               _card([
                 _layerTile(
-                  Icons.cloud_rounded, 'DNS-over-HTTPS',
-                  'All DNS queries encrypted via NOVA DNS',
+                  Icons.cloud_rounded, 'Malware check (encrypted DNS)',
+                  'Each site you open is looked up over HTTPS with the provider above; known malware sites are stopped',
                   AppTheme.accentCyan, true, null, // always on when shield is on
+                ),
+                _divider(),
+                _layerTile(
+                  Icons.block_rounded, 'Ad & tracker blocking',
+                  engine.enabled
+                      ? '${engine.ruleCount} EasyList / EasyPrivacy domains · ${engine.lifetimeTotal} requests blocked so far'
+                      : 'Blocks ad, tracker and cryptominer requests from other companies',
+                  AppTheme.success, engine.enabled,
+                  (v) async { await engine.setEnabled(v); setState(() {}); },
                 ),
                 _divider(),
                 _layerTile(
@@ -306,11 +276,14 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
                 ),
                 _divider(),
                 _layerTile(
-                  Icons.fingerprint_rounded, 'Fingerprint Noise',
-                  'Adds random noise to canvas, audio & screen to defeat fingerprinting',
-                  AppTheme.warning, NovaShieldService.fingerprintProtection,
-                  (v) async { await NovaShieldService.setFingerprintProtection(v); setState(() {}); },
-                  pro: true,
+                  Icons.fingerprint_rounded, 'Fingerprint protection',
+                  'Each site sees slightly different canvas and audio values, so visits can’t be linked '
+                      '(${SiteControls.instance.fingerprintDefault.label}; strict and per-site levels in the Security Center)',
+                  AppTheme.warning, fpOn,
+                  (v) async {
+                    await SiteControls.instance.setFingerprintDefault(v ? FingerprintLevel.standard : FingerprintLevel.off);
+                    setState(() {});
+                  },
                 ),
                 _divider(),
                 _layerTile(
@@ -323,8 +296,7 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
               ]),
               const SizedBox(height: 24),
 
-              // Comparison table removed — replaced with feature highlights
-              _featureHighlightsCard(),
+              _listsCard(),
               const SizedBox(height: 20),
 
               // ── Footer note ────────────────────────────────────────────
@@ -340,9 +312,9 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
                       color: AppTheme.textHint, size: 16),
                   const SizedBox(width: 10),
                   Expanded(child: Text(
-                    'NOVA Shield operates entirely within the NOVA X browser. '
-                    'It does not encrypt system-wide traffic. '
-                    'DNS queries are encrypted end-to-end — no browsing data is sent to Tech Lyfe.',
+                    'NOVA Shield works only inside the NOVA X browser; other apps are never affected. '
+                    'The malware check sends only the site’s name to the chosen DNS provider, over HTTPS. '
+                    'Pages themselves load with Android’s normal network settings. No browsing data is sent to Tech Lyfe.',
                     style: GoogleFonts.inter(color: AppTheme.textHint,
                         fontSize: 11, height: 1.5),
                   )),
@@ -413,59 +385,69 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
     );
   }
 
-  // ── Feature highlights card ──────────────────────────────────────────────
-  Widget _featureHighlightsCard() {
-    final features = [
-      (Icons.dns_rounded,        'Encrypted DNS',         'All domain lookups encrypted end-to-end',          AppTheme.accentCyan),
-      (Icons.dangerous_rounded,  'Malware Blocking',      'Real-time threat intelligence on every domain',     AppTheme.danger),
-      (Icons.lock_rounded,       'HTTPS Enforcement',     'Every connection automatically upgraded to HTTPS',  AppTheme.success),
-      (Icons.hide_source_rounded,'IP Leak Prevention',    'WebRTC configured to prevent IP address exposure',  AppTheme.accentPurple),
-      (Icons.link_off_rounded,   'Referrer Privacy',      'Cross-site tracking via referrer headers blocked',  AppTheme.warning),
-      (Icons.fingerprint_rounded,'Fingerprint Protection','Signals privacy preference to all websites',        AppTheme.accentCyan),
-    ];
+  // ── Block lists (3.13.0) ──────────────────────────────────────────────────
+  Widget _listsCard() {
+    final lists = ShieldLists.instance.current;
     return Container(
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: AppTheme.bgCard,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: AppTheme.divider),
       ),
-      child: Column(children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-          child: Row(children: [
-            const Icon(Icons.verified_rounded, color: AppTheme.accentCyan, size: 16),
-            const SizedBox(width: 8),
-            Text('NOVA Shield Features', style: GoogleFonts.spaceGrotesk(
-                color: AppTheme.textPrimary, fontSize: 13,
-                fontWeight: FontWeight.w800)),
-          ]),
-        ),
-        const Divider(color: Color(0xFF1A2535), height: 1),
-        ...features.map((f) => Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
-          child: Row(children: [
-            Container(width: 36, height: 36,
-              decoration: BoxDecoration(
-                  color: f.$4.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(10)),
-              child: Icon(f.$1, color: f.$4, size: 18)),
-            const SizedBox(width: 12),
-            Expanded(child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-              Text(f.$2, style: GoogleFonts.inter(
-                  color: AppTheme.textPrimary, fontSize: 13,
-                  fontWeight: FontWeight.w700)),
-              Text(f.$3, style: GoogleFonts.inter(
-                  color: AppTheme.textHint, fontSize: 11)),
-            ])),
-            const Icon(Icons.check_circle_rounded,
-                color: AppTheme.success, size: 16),
-          ]),
-        )).toList(),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.list_alt_rounded, color: AppTheme.accentCyan, size: 16),
+          const SizedBox(width: 8),
+          Expanded(child: Text('About the block lists', style: GoogleFonts.spaceGrotesk(
+              color: AppTheme.textPrimary, fontSize: 13, fontWeight: FontWeight.w800))),
+          const ReadMoreLink('shield', compact: true),
+        ]),
+        const SizedBox(height: 8),
+        Text(
+          lists == null
+              ? 'Loading…'
+              : '${lists.countOf(ShieldCategory.ads)} ad · ${lists.countOf(ShieldCategory.trackers)} tracker · '
+                '${lists.countOf(ShieldCategory.miners)} cryptominer domains · '
+                '${lists.updated == null ? 'snapshot built into NOVA X' : 'updated ${lists.updated!.toLocal().toString().substring(0, 10)}'}',
+          style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 12, height: 1.4)),
+        const SizedBox(height: 6),
+        Text('Lists: EasyList and EasyPrivacy by The EasyList authors (https://easylist.to/), GPLv3 / CC BY-SA 3.0. '
+            'Refreshed weekly when online. Only requests to other companies are blocked.',
+            style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11, height: 1.4)),
+        const SizedBox(height: 10),
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          OutlinedButton.icon(
+            onPressed: _updatingLists ? null : () async {
+              setState(() => _updatingLists = true);
+              final ok = await NovaShieldEngine.instance.updateListsNow();
+              if (!mounted) return;
+              setState(() => _updatingLists = false);
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(ok
+                  ? 'Block lists updated'
+                  : (ShieldLists.instance.lastUpdateError ?? 'Lists are already up to date'))));
+            },
+            icon: _updatingLists
+                ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.sync_rounded, size: 16),
+            label: const Text('Update now'),
+          ),
+          OutlinedButton.icon(
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SecurityCenterScreen())),
+            icon: const Icon(Icons.health_and_safety_rounded, size: 16),
+            label: const Text('Security Center'),
+          ),
+        ]),
       ]),
     );
   }
+
+  Widget _bigNumber(String value, String label, Color color) => Column(children: [
+        Text(value, style: GoogleFonts.spaceGrotesk(color: color, fontSize: 34, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 2),
+        Text(label, textAlign: TextAlign.center,
+            style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11, height: 1.3)),
+      ]);
 
   // ── NOVA Shield Pro (3.9.0) ─────────────────────────────────────────────────
   Widget _proBanner() => GestureDetector(
@@ -494,7 +476,7 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
               Text('Upgrade to NOVA Shield Pro', style: GoogleFonts.spaceGrotesk(
                   color: Colors.white, fontSize: 14.5, fontWeight: FontWeight.w800)),
               const SizedBox(height: 3),
-              Text('IP-leak (WebRTC), fingerprint and referrer protection plus your choice of DNS. '
+              Text('IP-leak (WebRTC) and referrer protection plus your choice of DNS. '
                   'Unlock with coins or NOVA X Premium.',
                   style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 11.5, height: 1.4)),
             ])),
@@ -537,15 +519,6 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
       );
 
   // ── Helpers ────────────────────────────────────────────────────────────────
-  int _countActive() {
-    int n = 1; // DoH always active when shield is on
-    if (NovaShieldService.httpsOnlyEnabled)     n++;
-    if (NovaShieldService.webrtcBlocking)       n++;
-    if (NovaShieldService.fingerprintProtection)n++;
-    if (NovaShieldService.referrerSpoofing)     n++;
-    return n;
-  }
-
   Widget _card(List<Widget> children) => Container(
     decoration: BoxDecoration(color: AppTheme.bgCard,
         borderRadius: BorderRadius.circular(18),
@@ -634,32 +607,4 @@ class _NovaShieldScreenState extends State<NovaShieldScreen>
     width: s, height: s,
     decoration: BoxDecoration(shape: BoxShape.circle,
         gradient: RadialGradient(colors: [c, Colors.transparent])));
-}
-
-// ── Score ring painter ────────────────────────────────────────────────────────
-class _ScoreRingPainter extends CustomPainter {
-  final double progress; final int score; final Color color;
-  const _ScoreRingPainter(
-      {required this.progress, required this.score, required this.color});
-  @override
-  void paint(Canvas canvas, Size size) {
-    final c = Offset(size.width / 2, size.height / 2);
-    final r = size.width * 0.44;
-    const sw = 8.0;
-    const start = -math.pi / 2;
-    const sweep = math.pi * 2;
-    canvas.drawCircle(c, r,
-        Paint()..color = color.withOpacity(0.1)
-               ..style = PaintingStyle.stroke..strokeWidth = sw);
-    canvas.drawArc(Rect.fromCircle(center: c, radius: r),
-        start, sweep * progress * (score / 100), false,
-        Paint()..shader = SweepGradient(
-                startAngle: start, endAngle: start + sweep,
-                colors: [color.withOpacity(0.4), color])
-            .createShader(Rect.fromCircle(center: c, radius: r))
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = sw..strokeCap = StrokeCap.round);
-  }
-  @override bool shouldRepaint(_ScoreRingPainter o) =>
-      o.progress != progress || o.score != score;
 }

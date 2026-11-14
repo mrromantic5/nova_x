@@ -86,6 +86,14 @@ jobs:
             lib/core/services/subscription_service.dart \
             lib/core/services/rewards_entitlements.dart \
             lib/core/widgets/update_dialog.dart \
+            lib/features/cyber \
+            lib/features/security \
+            lib/features/guide \
+            lib/features/pro \
+            test/cyber \
+            test/security \
+            test/guide \
+            test/pro \
             test/nova \
             test/nova_capture \
             test/xcoder \
@@ -95,7 +103,7 @@ jobs:
             test/browser
 
       - name: NOVA unit tests
-        run: flutter test test/nova test/nova_capture test/xcoder test/offline test/auth test/playback test/browser
+        run: flutter test test/nova test/nova_capture test/xcoder test/offline test/auth test/playback test/browser test/cyber test/security test/guide test/pro
 
       - name: Patch flutter_inappwebview ProGuard
         run: |

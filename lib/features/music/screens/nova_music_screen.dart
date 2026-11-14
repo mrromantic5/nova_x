@@ -8,6 +8,7 @@
 // Access to the phone's music is asked here with an explanation first
 // (Android 13+: "Music and audio"; older: storage). Nothing is uploaded.
 
+import 'package:nova_x/features/guide/guide_screen.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -161,6 +162,11 @@ class _NovaMusicScreenState extends State<NovaMusicScreen> with WidgetsBindingOb
               style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.w700, fontSize: 18)),
         ]),
         actions: [
+          IconButton(
+            tooltip: 'How it works',
+            icon: const Icon(Icons.menu_book_outlined, color: AppTheme.textSecondary, size: 20),
+            onPressed: () => ReadMoreLink.open(context, 'music'),
+          ),
           IconButton(
             tooltip: 'Ask NOVA',
             icon: const Icon(Icons.auto_awesome_rounded, color: AppTheme.accentCyan),

@@ -105,8 +105,11 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           _buildAmbientGlow(),
 
           // ── Main content ────────────────────────────────────────────────
+          // 3.13.0 tablets & foldables: the slides stay a comfortable width, centred.
           SafeArea(
-            child: Column(
+            child: Center(child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 820),
+              child: Column(
               children: [
                 // Skip button row
                 _buildTopBar(),
@@ -148,6 +151,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 const SizedBox(height: 32),
               ],
             ),
+            )),
           ),
         ],
       ),

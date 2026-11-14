@@ -6,6 +6,7 @@
 //   • 9 task cards (state-aware claim buttons)
 //   • 7 redeemable feature cards (Unlock / Active · Nd left)
 
+import 'package:nova_x/features/guide/guide_screen.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -58,14 +59,59 @@ class _RewardsScreenState extends State<RewardsScreen>
     if (state == AppLifecycleState.resumed) _load();
   }
 
+  // 3.13.0: when the rewards can't be loaded, say so (with Retry) instead of
+  // showing empty Earn / Redeem lists.
+  bool _loadFailed = false;
+
   Future<void> _load({bool sync = true}) async {
-    // Report the phone's settings first, so tracked rewards are up to date.
-    if (sync) await RewardDeviceSync.sync(force: true);
-    final setup = await RewardDeviceSync.setupStatus();
-    final s = await RewardsService.fetchState();
+    RewardsState? s;
+    var setup = _setup;
+    try {
+      // Report the phone's settings first, so tracked rewards are up to date.
+      if (sync) await RewardDeviceSync.sync(force: true);
+      setup = await RewardDeviceSync.setupStatus();
+    } catch (_) {
+      // Device sync is best effort; the rewards themselves still load.
+    }
+    try {
+      s = await RewardsService.fetchState();
+    } catch (_) {
+      s = null;
+    }
     if (!mounted) return;
-    setState(() { _state = s ?? _state; _setup = setup; _loading = false; });
+    setState(() {
+      _state = s ?? _state;
+      _setup = setup;
+      _loadFailed = _state == null;
+      _loading = false;
+    });
   }
+
+  Widget _loadFailedView() => ListView(
+        padding: const EdgeInsets.fromLTRB(32, 90, 32, 40),
+        children: [
+          const Icon(Icons.cloud_off_rounded, color: AppTheme.textHint, size: 44),
+          const SizedBox(height: 14),
+          Text('Couldn\u2019t load Rewards',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(color: AppTheme.textPrimary, fontSize: 16, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 6),
+          Text('Check your connection and try again.',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 13)),
+          const SizedBox(height: 18),
+          Center(
+            child: FilledButton.icon(
+              onPressed: () {
+                setState(() => _loading = true);
+                _load();
+              },
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Retry'),
+            ),
+          ),
+        ],
+      );
 
   // ── Task ordering for the Earn tab ──────────────────────────────────────
   static const _taskOrder = [
@@ -196,13 +242,20 @@ class _RewardsScreenState extends State<RewardsScreen>
         backgroundColor: Colors.transparent, elevation: 0,
         title: Text('Rewards',
             style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.w800)),
+        actions: [
+          IconButton(
+            tooltip: 'How it works',
+            icon: const Icon(Icons.menu_book_outlined, color: AppTheme.textSecondary, size: 20),
+            onPressed: () => ReadMoreLink.open(context, 'rewards'),
+          ),
+        ],
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator(color: _gold))
           : RefreshIndicator(
               color: _gold,
               onRefresh: _load,
-              child: ListView(
+              child: _loadFailed ? _loadFailedView() : ListView(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
                 children: [
                   _dashboard(),

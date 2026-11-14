@@ -1,4 +1,6 @@
 // lib/features/settings/screens/settings_screen.dart
+import 'package:nova_x/features/guide/guide_screen.dart';
+import 'package:nova_x/features/security/security_center_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:nova_x/core/services/default_browser_service.dart';
 import 'package:nova_x/core/services/api_service.dart';
@@ -311,8 +313,7 @@ class _SettingsScreenState extends State<SettingsScreen>
                   const SizedBox(height: 4),
                   Text(
                     NovaShieldService.isEnabled
-                        ? '${NovaShieldService.protectionLevel} · '
-                          '7 layers active · NovaX DoH'
+                        ? 'Malware check on · ${NovaShieldService.stats.malwareBlocked} dangerous sites stopped'
                         : 'Protection disabled — tap to configure',
                     style: GoogleFonts.inter(
                         color: NovaShieldService.isEnabled
@@ -328,6 +329,12 @@ class _SettingsScreenState extends State<SettingsScreen>
           // ── Security & Passwords ──────────────────────────────────────────
           _sectionHeader('Security & Passwords'),
           _card([
+            // 3.13.0: every protection with real numbers + a self-test.
+            _navTile(
+              Icons.health_and_safety_rounded, 'Security Center',
+              'Shield blocking, Password Guard, Session Shield, fingerprint',
+              AppTheme.success,
+              () => _push(const SecurityCenterScreen())),
             ListTile(
               contentPadding: const EdgeInsets.symmetric(horizontal:16, vertical:4),
               leading: Container(width:34, height:34,
@@ -336,9 +343,9 @@ class _SettingsScreenState extends State<SettingsScreen>
                   borderRadius: BorderRadius.circular(10)),
                 child: Icon(Icons.shield_rounded,
                     color: _adBlock ? AppTheme.success : AppTheme.textHint, size:17)),
-              title: Text('Ad Blocker', style: GoogleFonts.inter(
+              title: Text('Ad & tracker blocker', style: GoogleFonts.inter(
                   color: AppTheme.textPrimary, fontSize:14, fontWeight: FontWeight.w500)),
-              subtitle: Text(_adBlock ? 'Blocking ads & trackers' : 'Ads not blocked',
+              subtitle: Text(_adBlock ? 'Blocking ads & trackers inside NOVA X' : 'Ads not blocked',
                   style: GoogleFonts.inter(color: AppTheme.textHint, fontSize:11)),
               trailing: Switch(
                 value: _adBlock,
@@ -534,6 +541,12 @@ class _SettingsScreenState extends State<SettingsScreen>
               'FAQ, NOVA answers and support tickets',
               AppTheme.success,
               () => _push(const SupportScreen())),
+            // 3.13.0: what every feature does, how it works and its limits.
+            _navTile(
+              Icons.menu_book_outlined, 'Feature Guide',
+              'How every NOVA X feature works',
+              AppTheme.accentCyan,
+              () => _push(const FeatureGuideScreen())),
             _navTile(
               Icons.bug_report_outlined, 'Report an Issue',
               'Tell the NOVA X team about a problem',

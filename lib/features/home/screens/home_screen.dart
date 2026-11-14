@@ -8,6 +8,8 @@
 //   • Business name search opens the business's website
 //   • Dynamic time-based subtitle (changes every 3 hours)
 
+import 'package:nova_x/features/guide/guide_screen.dart';
+import 'package:nova_x/features/security/security_center_screen.dart';
 import 'dart:async';
 import 'dart:io';
 import 'package:nova_x/core/services/default_browser_service.dart';
@@ -1312,6 +1314,11 @@ class _HomeScreenState extends State<HomeScreen>
        'fn': () => _push(const NovaNetworkScreen())},
       {'icon': Icons.screenshot_monitor_rounded, 'label': 'NOVA Capture',
        'fn': () => _push(const CaptureDashboard())},
+      // 3.13.0: NOVA Cyber on the home screen, as on PC (website & code
+      // security). NOVA Music stays in the menu.
+      {'icon': Icons.security_rounded,         'label': 'NOVA Cyber',
+       'color': const Color(0xFF6366F1),
+       'fn': () => _push(const CyberScreen())},
       {'icon': Icons.monetization_on_rounded,  'label': 'Rewards',
        'fn': () => _push(const RewardsScreen())},
     ];
@@ -1341,7 +1348,7 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
                 child: Column(children: [
                   Icon(items[i]['icon'] as IconData,
-                      color: Colors.white70, size: 22),
+                      color: (items[i]['color'] as Color?) ?? Colors.white70, size: 22),
                   const SizedBox(height: 6),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -1876,8 +1883,12 @@ class _MenuSheet extends StatelessWidget {
        'fn': () { Navigator.pop(context); onPush(const NovaMapScreen()); }},
       {'icon': Icons.shield_rounded,            'label': 'NOVA Shield','color': AppTheme.accentCyan,
        'fn': () { Navigator.pop(context); onPush(const NovaShieldScreen()); }},
-      {'icon': Icons.security_rounded,          'label': 'NOVA Cyber', 'color': const Color(0xFF7C4DFF),
+      {'icon': Icons.security_rounded,          'label': 'NOVA Cyber', 'color': const Color(0xFF6366F1),
        'fn': () { Navigator.pop(context); onPush(const CyberScreen()); }},
+      {'icon': Icons.health_and_safety_rounded, 'label': 'Security', 'color': AppTheme.success,
+       'fn': () { Navigator.pop(context); onPush(const SecurityCenterScreen()); }},
+      {'icon': Icons.menu_book_outlined,         'label': 'Guide', 'color': AppTheme.accentCyan,
+       'fn': () { Navigator.pop(context); onPush(const FeatureGuideScreen()); }},
       {'icon': Icons.speed_rounded,             'label': 'NOVA Network', 'color': const Color(0xFF39FFB0),
        'fn': () { Navigator.pop(context); onPush(const NovaNetworkScreen()); }},
       {'icon': Icons.screenshot_monitor_rounded, 'label': 'NOVA Capture', 'color': const Color(0xFFFF3B4E),

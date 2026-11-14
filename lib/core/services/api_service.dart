@@ -317,6 +317,9 @@ class ApiService {
     } on DioException catch (e) {
       if (e.response?.statusCode == 401) await clearSession();
       return null;
+    } catch (_) {
+      // 3.13.0: an unexpected answer shape (TypeError) must not escape.
+      return null;
     }
   }
 

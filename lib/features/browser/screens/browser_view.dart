@@ -44,6 +44,14 @@ import 'package:nova_x/features/playback/playback_engine.dart';
 import 'package:nova_x/features/playback/playback_page_reader.dart';
 import 'package:nova_x/features/playback/playback_player.dart';
 import 'package:nova_x/features/playback/playback_session.dart';
+import 'package:nova_x/features/guide/guide_screen.dart';
+import 'package:nova_x/features/pro/page_tools.dart';
+import 'package:nova_x/features/pro/pro_tab.dart';
+import 'package:nova_x/features/security/download_safety.dart';
+import 'package:nova_x/features/security/security_center_screen.dart';
+import 'package:nova_x/features/security/site_controls.dart';
+import 'package:nova_x/features/security/web_protections.dart';
+import 'package:nova_x/features/shield/engine/shield_engine.dart';
 
 class BrowserView extends StatefulWidget {
   final String initialQuery;
@@ -61,6 +69,10 @@ class BrowserView extends StatefulWidget {
   /// Identifies which persisted tab this view represents (Tabs switcher).
   final String? tabId;
 
+  /// 3.13.0 Safe View (Open Safely): scripts off, downloads refused, nothing
+  /// kept (always opened as an incognito tab).
+  final bool safeView;
+
   const BrowserView({
     super.key,
     required this.initialQuery,
@@ -68,6 +80,7 @@ class BrowserView extends StatefulWidget {
     this.htmlContent,
     this.autoOpenDevTools = false,
     this.tabId,
+    this.safeView = false,
   });
 
   @override
@@ -97,6 +110,35 @@ class _BrowserViewState extends State<BrowserView>
 
   // ── Ad Blocker ──────────────────────────────────────────────────────────
   bool   _adBlockEnabled = false;
+
+  // ── 3.13.0 protections (NOVA Shield blocking, Password Guard, fingerprint,
+  // site controls, rewrite rules) and the Pro tools' view of this tab ─────
+  late final ProTab _proTab = ProTab(
+    id: identityHashCode(this),
+    incognito: widget.incognito,
+    safe: widget.safeView,
+    reloadPage: () async => _wvc?.reload(),
+    leavePage: _leavePage,
+  );
+  late final WebProtections _prot = WebProtections(
+    tabKey: _proTab.id,
+    incognito: widget.incognito,
+    safeView: widget.safeView,
+    pageUrl: () => _currentUrl,
+    context: () => mounted ? context : null,
+    leave: _leavePage,
+  );
+  late final List<UserScript> _protScripts = _prot.initialScripts();
+  int get _tabKey => _proTab.id;
+
+  Future<void> _leavePage() async {
+    final c = _wvc;
+    if (c != null && await c.canGoBack()) {
+      await c.goBack();
+    } else if (mounted) {
+      Navigator.of(context).maybePop();
+    }
+  }
 
   // ── Password Manager ────────────────────────────────────────────────────
   bool   _savePasswords  = true;
@@ -272,6 +314,8 @@ class _BrowserViewState extends State<BrowserView>
     _savePasswords   = LocalDB.getSavePasswordsEnabled();
     WebpageCaptureService.register(_captureTarget);
     WidgetsBinding.instance.addObserver(this);
+    _proTab.url = initial;
+    ProTabs.instance.register(_proTab);
   }
 
   /// AI Playback only plays while NOVA X is on screen.
@@ -319,6 +363,23 @@ class _BrowserViewState extends State<BrowserView>
     if (mounted) setState(() => _playback = null);
   }
 
+  /// 3.13.0: the Site Control Center for the site in this tab.
+  Future<void> _openSiteControls() async {
+    final host = Uri.tryParse(_currentUrl)?.host ?? '';
+    if (host.isEmpty || widget.htmlContent != null) {
+      _snack('Site controls work on web pages');
+      return;
+    }
+    await showSiteControlCenter(context, host: host, tabKey: _tabKey, reload: () async {
+      final c = _wvc;
+      if (c != null) {
+        await _prot.beforeNavigation(c, _currentUrl, desktopMode: _desktopMode);
+        await c.reload();
+      }
+    });
+    if (mounted) setState(() {});
+  }
+
   /// NOVA Capture: lets "Screenshot this page" use this tab.
   late final _BrowserCaptureTarget _captureTarget = _BrowserCaptureTarget(this);
 
@@ -328,6 +389,8 @@ class _BrowserViewState extends State<BrowserView>
     _playback?.dispose();
     _playback = null;
     WebpageCaptureService.unregister(_captureTarget);
+    _prot.dispose();
+    ProTabs.instance.unregister(_proTab);
     // Incognito: clear cookies + cache on exit
     if (widget.incognito && _wvc != null) {
       _wvc!.clearCache();
@@ -616,15 +679,25 @@ class _BrowserViewState extends State<BrowserView>
                 ),
               ),
               child: Row(children: [
-                // Incognito spy icon OR lock icon
-                Icon(
-                  widget.incognito
-                      ? Icons.privacy_tip_outlined
-                      : (_isSecure ? Icons.lock_rounded : Icons.lock_open_rounded),
-                  color: widget.incognito
-                      ? AppTheme.accentPurple
-                      : (_isSecure ? AppTheme.secure : AppTheme.textHint),
-                  size: 13,
+                // Incognito spy icon OR lock icon. 3.13.0: tap it for the
+                // Site Control Center (per-site settings for this site).
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: _openSiteControls,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Icon(
+                      widget.safeView
+                          ? Icons.health_and_safety_rounded
+                          : widget.incognito
+                              ? Icons.privacy_tip_outlined
+                              : (_isSecure ? Icons.lock_rounded : Icons.lock_open_rounded),
+                      color: widget.incognito
+                          ? AppTheme.accentPurple
+                          : (_isSecure ? AppTheme.secure : AppTheme.textHint),
+                      size: 15,
+                    ),
+                  ),
                 ),
                 const SizedBox(width: 6),
                 Expanded(
@@ -751,7 +824,7 @@ class _BrowserViewState extends State<BrowserView>
               baseUrl: WebUri('https://www.google.com'),
             ),
       initialSettings: InAppWebViewSettings(
-        javaScriptEnabled:            true,
+        javaScriptEnabled:            !widget.safeView,
         domStorageEnabled:            !widget.incognito,
         databaseEnabled:              !widget.incognito,
         cacheEnabled:                 !widget.incognito,
@@ -773,8 +846,10 @@ class _BrowserViewState extends State<BrowserView>
         safeBrowsingEnabled:          true,
         textZoom:                     _textZoom.toInt(),
         userAgent:                    _desktopMode ? _desktopUA : '',
-        contentBlockers:              _adBlockEnabled
-            ? PasswordService.buildAdBlockers() : [],
+        // 3.13.0: NOVA Shield, rewrite rules and Password Guard check
+        // requests here (only while one of them needs it: every checked
+        // request makes a round trip to the app).
+        useShouldInterceptRequest:    WebProtections.needsIntercept(),
       ),
 
       initialUserScripts: UnmodifiableListView([
@@ -782,7 +857,19 @@ class _BrowserViewState extends State<BrowserView>
             injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START),
         UserScript(source: kDevtoolsHook,
             injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START),
+        ..._protScripts,
       ]),
+
+      shouldInterceptRequest: (controller, request) => _prot.intercept(request),
+
+      // Location requests: the Site Control Center choice, else ask.
+      onGeolocationPermissionsShowPrompt: (controller, origin) async {
+        final host = Uri.tryParse(origin)?.host ?? origin;
+        var allow = widget.safeView ? false : WebProtections.locationChoice(host);
+        allow ??= !widget.incognito &&
+            await _askSitePermission(_siteOf(origin), 'location', Icons.place_rounded);
+        return GeolocationPermissionShowPromptResponse(origin: origin, allow: allow, retain: false);
+      },
 
       // Grant in-page media permissions (microphone / camera) so getUserMedia
       // and voice features work inside the WebView.
@@ -790,6 +877,10 @@ class _BrowserViewState extends State<BrowserView>
       // microphone, camera and protected video playback can be granted;
       // anything else a page asks for is refused.
       onPermissionRequest: (controller, request) async {
+        // Safe View: no camera, microphone or protected media.
+        if (widget.safeView) {
+          return PermissionResponse(resources: request.resources, action: PermissionResponseAction.DENY);
+        }
         final site = _siteOf(request.origin.toString());
         final wanted = request.resources;
         final mic = wanted.contains(PermissionResourceType.MICROPHONE);
@@ -798,7 +889,9 @@ class _BrowserViewState extends State<BrowserView>
         final grant = <PermissionResourceType>[];
         if (mic || cam) {
           final what = mic && cam ? 'camera and microphone' : (cam ? 'camera' : 'microphone');
-          final ok = await _askSitePermission(site, what,
+          // 3.13.0: a saved Site Control Center choice is used without asking.
+          final saved = WebProtections.mediaChoice(request.origin.host, camera: cam, microphone: mic);
+          final ok = saved ?? await _askSitePermission(site, what,
               cam ? Icons.videocam_rounded : Icons.mic_rounded);
           if (ok) {
             if (mic) grant.add(PermissionResourceType.MICROPHONE);
@@ -822,6 +915,11 @@ class _BrowserViewState extends State<BrowserView>
 
       onWebViewCreated: (c) {
         _wvc = c;
+        _proTab.web = c;
+        _prot.attach(c,
+            hadCosmetic: _protScripts.any((u) => u.groupName == 'nova_shield_cosmetic'),
+            hadFingerprint: _protScripts.any((u) => u.groupName == 'nova_fp'),
+            hadGuard: _protScripts.any((u) => u.groupName == 'nova_pw_guard'));
         // Register the console log handler BEFORE any page loads
         // Password detection handler
         if (!widget.incognito && _savePasswords) {
@@ -1007,6 +1105,16 @@ class _BrowserViewState extends State<BrowserView>
           return NavigationActionPolicy.CANCEL;
         }
 
+        // 3.13.0: rewrite-rule redirects and the site's settings, before
+        // a page of another site loads.
+        if ((scheme == 'https' || scheme == 'http') && navigationAction.isForMainFrame) {
+          final to = await _prot.beforeNavigation(controller, uri.toString(), desktopMode: _desktopMode);
+          if (to != null) {
+            await controller.loadUrl(urlRequest: URLRequest(url: WebUri(to)));
+            return NavigationActionPolicy.CANCEL;
+          }
+        }
+
         // Standard schemes — let WebView handle normally
         if (scheme == 'https' || scheme == 'http' ||
             scheme == 'data'  || scheme == 'blob' ||
@@ -1101,6 +1209,8 @@ class _BrowserViewState extends State<BrowserView>
         }
         if (url == null || !mounted) return;
         final u = url.toString();
+        _proTab.url = u;
+        _prot.onLoadStart(c, u, desktopMode: _desktopMode);
         setState(() {
           _currentUrl = u;
           _isSecure   = u.startsWith('https://');
@@ -1128,10 +1238,11 @@ class _BrowserViewState extends State<BrowserView>
         await c.evaluateJavascript(source: kDevtoolsHook);
         if (_desktopMode)
           await c.evaluateJavascript(source: _desktopViewportJS);
-        // Ad blocker: cosmetic filtering — hide common ad containers so blocked
-        // ads don't leave blank gaps. Pairs with the network-level ContentBlockers.
-        if (_adBlockEnabled)
-          await c.evaluateJavascript(source: PasswordService.adCosmeticJS);
+        // 3.13.0: NOVA Shield page clean-up (EasyList element hiding + empty
+        // boxes of blocked ads removed), autoplay and rewrite rules.
+        _proTab.url = u;
+        _proTab.title = _pageTitle;
+        await _prot.onLoadStop(c, u);
         // AI Playback: ▶ when the page has enough text (not in incognito)
         _checkPlayback(c, u);
         // Don't save history in incognito
@@ -1158,6 +1269,7 @@ class _BrowserViewState extends State<BrowserView>
       },
 
       onProgressChanged: (_, p) {
+        _proTab.progress = p;
         if (mounted) setState(() => _progress = p / 100);
       },
 
@@ -1166,8 +1278,24 @@ class _BrowserViewState extends State<BrowserView>
           _snack('Downloads are disabled in incognito mode');
           return;
         }
+        if (widget.safeView) {
+          _snack('Downloads are blocked in Safe View');
+          return;
+        }
         final url  = request.url.toString();
-        final name = url.split('/').last.split('?').first;
+        final name = (request.suggestedFilename?.isNotEmpty ?? false)
+            ? request.suggestedFilename!
+            : url.split('/').last.split('?').first;
+        // 3.13.0 Download safety: app files (APK) show where they come from
+        // first. NOVA X never installs apps itself.
+        if (DownloadSafety.isApp(name, request.mimeType) && await DownloadSafety.enabled()) {
+          if (!mounted) return;
+          final keep = await DownloadSafety.confirmApp(context, name: name, url: url, page: _currentUrl);
+          if (!keep) {
+            _snack('Download cancelled');
+            return;
+          }
+        }
         await LocalDB.addDownload({
           'url':       url,
           'filename':  name.isNotEmpty ? name : 'download',
@@ -1523,7 +1651,7 @@ class _BrowserViewState extends State<BrowserView>
                 fontWeight: FontWeight.w700)),
             subtitle: Text(
               NovaShieldService.isEnabled
-                  ? '${NovaShieldService.protectionLevel} protection — ON'
+                  ? 'ON · ${NovaShieldEngine.instance.blockedToday()} requests blocked today'
                   : 'Protection disabled',
               style: GoogleFonts.inter(
                   color: NovaShieldService.isEnabled
@@ -1577,6 +1705,24 @@ class _BrowserViewState extends State<BrowserView>
             },
           ),
 
+          // ── 3.13.0: Site controls, Security Center, Page tools, Guide ───────
+          _menuTile(Icons.tune_rounded, 'Site controls', () {
+            Navigator.pop(context);
+            _openSiteControls();
+          }, color: AppTheme.accentCyan),
+          _menuTile(Icons.health_and_safety_rounded, 'Security Center', () {
+            Navigator.pop(context);
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const SecurityCenterScreen()));
+          }, color: AppTheme.success),
+          _menuTile(Icons.construction_rounded, 'Page tools', () {
+            Navigator.pop(context);
+            showPageTools(context, _proTab);
+          }, color: AppTheme.accentPurple),
+          _menuTile(Icons.menu_book_outlined, 'Feature Guide', () {
+            Navigator.pop(context);
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const FeatureGuideScreen()));
+          }),
+
           // ── FIND IN PAGE (bonus) ──────────────────────────────────────────
           // ── COOKIE EDITOR ──────────────────────────────────────────────────
           _menuTile(Icons.cookie_outlined, 'Cookie Editor',
@@ -1613,18 +1759,26 @@ class _BrowserViewState extends State<BrowserView>
                 borderRadius: BorderRadius.circular(10)),
               child: Icon(Icons.shield_rounded,
                 color: _adBlockEnabled ? AppTheme.success : AppTheme.textHint, size: 18)),
-            title: Text('Ad Blocker', style: GoogleFonts.inter(
+            title: Text('Ad & tracker blocker', style: GoogleFonts.inter(
                 color: AppTheme.textPrimary, fontSize:14)),
-            subtitle: Text(_adBlockEnabled ? 'ON — ads blocked' : 'OFF',
+            // 3.13.0: a real count — requests NOVA Shield blocked on this page.
+            subtitle: Text(
+                !_adBlockEnabled
+                    ? 'OFF'
+                    : NovaShieldEngine.instance.isPaused(Uri.tryParse(_currentUrl)?.host ?? '')
+                        ? 'Paused on this site'
+                        : 'ON — ${NovaShieldEngine.instance.countsFor(_tabKey).total} blocked on this page',
                 style: GoogleFonts.inter(color: AppTheme.textHint, fontSize:11)),
             trailing: Switch(
               value: _adBlockEnabled,
               onChanged: (v) async {
-                await LocalDB.setAdBlockEnabled(v);
+                await NovaShieldEngine.instance.setEnabled(v);
                 setState(() => _adBlockEnabled = v);
                 Navigator.pop(context);
+                final c = _wvc;
+                if (c != null && v) await WebProtections.enableIntercept(c);
                 await _wvc?.reload();
-                _snack(v ? '🛡️ Ad Blocker ON' : 'Ad Blocker OFF');
+                _snack(v ? '🛡️ Ad & tracker blocker ON' : 'Ad & tracker blocker OFF');
               },
               activeColor: AppTheme.success,
             ),

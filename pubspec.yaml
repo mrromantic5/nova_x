@@ -1,7 +1,7 @@
 name: nova_x
 description: NOVA X — The Future of Browsing
 publish_to: 'none'
-version: 3.12.3+30
+version: 3.13.0+31
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -30,6 +30,7 @@ dependencies:
   file_picker: ^8.0.0+1
   font_awesome_flutter: ^10.7.0
   rive: ^0.13.17
+  crypto: ^3.0.3   # 3.13.0 Password Guard: PBKDF2-HMAC-SHA256 hashes (never the password)
 
 dependency_overrides:
   js: ^0.7.1
@@ -51,3 +52,5 @@ flutter:
     - assets/xcoder/ace/snippets/
     # Dev Tools inspector agent (3.11.0)
     - assets/devtools/
+    # NOVA Shield (3.13.0): EasyList / EasyPrivacy snapshots (updated weekly)
+    - assets/shield/

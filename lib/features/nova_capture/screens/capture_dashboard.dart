@@ -3,6 +3,7 @@
 // NOVA Capture home: what is happening now, quick actions, recent captures,
 // storage and permissions — every state ends in success, failure or cancel.
 
+import 'package:nova_x/features/guide/guide_screen.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_theme.dart';
@@ -94,6 +95,11 @@ class _CaptureDashboardState extends State<CaptureDashboard> with WidgetsBinding
         elevation: 0,
         title: Text('NOVA Capture', style: captureText(18, weight: FontWeight.w800)),
         actions: [
+          IconButton(
+            tooltip: 'How it works',
+            icon: const Icon(Icons.menu_book_outlined, color: AppTheme.textSecondary, size: 20),
+            onPressed: () => ReadMoreLink.open(context, 'capture'),
+          ),
           IconButton(
             tooltip: 'Recording settings',
             icon: const Icon(Icons.tune_rounded, color: AppTheme.textPrimary),

@@ -61,12 +61,22 @@ import 'package:nova_x/features/premium/screens/subscription_screen.dart';
 import 'package:nova_x/features/rewards/screens/rewards_screen.dart';
 import 'package:nova_x/core/services/analytics_service.dart';
 
+// 3.13.0 (from NOVA X for PC):
+//  • A created image is always saved into its own chat, even when another
+//    chat was opened or NOVA AI was closed while it was being made.
+//  • NOVA knows about the images and videos it created ("what did you just
+//    make?"), and a follow-up question about a created image shows it to NOVA.
 class AiAssistantScreen extends StatefulWidget {
-  const AiAssistantScreen({super.key, this.pageCapture});
+  const AiAssistantScreen({super.key, this.pageCapture, this.initialText});
 
   /// Opened from the browser's "Ask NOVA about this page": the capture is
   /// attached to the first message.
   final NovaPageCapture? pageCapture;
+
+  /// 3.13.0: text put in the message box when the chat opens (for example
+  /// NOVA Cyber's "Fix my code with NOVA AI"). Not sent until the user taps
+  /// send, so they can add their code first.
+  final String? initialText;
 
   @override
   State<AiAssistantScreen> createState() => _AiAssistantScreenState();
@@ -161,6 +171,8 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
   @override
   void initState() {
     super.initState();
+    final initial = widget.initialText;
+    if (initial != null && initial.isNotEmpty) _ctrl.text = initial;
     WidgetsBinding.instance.addObserver(this);
     _nativeSub = _native.events.listen(_onNativeEvent);
     // "Hey NOVA" pauses while the chat is open (it has its own mic button).
@@ -497,6 +509,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
   // ── Conversation history for NOVA AI (bounded, text turns only) ───────────
   List<Map<String, String>> _history() {
     final out = <Map<String, String>>[];
+    String lastMediaPrompt = '';
     for (final m in _msgs) {
       final id      = m['id'] ?? '';
       final role    = m['role'] ?? '';
@@ -504,17 +517,28 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
       if (id == 'welcome' || id == 'cleared' || content.isEmpty) continue;
       if (role != 'user' && role != 'assistant') continue;
       if (m['error'] == 'true') continue;
-      if (content.startsWith('[IMAGE]') || content.startsWith('[VIDEO]') ||
-          content.startsWith('[LOADING_VIDEO]') || content.startsWith('[GENERATING_IMAGE]') ||
+      if (content.startsWith('[LOADING_VIDEO]') || content.startsWith('[GENERATING_IMAGE]') ||
           content.startsWith('[OPENING]')) {
         continue;
       }
       final lower = content.toLowerCase();
-      if (role == 'user' &&
-          (lower.startsWith('/image ') || lower.startsWith('/video '))) {
-        continue;
+      String text;
+      if (role == 'user' && (lower.startsWith('/image ') || lower.startsWith('/video '))) {
+        // NOVA should know what was asked for (image/video generation).
+        final video = lower.startsWith('/video ');
+        lastMediaPrompt = content.substring(7).trim();
+        text = video ? 'Create a video of: $lastMediaPrompt' : 'Create an image of: $lastMediaPrompt';
+      } else if (content.startsWith('[IMAGE]')) {
+        text = lastMediaPrompt.isEmpty
+            ? '(I created an image for you; it is shown in this chat.)'
+            : '(I created the image of "$lastMediaPrompt" for you; it is shown in this chat.)';
+      } else if (content.startsWith('[VIDEO]')) {
+        text = lastMediaPrompt.isEmpty
+            ? '(I created a video for you; it is shown in this chat.)'
+            : '(I created the video of "$lastMediaPrompt" for you; it is shown in this chat.)';
+      } else {
+        text = NovaMediaStore.forAi(content); // photos → "(I shared a photo.)"
       }
-      final text = NovaMediaStore.forAi(content); // photos → "(I shared a photo.)"
       out.add({
         'role':    role,
         'content': text.length > NovaConfig.maxHistoryChars
@@ -596,7 +620,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
         _loading = false;
       });
       _scrollEnd();
-      _generateImage(prompt, genId);
+      _generateImage(prompt, genId, afterId: msgId);
       return;
     }
 
@@ -962,8 +986,16 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
     final start = _msgs.length > 5 ? _msgs.length - 5 : 0; // the last couple of turns
     for (var i = _msgs.length - 2; i >= start; i--) {
       final m = _msgs[i];
+      final content = m['content'] ?? '';
+      if (m['role'] == 'assistant' && content.startsWith('[IMAGE]')) {
+        // An image NOVA created: "what's in it?", "make the box blue?"…
+        final parts = content.substring(7).split('\n');
+        final ref = parts.length > 1 ? parts[1].trim() : '';
+        if (NovaMediaStore.isValidRef(ref)) return [ref];
+        continue;
+      }
       if (m['role'] != 'user') continue;
-      final refs = NovaMediaStore.split(m['content'] ?? '').photos;
+      final refs = NovaMediaStore.split(content).photos;
       if (refs.isNotEmpty) return refs;
     }
     return const [];
@@ -1061,8 +1093,9 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
 
   /// Creates the image, keeps it on the phone (nova_media) and replaces the
   /// "creating" card with it. Failures give the use back.
-  Future<void> _generateImage(String prompt, String genId) async {
+  Future<void> _generateImage(String prompt, String genId, {String? afterId}) async {
     final chatId = _chatId;
+    final repo = _chats;
     final url = '$_imageApi${Uri.encodeQueryComponent(prompt)}';
     try {
       final res = await _dio.get<List<int>>(
@@ -1087,12 +1120,58 @@ class _AiAssistantScreenState extends State<AiAssistantScreen>
       AnalyticsService.log('image_generated', feature: 'nova_ai');
       // The image lives on the phone; the server address is never re-used
       // (it would create a new image).
-      if (_updateMsg(genId, ref == null ? '[IMAGE]nova:image' : '[IMAGE]nova:image\n$ref')) _persist();
-      _scrollEnd();
+      final content = ref == null ? '[IMAGE]nova:image' : '[IMAGE]nova:image\n$ref';
+      if (mounted && chatId == _chatId) {
+        if (!_updateMsg(genId, content)) {
+          // The chat was reopened meanwhile (the "creating" card isn't saved):
+          // put the image back after the request.
+          final after = afterId == null ? -1 : _msgs.indexWhere((m) => m['id'] == afterId);
+          final msg = {'id': genId, 'role': 'assistant', 'content': content};
+          setState(() {
+            if (after >= 0) {
+              _msgs.insert(after + 1, msg);
+            } else {
+              _msgs.add(msg);
+            }
+          });
+        }
+        _persist();
+        _scrollEnd();
+      } else {
+        // Another chat was opened, or the NOVA AI tab was closed, while the
+        // image was being made: put it into its own chat's saved history.
+        await _saveIntoChat(repo, chatId, genId, afterId, content);
+      }
     } catch (_) {
       await NovaQuota.refund(NovaQuotaKind.image);
       _updateMsg(genId, "⚠️ I couldn't create that image right now. Please try again "
           "(this one didn't count toward your limit).", error: true);
+    }
+  }
+
+  /// Adds a finished image to a chat that is not on screen any more.
+  static Future<void> _saveIntoChat(
+      NovaChatRepository? known, String chatId, String id, String? afterId, String content) async {
+    try {
+      final repo = known ?? await NovaChatRepository.open();
+      final saved = await repo.load(chatId);
+      if (saved == null || saved.isEmpty) return; // chat deleted or never saved
+      final msgs = [for (final m in saved) Map<String, String>.of(m)];
+      final at = msgs.indexWhere((m) => m['id'] == id);
+      final msg = {'id': id, 'role': 'assistant', 'content': content};
+      if (at >= 0) {
+        msgs[at] = msg;
+      } else {
+        final after = afterId == null ? -1 : msgs.indexWhere((m) => m['id'] == afterId);
+        if (after >= 0) {
+          msgs.insert(after + 1, msg);
+        } else {
+          msgs.add(msg);
+        }
+      }
+      await repo.save(chatId, msgs, titleIfNew: 'New chat');
+    } catch (_) {
+      // storage unavailable: the image file is still kept on this phone
     }
   }
 

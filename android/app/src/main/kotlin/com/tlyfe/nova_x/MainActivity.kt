@@ -122,6 +122,15 @@ class MainActivity : FlutterFragmentActivity() {
                         result.success(pendingFeature)
                         pendingFeature = null
                     }
+                    // 3.13.0: NOVA Cyber keeps the screen on while a scan runs.
+                    "keepScreenOn" -> {
+                        val on = call.arguments as? Boolean ?: false
+                        runOnUiThread {
+                            if (on) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                            else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        }
+                        result.success(true)
+                    }
                     else -> result.notImplemented()
                 }
             }

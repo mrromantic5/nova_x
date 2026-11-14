@@ -70,21 +70,57 @@ class _ProfileScreenState extends State<ProfileScreen>
     super.dispose();
   }
 
+  // 3.13.0: any failure (network, unexpected answer shape) ends the spinner
+  // and shows "Couldn't load — Retry" instead of spinning forever.
+  bool _loadFailed = false;
+
   Future<void> _loadAll() async {
-    setState(() => _loading = true);
-    _loggedIn = await ApiService.isLoggedIn();
-    _profileImgPath = LocalDB.getProfileImagePath();
-    if (_loggedIn) {
-      final profile = await ApiService.getProfile();
-      if (profile != null) {
-        _serverProfile = profile;
-        _avatarColor = (profile['avatar_color'] as String?) ?? 'cyan';
-        _nameCtrl.text = (profile['username'] as String?) ?? '';
+    if (mounted) setState(() { _loading = true; _loadFailed = false; });
+    try {
+      _loggedIn = await ApiService.isLoggedIn();
+      _profileImgPath = LocalDB.getProfileImagePath();
+      if (_loggedIn) {
+        final profile = await ApiService.getProfile();
+        if (profile != null) {
+          _serverProfile = profile;
+          _avatarColor = (profile['avatar_color'] as String?) ?? 'cyan';
+          _nameCtrl.text = (profile['username'] as String?) ?? '';
+        } else if (_serverProfile.isEmpty) {
+          _loadFailed = true;
+        }
+        try {
+          _myBiz = await ApiService.getMyBusinesses();
+        } catch (_) {
+          // Businesses are optional: the profile still shows.
+        }
       }
-      _myBiz = await ApiService.getMyBusinesses();
+    } catch (_) {
+      _loadFailed = true;
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
-    setState(() => _loading = false);
   }
+
+  Widget _buildLoadFailed() => Padding(
+        padding: const EdgeInsets.fromLTRB(32, 80, 32, 40),
+        child: Column(children: [
+          const Icon(Icons.cloud_off_rounded, color: AppTheme.textHint, size: 44),
+          const SizedBox(height: 14),
+          Text('Couldn\u2019t load your profile',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(color: AppTheme.textPrimary, fontSize: 16, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 6),
+          Text('Check your connection and try again.',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 13)),
+          const SizedBox(height: 18),
+          FilledButton.icon(
+            onPressed: _loadAll,
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: const Text('Retry'),
+          ),
+        ]),
+      );
 
   // ── Profile image (LOCAL only) ─────────────────────────────────
   Future<void> _pickProfileImage() async {
@@ -325,7 +361,7 @@ class _ProfileScreenState extends State<ProfileScreen>
           child: CustomScrollView(slivers: [
           _buildAppBar(),
           SliverToBoxAdapter(
-            child: _loggedIn ? _buildLoggedIn() : _buildNotLoggedIn(),
+            child: !_loggedIn ? _buildNotLoggedIn() : (_loadFailed ? _buildLoadFailed() : _buildLoggedIn()),
           ),
         ]),
         ),

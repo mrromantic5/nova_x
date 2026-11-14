@@ -23,6 +23,9 @@ import 'features/nova_capture/widgets/floating_recording_controls.dart';
 import 'package:nova_x/core/services/analytics_service.dart';
 import 'package:nova_x/core/services/app_info.dart';
 import 'package:nova_x/core/services/device_clock.dart';
+import 'package:nova_x/features/pro/pro_tab.dart';
+import 'package:nova_x/features/security/session_shield.dart';
+import 'package:nova_x/features/security/web_protections.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -87,7 +90,16 @@ class _NovaXAppState extends State<NovaXApp> with WidgetsBindingObserver {
       AppInfo.load();
       AnalyticsService.start();
       ApiService.syncTimeZone();
+      // 3.13.0: NOVA Shield lists, Site controls, Password Guard… load in the
+      // background; Session Shield signs out of protected sites at start
+      // (Android may have closed NOVA X without warning).
+      WebProtections.warmUp().then((_) => SessionShield.instance.onAppStart()).catchError((_) {});
     });
+    // Pro tools (Open Safely, Site X-ray…) open addresses in a new browser screen.
+    ProTabs.instance.opener = (url, {bool incognito = false, bool safe = false}) {
+      navigatorKey.currentState?.push(MaterialPageRoute(
+          builder: (_) => BrowserView(initialQuery: url, incognito: incognito || safe, safeView: safe)));
+    };
   }
 
   @override
@@ -99,7 +111,19 @@ class _NovaXAppState extends State<NovaXApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // Travelled? Greetings follow the new time zone.
-    if (state == AppLifecycleState.resumed) ApiService.syncTimeZone();
+    if (state == AppLifecycleState.resumed) {
+      ApiService.syncTimeZone();
+      // Session Shield: back after the chosen time away → protected sites
+      // are signed out; the open page reloads.
+      SessionShield.instance.onForeground().then((signedOut) {
+        final t = ProTabs.instance.active;
+        if (signedOut && t != null && SessionShield.instance.isProtected(t.host)) t.reloadPage();
+      }).catchError((_) {});
+    } else if (state == AppLifecycleState.paused) {
+      SessionShield.instance.onBackground();
+    } else if (state == AppLifecycleState.detached) {
+      SessionShield.instance.onAppExit();
+    }
   }
 
   // ── Core fix: poll until navigator is mounted, then navigate ───────────────

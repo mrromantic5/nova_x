@@ -1,5 +1,7 @@
 // lib/main.dart
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:nova_x/features/browser/browser_identity.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -49,6 +51,7 @@ void main() async {
   await DeviceClock.load(); // phone time zone (NOVA AI date/time, greetings) — 3.9.0
   await Firebase.initializeApp();
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  unawaited(BrowserIdentity.init()); // 3.13.2: Chrome-style user agent for the browser
   NovaToast.navigatorKey = navigatorKey; // app-wide bottom toasts (rewards, limits)
   CaptureVoiceActionHandler.install(); // NOVA Capture: screenshots + screen recorder (offline)
   runApp(const ProviderScope(child: NovaXApp()));

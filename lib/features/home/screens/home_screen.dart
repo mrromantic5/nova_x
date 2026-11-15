@@ -9,6 +9,7 @@
 //   • Dynamic time-based subtitle (changes every 3 hours)
 
 import 'package:nova_x/core/widgets/windows_download_card.dart';
+import 'package:nova_x/features/auth/services/google_web_signin.dart';
 import 'package:nova_x/features/guide/guide_screen.dart';
 import 'package:nova_x/features/security/security_center_screen.dart';
 import 'dart:async';
@@ -190,6 +191,13 @@ class _HomeScreenState extends State<HomeScreen>
     DefaultBrowserService.onOpenFeature = _openNovaFeature;
     _handleDefaultBrowser();
     _openQueuedFeature();
+    // 3.13.2: after signing in with Google (or a Gmail address), offer to
+    // sign the browser in to Google too.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(milliseconds: 900), () {
+        if (mounted) GoogleWebSignIn.showIfPending(context);
+      });
+    });
     _subtitle = _buildSubtitle();
     _animCtrl = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 800));

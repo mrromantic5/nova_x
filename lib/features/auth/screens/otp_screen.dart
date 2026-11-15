@@ -9,6 +9,7 @@ import 'package:nova_x/core/services/api_service.dart';
 import 'package:nova_x/core/theme/app_theme.dart';
 import '../../home/screens/home_screen.dart';
 import '../../permissions/screens/permission_slides_screen.dart';
+import '../services/google_web_signin.dart';
 
 class OtpScreen extends StatefulWidget {
   final int    userId;
@@ -96,6 +97,7 @@ class _OtpScreenState extends State<OtpScreen>
     setState(() => _verifying = false);
     if (res['success'] == true) {
       HapticFeedback.lightImpact();
+      await GoogleWebSignIn.offer(widget.email); // Gmail: offer the browser Google sign-in
       await _onVerifySuccess();       // ← permission-aware navigation
     } else {
       setState(() => _error = res['message'] as String? ?? 'Invalid code.');

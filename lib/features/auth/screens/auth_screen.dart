@@ -14,6 +14,8 @@ import '../../legal/screens/privacy_screen.dart';
 import '../../home/screens/home_screen.dart';
 import '../../permissions/screens/permission_slides_screen.dart';
 import '../services/auth_lock.dart';
+import '../services/google_auth.dart';
+import '../services/google_web_signin.dart';
 import 'forgot_password_screen.dart';
 import 'otp_screen.dart';
 
@@ -28,6 +30,7 @@ class _AuthScreenState extends State<AuthScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabs;
   bool _loading = false;
+  bool _googleLoading = false;
   bool _obscure  = true;
   bool _obscure2 = true;
   bool _obscure3 = true;
@@ -357,6 +360,7 @@ class _AuthScreenState extends State<AuthScreen>
     setState(() => _loading = false);
     if (res['success'] == true) {
       AuthLock.clear(AuthLock.login, email);
+      await GoogleWebSignIn.offer(email); // Gmail: offer the browser Google sign-in
       HapticFeedback.lightImpact();
       _reactSuccess();
       await Future.delayed(const Duration(milliseconds: 600));
@@ -450,6 +454,75 @@ class _AuthScreenState extends State<AuthScreen>
       _loginPassCtrl.clear();
       _error = '';
     });
+  }
+
+  /// 3.13.2: Continue with Google (sign up or log in in one step).
+  Future<void> _googleSignIn() async {
+    if (_loading || _googleLoading) return;
+    FocusScope.of(context).unfocus();
+    setState(() { _googleLoading = true; _error = ''; });
+    final res = await GoogleAuth.signIn();
+    if (!mounted) return;
+    setState(() => _googleLoading = false);
+    if (res['success'] == true) {
+      HapticFeedback.lightImpact();
+      _reactSuccess();
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (!mounted) return;
+      await _onAuthSuccess();
+    } else if (res['cancelled'] == true) {
+      _setAnimation('idle', loop: true, force: true);
+    } else {
+      _reactFail(fallback: 'idle');
+      setState(() => _error = res['message'] as String? ?? 'Google sign-in failed.');
+    }
+  }
+
+  Widget _googleButton() {
+    final busy = _googleLoading;
+    final label = _tabs.index == 0 ? 'Continue with Google' : 'Sign up with Google';
+    return Column(children: [
+      const SizedBox(height: 14),
+      Row(children: [
+        const Expanded(child: Divider(color: AppTheme.divider, height: 1)),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Text('or', style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 12)),
+        ),
+        const Expanded(child: Divider(color: AppTheme.divider, height: 1)),
+      ]),
+      const SizedBox(height: 14),
+      Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: (_loading || busy) ? null : _googleSignIn,
+          child: SizedBox(
+            height: 52,
+            width: double.infinity,
+            child: Center(
+              child: busy
+                  ? const SizedBox(width: 22, height: 22,
+                      child: CircularProgressIndicator(color: Color(0xFF4285F4), strokeWidth: 2))
+                  : Row(mainAxisSize: MainAxisSize.min, children: [
+                      const GoogleMark(size: 20),
+                      const SizedBox(width: 12),
+                      Text(label,
+                          style: GoogleFonts.inter(
+                              color: const Color(0xFF1F1F1F), fontSize: 15, fontWeight: FontWeight.w600)),
+                    ]),
+            ),
+          ),
+        ),
+      ),
+      if (_tabs.index == 1) ...[
+        const SizedBox(height: 8),
+        Text('By continuing with Google you agree to the Terms of Service and Privacy Policy.',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 11)),
+      ],
+    ]);
   }
 
   void _continueAsGuest() => Navigator.pushReplacement(
@@ -615,6 +688,8 @@ class _AuthScreenState extends State<AuthScreen>
               ),
             );
             }),
+
+            _googleButton(),
 
             if (_tabs.index == 1) ...[
               const SizedBox(height: 10),

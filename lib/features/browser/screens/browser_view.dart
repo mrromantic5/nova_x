@@ -49,6 +49,7 @@ import 'package:nova_x/features/pro/page_tools.dart';
 import 'package:nova_x/features/pro/pro_tab.dart';
 import 'package:nova_x/features/security/download_safety.dart';
 import 'package:nova_x/features/downloads/download_manager.dart';
+import 'package:nova_x/features/browser/browser_identity.dart';
 import 'package:nova_x/features/downloads/download_names.dart';
 import 'package:nova_x/features/downloads/screens/downloads_screen.dart';
 import 'package:nova_x/features/security/security_center_screen.dart';
@@ -423,13 +424,15 @@ class _BrowserViewState extends State<BrowserView>
 
   Future<void> _toggleDesktopMode() async {
     setState(() => _desktopMode = !_desktopMode);
-    await _wvc?.setSettings(
-      settings: InAppWebViewSettings(
-        userAgent: _desktopMode ? _desktopUA : '',  // '' resets to default mobile UA
-      ),
-    );
+    // 3.13.2: change only the user agent (a fresh settings object would
+    // reset every other setting to its default).
+    final cur = await _wvc?.getSettings();
+    if (cur != null) {
+      cur.userAgent = _desktopMode ? _desktopUA : BrowserIdentity.mobile; // '' = WebView default
+      await _wvc?.setSettings(settings: cur);
+    }
     await _wvc?.reload();
-    _snack(_desktopMode ? '🖥️ Desktop site' : '📱 Mobile site');
+    _snack(_desktopMode ? 'Desktop site' : 'Mobile site');
   }
 
   Future<void> _applyTextZoom(double zoom) async {
@@ -848,7 +851,11 @@ class _BrowserViewState extends State<BrowserView>
         allowContentAccess:           true,
         safeBrowsingEnabled:          true,
         textZoom:                     _textZoom.toInt(),
-        userAgent:                    _desktopMode ? _desktopUA : '',
+        // 3.13.2: introduce NOVA X as a browser, not an embedded web view
+        // (Chrome's user agent, no X-Requested-With header) so sites such as
+        // Google sign-in treat it like Chrome. See browser_identity.dart.
+        userAgent:                    _desktopMode ? _desktopUA : BrowserIdentity.mobile,
+        requestedWithHeaderOriginAllowList: <String>{},
         // 3.13.0: NOVA Shield, rewrite rules and Password Guard check
         // requests here (only while one of them needs it: every checked
         // request makes a round trip to the app).
@@ -918,6 +925,17 @@ class _BrowserViewState extends State<BrowserView>
 
       onWebViewCreated: (c) {
         _wvc = c;
+        // 3.13.2: if the browser identity wasn't ready when this tab was
+        // built, apply it now (before most pages have loaded).
+        if (BrowserIdentity.mobile.isEmpty && !_desktopMode) {
+          BrowserIdentity.init().then((_) async {
+            if (!mounted || _desktopMode || BrowserIdentity.mobile.isEmpty) return;
+            final cur = await c.getSettings();
+            if (cur == null || cur.userAgent == BrowserIdentity.mobile) return;
+            cur.userAgent = BrowserIdentity.mobile;
+            await c.setSettings(settings: cur);
+          });
+        }
         _proTab.web = c;
         _prot.attach(c,
             hadCosmetic: _protScripts.any((u) => u.groupName == 'nova_shield_cosmetic'),
@@ -1374,7 +1392,9 @@ return await new Promise(function (ok, bad) {
       } else {
         String ua = '';
         try {
-          ua = _desktopMode ? _desktopUA : await InAppWebViewController.getDefaultUserAgent();
+          await BrowserIdentity.init();
+          ua = _desktopMode ? _desktopUA : BrowserIdentity.mobile;
+          if (ua.isEmpty) ua = await InAppWebViewController.getDefaultUserAgent();
         } catch (_) {}
         await dm.start(
           url: url,

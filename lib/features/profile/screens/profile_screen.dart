@@ -13,6 +13,7 @@ import 'package:nova_x/core/services/subscription_service.dart';
 import 'package:nova_x/core/services/rewards_entitlements.dart';
 import 'package:nova_x/features/premium/screens/subscription_screen.dart';
 import '../../auth/screens/auth_screen.dart';
+import '../../auth/services/google_web_signin.dart';
 import 'package:nova_x/core/services/app_info.dart';
 import '../../support/screens/support_screen.dart';
 import '../../support/screens/issue_report_screen.dart';
@@ -496,6 +497,42 @@ class _ProfileScreenState extends State<ProfileScreen>
   );
 
   // ── LOGGED IN ──────────────────────────────────────────────────
+  /// 3.13.2: sign the NOVA X browser in to Google (Gmail, YouTube, Drive).
+  Widget _buildGoogleWebRow() {
+    final email = (_serverProfile['email'] as String?) ?? '';
+    return Material(
+      color: AppTheme.bgCard,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => GoogleWebSignIn.open(context, email),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(children: [
+            Container(
+              width: 38,
+              height: 38,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10)),
+              child: const GoogleMark(size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('Sign in to Google in the browser',
+                    style: GoogleFonts.inter(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 2),
+                Text('Use Gmail, YouTube and Drive signed in, like in Chrome',
+                    style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 12)),
+              ]),
+            ),
+            const Icon(Icons.chevron_right_rounded, color: AppTheme.textHint),
+          ]),
+        ),
+      ),
+    );
+  }
+
   Widget _buildLoggedIn() {
     final color = _colorFromName(_avatarColor);
     final name = ((_serverProfile['username'] as String?) ?? 'N');
@@ -512,6 +549,8 @@ class _ProfileScreenState extends State<ProfileScreen>
           child: _saveButton()),
       const SizedBox(height: 28),
       _section('YOUR STATS', _buildStats()),
+      const SizedBox(height: 28),
+      _section('BROWSER', _buildGoogleWebRow()),
       const SizedBox(height: 28),
       _section('NOVA X BUSINESS', _buildBizSection()),
       const SizedBox(height: 28),

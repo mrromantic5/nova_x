@@ -92,6 +92,9 @@ jobs:
             lib/features/pro \
             lib/features/downloads \
             lib/core/widgets/windows_download_card.dart \
+            lib/features/auth/services/google_auth.dart \
+            lib/features/auth/services/google_web_signin.dart \
+            lib/features/browser/browser_identity.dart \
             test/cyber \
             test/security \
             test/guide \

@@ -172,6 +172,30 @@ class ApiService {
     }
   }
 
+  // ── Continue with Google (3.13.2, google_auth.php) ───────────
+  // [idToken] is the Google ID token from Google Sign-In; the server checks
+  // it and signs in (or creates) the account.
+  static Future<Map<String, dynamic>> googleLogin(String idToken) async {
+    try {
+      final res = await _dio.post('/api/v1/auth/google',
+          data: {'id_token': idToken},
+          options: Options(headers: {'Content-Type': 'application/json'}));
+      final data = Map<String, dynamic>.from(res.data as Map);
+      final token = data['access_token'];
+      final user = data['user'];
+      if (token is! String || user is! Map) {
+        return {'success': false, 'message': 'Unexpected answer from the server. Please try again.'};
+      }
+      await _saveSession(token, Map<String, dynamic>.from(user));
+      return {'success': true, 'is_new': data['is_new'] == true, 'user': user};
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) {
+        return {'success': false, 'message': 'Google sign-in is not available yet. Please use email for now.'};
+      }
+      return {'success': false, 'message': _msg(e)};
+    }
+  }
+
   // ── Forgot password (server API v2.8, password_reset.php) ─────
   // 1. requestPasswordReset(email)        → a 6-digit code is emailed
   // 2. verifyPasswordResetCode(email, code) → one-time reset token

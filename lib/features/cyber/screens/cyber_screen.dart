@@ -8,10 +8,16 @@
 //                  the NOVA X server checks ownership and signs a 2-hour pass
 //                  before every full scan)
 //   Verified sites ownership verification (DNS TXT, file, or HTML tag)
+//   Monitoring     24/7 checks of verified sites by the NOVA X server (3.14.0)
 //   Code scan      a project .zip or picked files, read on the phone
 //   History        earlier reports on this phone
+//
+// 3.14.0 (ported from NOVA X for Windows): CVSS 3.1 scores, attack chains,
+// triage (open / confirmed / false positive / accepted risk / fixed) with a
+// "reopened" tag, SARIF 2.1.0 and JSON export, code scans saved as reports,
+// and the PC-only tools shown with a "Get it on Windows" card.
 
-import '../../../core/widgets/windows_download_card.dart';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -19,9 +25,11 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../core/services/api_service.dart';
 import '../../../core/services/rewards_entitlements.dart';
 import '../../../core/services/rewards_service.dart';
 import '../../../core/widgets/feature_lock.dart';
+import '../../../core/widgets/windows_download_card.dart';
 import '../../ai/screens/ai_assistant_screen.dart';
 import '../../guide/guide_screen.dart';
 import '../engine/checks_full.dart';
@@ -29,12 +37,13 @@ import '../engine/cyber_api.dart';
 import '../engine/cyber_code_scan.dart';
 import '../engine/cyber_engine.dart';
 import '../engine/cyber_models.dart';
+import '../engine/cyber_pipeline.dart';
 import '../engine/zip_reader.dart';
 import '../ui/cyber_palette.dart';
 import '../ui/cyber_verify.dart';
 import '../ui/cyber_widgets.dart';
 
-enum _View { scan, sites, code, history }
+enum _View { scan, sites, monitor, code, history }
 
 class CyberScreen extends StatefulWidget {
   const CyberScreen({super.key, this.initialUrl = ''});
@@ -74,8 +83,25 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
   String? _codeLabel;
   List<CodeFile>? _codeFiles;
   CodeScanResult? _code;
+  ScanReport? _codeReport;
   bool _codeRunning = false;
   String? _codeError;
+
+  // Triage (3.14.0)
+  bool _showDismissed = false;
+
+  // 24/7 Monitoring (3.14.0)
+  MonitorOverview? _mon;
+  bool _monLoading = false;
+  String? _monError;
+  final Set<String> _monBusy = {};
+  String? _addHost;
+  int _addInterval = 15;
+  List<MonitorEvent> _events = const [];
+  int _unread = 0;
+  int? _lastEventId;
+  Timer? _alertTimer;
+  bool _appActive = true;
 
   @override
   void initState() {
@@ -83,11 +109,21 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     final u = normalizeTarget(widget.initialUrl);
     if (u != null && (u.scheme == 'https' || u.scheme == 'http')) _target.text = u.host;
+    CyberTriage.init().then((_) {
+      if (mounted) setState(() {});
+    });
+    // Monitoring status + unread alerts (only while this screen is open;
+    // e-mail alerts reach the user when the app is closed).
+    _loadMonitoring(quiet: true);
+    _alertTimer = Timer.periodic(const Duration(minutes: 2), (_) {
+      if (_appActive) _pollAlerts();
+    });
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _alertTimer?.cancel();
     _target.dispose();
     _logScroll.dispose();
     if (_running) CyberEngine.instance.stop();
@@ -98,6 +134,7 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
   // Leaving the app stops the scan cleanly; the partial report is kept.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appActive = state == AppLifecycleState.resumed;
     if (state == AppLifecycleState.paused && _running) {
       _addLog('— NOVA X went to the background: the scan was stopped. Partial results are below.');
       CyberEngine.instance.stop();
@@ -303,13 +340,19 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
   Future<void> _export(String kind) async {
     final r = _report;
     if (r == null) return;
-    final host = Uri.tryParse(r.target)?.host ?? 'site';
+    final name = r.displayName.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
     final stamp = r.started.toIso8601String().substring(0, 10);
-    final text = kind == 'html' ? CyberReportWriter.html(r) : CyberReportWriter.markdown(r);
+    final ext = switch (kind) { 'html' => 'html', 'sarif' => 'sarif', 'json' => 'json', _ => 'md' };
+    final text = switch (kind) {
+      'html' => CyberReportWriter.html(r),
+      'sarif' => toSarif(r),
+      'json' => const JsonEncoder.withIndent('  ').convert(r.toJson()),
+      _ => CyberReportWriter.markdown(r),
+    };
     try {
       final path = await FilePicker.platform.saveFile(
         dialogTitle: 'Save security report',
-        fileName: 'nova-cyber-$host-$stamp.${kind == 'html' ? 'html' : 'md'}',
+        fileName: 'nova-cyber-$name-$stamp.$ext',
         bytes: Uint8List.fromList(utf8.encode(text)),
       );
       if (path == null) return;
@@ -381,7 +424,28 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
     });
     _keepAwake(true);
     try {
-      _code = await CodeScanner.scanFiles(files, label: _codeLabel ?? 'project', onLog: _addLog);
+      final started = DateTime.now();
+      final label = _codeLabel ?? 'project';
+      final res = await CodeScanner.scanFiles(files, label: label, onLog: _addLog);
+      // 3.14.0: CVSS + dedupe + chains, and a history report so triage and
+      // export work on code scans too.
+      final processed = CyberPipeline.process(res.findings, level: ScanLevel.code);
+      res.findings
+        ..clear()
+        ..addAll(processed);
+      final name = label.split(' · ').first;
+      final rep = ScanReport(target: 'code://${name.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_').toLowerCase()}', level: ScanLevel.code, started: started)
+        ..finished = DateTime.now();
+      rep.facts.addAll({
+        'Project': name,
+        'Files read': '${res.files}',
+        'Dependencies': '${res.packages}',
+        if (res.manifests.isNotEmpty) 'Manifests': res.manifests.take(6).join(', '),
+      });
+      rep.findings.addAll(processed);
+      await CyberHistory.add(rep);
+      _code = res;
+      _codeReport = rep;
     } catch (e) {
       _addLog('Error: $e');
       _codeError = 'The code scan stopped: $e';
@@ -423,12 +487,29 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
                 Text('Website & code security', style: p.ui(size: 11, color: p.textFaint)),
               ]),
             ]),
-            actions: const [
-              Padding(padding: EdgeInsets.only(right: 12), child: Center(child: ReadMoreLink('cyber', compact: true))),
+            actions: [
+              const Center(child: ReadMoreLink('cyber', compact: true)),
+              PopupMenuButton<int>(
+                tooltip: 'More on Windows',
+                color: p.surface,
+                icon: Icon(Icons.more_vert_rounded, color: p.textMuted),
+                onSelected: (i) => WindowsOnly.show(context, title: _pcTools[i].$1, reason: _pcTools[i].$2),
+                itemBuilder: (_) => [
+                  for (var i = 0; i < _pcTools.length; i++)
+                    PopupMenuItem(
+                      value: i,
+                      child: Row(children: [
+                        Expanded(child: Text(_pcTools[i].$1, style: p.ui(size: 13.5))),
+                        const SizedBox(width: 10),
+                        const WindowsBadge(),
+                      ]),
+                    ),
+                ],
+              ),
             ],
           ),
           body: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            if (_view == _View.scan) _scanBar(p),
+            if (_view == _View.scan && (_running || _report == null || _report!.level.isWeb)) _scanBar(p),
             Expanded(child: _content(p)),
           ]),
           bottomNavigationBar: NavigationBar(
@@ -437,10 +518,22 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
             selectedIndex: _view.index,
             height: 64,
             labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-            onDestinationSelected: (i) => setState(() => _view = _View.values[i]),
+            onDestinationSelected: (i) {
+              setState(() {
+                _view = _View.values[i];
+                // Back to an empty website scan after viewing a code report.
+                if (_view == _View.scan && _report != null && !_report!.level.isWeb && !_running) _report = null;
+              });
+              if (_view == _View.monitor && !_monLoading) _loadMonitoring();
+            },
             destinations: [
               NavigationDestination(icon: Icon(Icons.radar_rounded, color: p.textMuted), selectedIcon: Icon(Icons.radar_rounded, color: p.accent), label: 'Website'),
               NavigationDestination(icon: Icon(Icons.verified_user_outlined, color: p.textMuted), selectedIcon: Icon(Icons.verified_user_rounded, color: p.accent), label: 'Verified'),
+              NavigationDestination(
+                icon: Badge(isLabelVisible: _unread > 0, label: Text('$_unread'), child: Icon(Icons.monitor_heart_outlined, color: p.textMuted)),
+                selectedIcon: Badge(isLabelVisible: _unread > 0, label: Text('$_unread'), child: Icon(Icons.monitor_heart_rounded, color: p.accent)),
+                label: 'Monitor',
+              ),
               NavigationDestination(icon: Icon(Icons.data_object_rounded, color: p.textMuted), selectedIcon: Icon(Icons.data_object_rounded, color: p.accent), label: 'Code'),
               NavigationDestination(icon: Icon(Icons.history_rounded, color: p.textMuted), selectedIcon: Icon(Icons.history_rounded, color: p.accent), label: 'History'),
             ],
@@ -515,6 +608,8 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
           });
           _scan();
         });
+      case _View.monitor:
+        return _monitorView(p);
       case _View.code:
         return _codeView(p);
       case _View.history:
@@ -556,6 +651,7 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
     return ListView(padding: const EdgeInsets.fromLTRB(16, 18, 16, 32), children: [
       if (_error != null) Padding(padding: const EdgeInsets.only(bottom: 16), child: _errorBox(p, _error!)),
       if (_phase.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 12), child: Text(_phase, style: p.ui(size: 13, color: p.textMuted))),
+      if (_mon != null && _mon!.monitors.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 16), child: _statusCard(p, _mon!)),
       Text('Find what attackers would find — before they do.', style: p.title(size: 20)),
       const SizedBox(height: 6),
       Text('Enter a site above. Every finding comes with evidence, the risk in plain words, and the exact fix for your server.',
@@ -585,6 +681,30 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
       ]),
       const SizedBox(height: 4),
       Text('Full scans run only on sites you verify. Reports stay on this phone.', style: p.ui(size: 11.5, color: p.textFaint, height: 1.4)),
+      const SizedBox(height: 18),
+      Text('MORE ON WINDOWS', style: p.ui(size: 10.5, weight: FontWeight.w700, color: p.textFaint, letterSpacing: 0.9)),
+      const SizedBox(height: 8),
+      for (final t in _pcTools)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Material(
+            color: p.surface,
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => WindowsOnly.show(context, title: t.$1, reason: t.$2),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                child: Row(children: [
+                  Icon(t.$3, color: p.textMuted, size: 20),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text(t.$1, style: p.ui(size: 13.5, weight: FontWeight.w600))),
+                  const WindowsBadge(),
+                ]),
+              ),
+            ),
+          ),
+        ),
     ]);
   }
 
@@ -667,14 +787,23 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
       );
 
   Widget _reportView(NovaPalette p, ScanReport r) {
+    bool dismissed(Finding f) {
+      final t = CyberTriage.get(r, f)?.status;
+      return t == TriageStatus.falsePositive || t == TriageStatus.acceptedRisk;
+    }
+
+    final chains = r.issues.where((f) => f.area == CheckArea.chain).toList();
+    final dismissedCount = r.issues.where(dismissed).length;
     final issues = r.issues.where((f) {
+      if (f.area == CheckArea.chain) return false;
+      if (!_showDismissed && dismissed(f)) return false;
       if (_sev != null && f.severity != _sev) return false;
       if (_area != null && f.area != _area) return false;
       if (_query.isNotEmpty && !('${f.title} ${f.evidence} ${f.location}'.toLowerCase().contains(_query.toLowerCase()))) return false;
       return true;
     }).toList();
     final lost = r.lostByArea.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
-    final host = Uri.tryParse(r.target)?.host ?? r.target;
+    final host = r.displayName;
     return ListView(padding: const EdgeInsets.fromLTRB(16, 16, 16, 40), children: [
       if (_error != null) Padding(padding: const EdgeInsets.only(bottom: 14), child: _errorBox(p, _error!)),
       // Summary
@@ -687,8 +816,19 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(host, style: p.title(size: 18), maxLines: 2, overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 6),
-                Tag(r.level == ScanLevel.full ? 'Full scan · verified' : 'Quick scan · read-only',
-                    icon: r.level == ScanLevel.full ? Icons.verified_user_rounded : Icons.visibility_outlined,
+                Tag(
+                    switch (r.level) {
+                      ScanLevel.full => 'Full scan · verified',
+                      ScanLevel.quick => 'Quick scan · read-only',
+                      ScanLevel.code => 'Code scan',
+                      _ => r.level.label,
+                    },
+                    icon: switch (r.level) {
+                      ScanLevel.full || ScanLevel.apk => Icons.verified_user_rounded,
+                      ScanLevel.quick => Icons.visibility_outlined,
+                      ScanLevel.code => Icons.data_object_rounded,
+                      ScanLevel.binary => Icons.memory_rounded,
+                    },
                     color: r.level == ScanLevel.full ? p.success : p.textMuted),
                 const SizedBox(height: 6),
                 Text(
@@ -704,13 +844,26 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
             const SizedBox(height: 10),
             Text('Stopped early: ${r.stopReason}', style: p.ui(size: 12.5, color: p.warning, weight: FontWeight.w600)),
           ],
+          if (r.facts.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Wrap(spacing: 16, runSpacing: 4, children: [
+              for (final e in r.facts.entries)
+                Text.rich(TextSpan(children: [
+                  TextSpan(text: '${e.key}  ', style: p.ui(size: 12, color: p.textFaint)),
+                  TextSpan(text: e.value, style: p.ui(size: 12, color: p.text, weight: FontWeight.w600)),
+                ])),
+            ]),
+          ],
           const SizedBox(height: 16),
           _counts(p, r.count, r.passes.length),
           const SizedBox(height: 16),
           Wrap(spacing: 8, runSpacing: 8, children: [
             OutlinedButton.icon(onPressed: () => _export('html'), icon: const Icon(Icons.description_outlined, size: 16), label: const Text('Export report')),
             OutlinedButton.icon(onPressed: () => _export('md'), icon: const Icon(Icons.notes_rounded, size: 16), label: const Text('Markdown')),
-            OutlinedButton.icon(onPressed: _running ? null : _scan, icon: const Icon(Icons.refresh_rounded, size: 16), label: const Text('Scan again')),
+            OutlinedButton.icon(onPressed: () => _export('sarif'), icon: const Icon(Icons.integration_instructions_outlined, size: 16), label: const Text('SARIF')),
+            OutlinedButton.icon(onPressed: () => _export('json'), icon: const Icon(Icons.data_object_rounded, size: 16), label: const Text('JSON')),
+            if (r.level.isWeb)
+              OutlinedButton.icon(onPressed: _running ? null : _scan, icon: const Icon(Icons.refresh_rounded, size: 16), label: const Text('Scan again')),
             if (r.level == ScanLevel.quick)
               FilledButton.tonalIcon(
                 onPressed: () {
@@ -747,6 +900,17 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
           ],
         ]),
       ),
+      if (chains.isNotEmpty) ...[
+        const SizedBox(height: 18),
+        Panel(
+          title: 'Attack chains  ${chains.length}',
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Text('Findings that combine into a bigger risk', style: p.ui(size: 12, color: p.textFaint)),
+            const SizedBox(height: 8),
+            for (final c in chains) _triaged(p, r, c, FindingCard(key: ValueKey('chain-${c.id}'), f: c, tech: r.tech, onAskAi: _askAi)),
+          ]),
+        ),
+      ],
       const SizedBox(height: 18),
       // Filters
       Row(children: [
@@ -768,6 +932,14 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
           ),
         if (_area != null)
           InputChip(label: Text(_area!.label, style: p.ui(size: 12)), onDeleted: () => setState(() => _area = null), visualDensity: VisualDensity.compact),
+        if (dismissedCount > 0)
+          FilterChip(
+            label: Text('Show dismissed $dismissedCount', style: p.ui(size: 12, weight: FontWeight.w600)),
+            selected: _showDismissed,
+            onSelected: (v) => setState(() => _showDismissed = v),
+            showCheckmark: false,
+            visualDensity: VisualDensity.compact,
+          ),
       ]),
       const SizedBox(height: 8),
       TextField(
@@ -789,7 +961,8 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
           ]),
         ),
       for (var i = 0; i < issues.length; i++)
-        FindingCard(key: ValueKey('${issues[i].id}-${issues[i].location}-$i'), f: issues[i], tech: r.tech, onAskAi: _askAi, initiallyOpen: i == 0 && issues[i].severity.index <= 1),
+        _triaged(p, r, issues[i],
+            FindingCard(key: ValueKey('${issues[i].id}-${issues[i].location}-$i'), f: issues[i], tech: r.tech, onAskAi: _askAi, initiallyOpen: i == 0 && issues[i].severity.index <= 1)),
       if (r.notes.isNotEmpty) ...[
         const SizedBox(height: 18),
         Text('Recommendations', style: p.ui(size: 15, weight: FontWeight.w700)),
@@ -868,17 +1041,499 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
       if (_codeRunning) SizedBox(height: 300, child: _console(p)),
       if (res != null && !_codeRunning) ...[
         Panel(
-          child: Wrap(spacing: 22, runSpacing: 12, children: [
-            Metric(value: '${res.files}', label: 'Files read'),
-            Metric(value: '${res.packages}', label: 'Dependencies'),
-            for (final s in Severity.values.where((s) => s != Severity.info))
-              Metric(value: '${list.where((f) => f.severity == s).length}', label: s.label, color: sevColor(s, p)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Wrap(spacing: 22, runSpacing: 12, children: [
+              Metric(value: '${res.files}', label: 'Files read'),
+              Metric(value: '${res.packages}', label: 'Dependencies'),
+              for (final s in Severity.values.where((s) => s != Severity.info))
+                Metric(value: '${list.where((f) => f.severity == s).length}', label: s.label, color: sevColor(s, p)),
+            ]),
+            if (_codeReport != null) ...[
+              const SizedBox(height: 14),
+              FilledButton.tonalIcon(
+                onPressed: () => setState(() {
+                  _report = _codeReport;
+                  _view = _View.scan;
+                }),
+                icon: const Icon(Icons.open_in_full_rounded, size: 16),
+                label: const Text('Open report · triage · export'),
+              ),
+            ],
           ]),
         ),
         const SizedBox(height: 14),
         if (list.isEmpty) Panel(child: Text('No issues found.', style: p.ui(size: 14, weight: FontWeight.w600))),
         for (final f in list) FindingCard(f: f, tech: TechProfile(), onAskAi: _askAi),
       ],
+    ]);
+  }
+
+  // ── PC-only tools (shown with a Windows card) ──────────────────────────────
+
+  static const List<(String, String, IconData)> _pcTools = [
+    (
+      'Mobile app (APK) check',
+      'On Windows, NOVA Cyber deep-tests your own Android app: manifest, signing, libraries, secrets and backend exposure.',
+      Icons.android_rounded
+    ),
+    ('Native binary check', 'On Windows, NOVA Cyber checks EXE, DLL and Linux binaries for missing protections and weak signing.', Icons.memory_rounded),
+    ('Jobs', 'On Windows, long scans run as background jobs you can retry and track.', Icons.playlist_play_rounded),
+  ];
+
+  // ── Cyber status card (3.14.0) ─────────────────────────────────────────────
+
+  Widget _statusCard(NovaPalette p, MonitorOverview o) {
+    final active = o.monitors.where((m) => m.enabled).toList();
+    final up = active.where((m) => m.status == 'up').length;
+    final down = active.where((m) => m.status == 'down').length;
+    final certs = active.where((m) => (m.certDaysLeft ?? 999) <= 14).toList()
+      ..sort((a, b) => (a.certDaysLeft ?? 0).compareTo(b.certDaysLeft ?? 0));
+    final parts = <String>[
+      '$up site${up == 1 ? '' : 's'} up',
+      if (down > 0) '$down down',
+      if (certs.isNotEmpty)
+        '${certs.length} certificate${certs.length == 1 ? '' : 's'} expire${certs.length == 1 ? 's' : ''} in ${certs.first.certDaysLeft} day${certs.first.certDaysLeft == 1 ? '' : 's'}',
+      if (_unread > 0) '$_unread new alert${_unread == 1 ? '' : 's'}',
+    ];
+    final color = down > 0 ? p.danger : (certs.isNotEmpty || _unread > 0 ? p.warning : p.success);
+    return Material(
+      color: p.surface,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => setState(() => _view = _View.monitor),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), border: Border.all(color: color.withValues(alpha: 0.45))),
+          child: Row(children: [
+            Icon(Icons.monitor_heart_rounded, color: color),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('Monitoring', style: p.ui(size: 12, color: p.textFaint, weight: FontWeight.w600)),
+                const SizedBox(height: 2),
+                Text(parts.join(' · '), style: p.ui(size: 13.5, weight: FontWeight.w700)),
+              ]),
+            ),
+            Icon(Icons.chevron_right_rounded, color: p.textFaint),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  // ── 24/7 Monitoring (3.14.0) ───────────────────────────────────────────────
+
+  Future<void> _pollAlerts({bool notify = true}) async {
+    if (!await ApiService.isLoggedIn()) return;
+    try {
+      final (events, unread) = await CyberMonitoring.events(limit: 100);
+      if (!mounted) return;
+      final newest = events.isEmpty ? 0 : events.first.id;
+      final fresh = _lastEventId == null ? <MonitorEvent>[] : events.where((e) => e.id > _lastEventId! && !e.read).toList();
+      setState(() {
+        _events = events;
+        _unread = unread;
+        _lastEventId = newest;
+      });
+      final urgent = fresh.where((e) => e.severity == 'critical' || e.severity == 'high' || e.kind == 'down').toList();
+      if (notify && urgent.isNotEmpty) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+          duration: const Duration(seconds: 8),
+          content: Text('NOVA Cyber: ${urgent.first.title}${urgent.length > 1 ? ' (+${urgent.length - 1} more)' : ''}'),
+          action: SnackBarAction(label: 'View', onPressed: () => setState(() => _view = _View.monitor)),
+        ));
+      }
+    } catch (_) {
+      // Best effort; the Monitoring tab shows errors when opened.
+    }
+  }
+
+  Future<void> _loadMonitoring({bool quiet = false}) async {
+    if (!await ApiService.isLoggedIn()) {
+      if (mounted && !quiet) setState(() => _monError = 'Sign in to NOVA X to monitor your verified sites.');
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _monLoading = true;
+      if (!quiet) _monError = null;
+    });
+    try {
+      final o = await CyberMonitoring.overview();
+      await _pollAlerts(notify: false);
+      if (!mounted) return;
+      setState(() {
+        _mon = o;
+        _monError = null;
+        final free = o.verifiedHosts.where((h) => !o.monitors.any((m) => m.host == h)).toList();
+        if (_addHost == null || !free.contains(_addHost)) _addHost = free.isEmpty ? null : free.first;
+        if (!o.intervals.contains(_addInterval) && o.intervals.isNotEmpty) _addInterval = o.intervals.contains(15) ? 15 : o.intervals.first;
+      });
+    } on CyberApiError catch (e) {
+      if (mounted && !quiet) setState(() => _monError = e.message);
+    } catch (_) {
+      if (mounted && !quiet) setState(() => _monError = 'Couldn\'t reach the NOVA X server. Check your connection and try again.');
+    } finally {
+      if (mounted) setState(() => _monLoading = false);
+    }
+  }
+
+  Future<void> _monAction(String host, Future<void> Function() action) async {
+    setState(() => _monBusy.add(host));
+    try {
+      await action();
+      await _loadMonitoring();
+    } on CyberApiError catch (e) {
+      if (mounted) _snack(e.status == 403 ? '${e.message} Verify the site in the Verified tab first.' : e.message);
+    } catch (_) {
+      if (mounted) _snack('Couldn\'t reach the NOVA X server. Check your connection and try again.');
+    } finally {
+      if (mounted) setState(() => _monBusy.remove(host));
+    }
+  }
+
+  Color _monColor(NovaPalette p, String status) => switch (status) {
+        'up' => p.success,
+        'down' => p.danger,
+        'warn' => p.warning,
+        'paused' => p.textFaint,
+        _ => p.accent,
+      };
+
+  String _monLabel(String status) => switch (status) {
+        'up' => 'Up',
+        'down' => 'Down',
+        'warn' => 'Blocked / warning',
+        'paused' => 'Paused',
+        _ => 'Waiting for first check',
+      };
+
+  Color _evColor(NovaPalette p, String sev) => switch (sev) {
+        'critical' => p.danger,
+        'high' => const Color(0xFFE16F24),
+        'medium' => p.warning,
+        'low' => p.accent,
+        _ => p.success,
+      };
+
+  String _when(DateTime? t) {
+    if (t == null) return '—';
+    final d = DateTime.now().difference(t);
+    if (d.isNegative) {
+      final f = -d.inMinutes;
+      return f < 1 ? 'in a moment' : 'in $f min';
+    }
+    if (d.inMinutes < 1) return 'just now';
+    if (d.inHours < 1) return '${d.inMinutes} min ago';
+    if (d.inDays < 1) return '${d.inHours} h ago';
+    return '${d.inDays} d ago';
+  }
+
+  String _held(DateTime? t) {
+    if (t == null) return '';
+    final d = DateTime.now().difference(t);
+    if (d.inMinutes < 1) return 'just now';
+    if (d.inHours < 1) return 'for ${d.inMinutes} min';
+    if (d.inDays < 1) return 'for ${d.inHours} h';
+    return 'for ${d.inDays} d';
+  }
+
+  String _every(int i) => i == 60 ? '1 h' : '$i min';
+
+  Widget _monitorView(NovaPalette p) {
+    final o = _mon;
+    final free = o == null ? <String>[] : o.verifiedHosts.where((h) => !o.monitors.any((m) => m.host == h)).toList();
+    final wide = MediaQuery.of(context).size.width > 840;
+    final cards = o == null ? <Widget>[] : [for (final m in o.monitors) _monitorCard(p, m, o.intervals)];
+    return RefreshIndicator(
+      onRefresh: _loadMonitoring,
+      child: ListView(padding: const EdgeInsets.fromLTRB(16, 18, 16, 40), children: [
+        Row(children: [
+          Expanded(child: Text('Monitoring · 24/7', style: p.title(size: 20))),
+          IconButton(
+            tooltip: 'Refresh',
+            onPressed: _monLoading ? null : _loadMonitoring,
+            icon: _monLoading ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : Icon(Icons.refresh_rounded, color: p.textMuted),
+          ),
+        ]),
+        const SizedBox(height: 4),
+        Text(
+          'The NOVA X server checks your verified sites around the clock — even when your phone is off — and e-mails you when something changes: '
+          'downtime, certificate expiry, removed security headers, new scripts, exposed files and DNS changes.',
+          style: p.ui(size: 13, color: p.textMuted, height: 1.45),
+        ),
+        const SizedBox(height: 14),
+        if (_monError != null) Padding(padding: const EdgeInsets.only(bottom: 14), child: _errorBox(p, _monError!)),
+        if (o == null && _monLoading) const Padding(padding: EdgeInsets.all(30), child: Center(child: CircularProgressIndicator())),
+        if (o != null && o.verifiedHosts.isEmpty && o.monitors.isEmpty)
+          Panel(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Icon(Icons.verified_user_outlined, color: p.accent),
+                const SizedBox(width: 10),
+                Expanded(child: Text('Monitoring works for sites you have verified.', style: p.ui(size: 14, weight: FontWeight.w700))),
+              ]),
+              const SizedBox(height: 6),
+              Text('Verify a site first — it takes a minute with a DNS record, a file or a meta tag.', style: p.ui(size: 13, color: p.textMuted)),
+              const SizedBox(height: 12),
+              FilledButton(onPressed: () => setState(() => _view = _View.sites), child: const Text('Verify a site')),
+            ]),
+          ),
+        if (o != null && free.isNotEmpty)
+          Panel(
+            title: 'Add a verified site',
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              DropdownButton<String>(
+                value: free.contains(_addHost) ? _addHost : null,
+                isExpanded: true,
+                dropdownColor: p.surface,
+                hint: Text('Choose a verified site', style: p.ui(color: p.textFaint)),
+                items: [for (final h in free) DropdownMenuItem(value: h, child: Text(h, style: p.ui(size: 14)))],
+                onChanged: (v) => setState(() => _addHost = v),
+              ),
+              const SizedBox(height: 10),
+              Text('Check every', style: p.ui(size: 12.5, color: p.textMuted)),
+              const SizedBox(height: 6),
+              Wrap(spacing: 8, children: [
+                for (final i in o.intervals)
+                  ChoiceChip(
+                    label: Text(_every(i), style: p.ui(size: 12.5, weight: FontWeight.w600)),
+                    selected: _addInterval == i,
+                    onSelected: (_) => setState(() => _addInterval = i),
+                    showCheckmark: false,
+                  ),
+              ]),
+              const SizedBox(height: 12),
+              Row(children: [
+                Expanded(child: Text('${o.monitors.length} of ${o.limit} sites', style: p.ui(size: 12, color: p.textFaint))),
+                FilledButton.icon(
+                  onPressed: _addHost == null || _monBusy.contains(_addHost) || o.monitors.length >= o.limit
+                      ? null
+                      : () {
+                          final h = _addHost!;
+                          _monAction(h, () async => CyberMonitoring.save(h, enabled: true, intervalMin: _addInterval, emailAlerts: true));
+                        },
+                  icon: const Icon(Icons.monitor_heart_outlined, size: 18),
+                  label: const Text('Start monitoring'),
+                ),
+              ]),
+            ]),
+          ),
+        if (o != null) ...[
+          const SizedBox(height: 14),
+          if (wide)
+            Wrap(spacing: 12, children: [
+              for (final c in cards) SizedBox(width: (MediaQuery.of(context).size.width - 44) / 2, child: c),
+            ])
+          else
+            ...cards,
+          if (o.monitors.isEmpty && o.verifiedHosts.isNotEmpty)
+            Panel(child: Text('No sites monitored yet. Pick a verified site above.', style: p.ui(color: p.textMuted))),
+        ],
+        const SizedBox(height: 18),
+        Panel(
+          title: 'Alerts${_unread > 0 ? '  ($_unread new)' : ''}',
+          trailing: _unread > 0
+              ? TextButton(
+                  onPressed: () async {
+                    try {
+                      await CyberMonitoring.markRead();
+                    } catch (_) {}
+                    await _pollAlerts(notify: false);
+                  },
+                  child: const Text('Mark all read'))
+              : null,
+          child: _events.isEmpty
+              ? Text('Nothing yet. Alerts appear here and in your e-mail as soon as the monitor sees a change.', style: p.ui(size: 13, color: p.textMuted))
+              : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  for (final e in _events.take(100))
+                    Theme(
+                      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                      child: ExpansionTile(
+                        tilePadding: EdgeInsets.zero,
+                        onExpansionChanged: (open) async {
+                          if (!open || e.read) return;
+                          try {
+                            await CyberMonitoring.markRead([e.id]);
+                          } catch (_) {}
+                          await _pollAlerts(notify: false);
+                        },
+                        leading: Container(width: 9, height: 9, decoration: BoxDecoration(color: _evColor(p, e.severity), shape: BoxShape.circle)),
+                        title: Text(e.title, style: p.ui(size: 13.5, weight: e.read ? FontWeight.w500 : FontWeight.w700)),
+                        subtitle: Text('${e.host} · ${e.severity.toUpperCase()} · ${_when(e.createdAt)}${e.emailed ? ' · e-mailed' : ''}',
+                            style: p.ui(size: 11.5, color: p.textFaint)),
+                        childrenPadding: const EdgeInsets.fromLTRB(22, 0, 0, 12),
+                        expandedCrossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SelectableText(e.detail, style: p.ui(size: 12.5, color: p.text, height: 1.5)),
+                          const SizedBox(height: 8),
+                          OutlinedButton.icon(
+                            onPressed: () => setState(() {
+                              _target.text = e.host;
+                              _level = ScanLevel.full;
+                              _report = null;
+                              _view = _View.scan;
+                            }),
+                            icon: const Icon(Icons.radar_rounded, size: 16),
+                            label: const Text('Run a full scan'),
+                          ),
+                        ],
+                      ),
+                    ),
+                ]),
+        ),
+      ]),
+    );
+  }
+
+  Widget _monitorCard(NovaPalette p, SiteMonitor m, List<int> intervals) {
+    final busy = _monBusy.contains(m.host);
+    final c = _monColor(p, m.enabled ? m.status : 'paused');
+    final cert = m.certDaysLeft;
+    Widget stat(String label, String value, {Color? color}) => SizedBox(
+          width: 96,
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(value, style: p.ui(size: 15, weight: FontWeight.w700, color: color ?? p.text)),
+            Text(label, style: p.ui(size: 11, color: p.textFaint)),
+          ]),
+        );
+    String pct(double? v) => v == null ? '—' : '${v.toStringAsFixed(v == 100 ? 0 : 2)}%';
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(color: p.surface, borderRadius: BorderRadius.circular(12), border: Border.all(color: m.status == 'down' && m.enabled ? p.danger : p.border)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(children: [
+          Container(width: 10, height: 10, decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
+          const SizedBox(width: 10),
+          Expanded(child: Text(m.host, maxLines: 1, overflow: TextOverflow.ellipsis, style: p.ui(size: 15, weight: FontWeight.w700))),
+          if (busy) const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+        ]),
+        const SizedBox(height: 6),
+        Wrap(spacing: 8, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
+          Tag(m.enabled ? _monLabel(m.status) : 'Paused', color: c),
+          if (m.statusSince != null && m.enabled && m.status != 'pending')
+            Text('${_monLabel(m.status)} ${_held(m.statusSince)}', style: p.ui(size: 11.5, color: p.textFaint)),
+        ]),
+        if (m.pausedReason != null && m.status == 'paused')
+          Padding(padding: const EdgeInsets.only(top: 6), child: Text(m.pausedReason!, style: p.ui(size: 12.5, color: p.warning))),
+        const SizedBox(height: 12),
+        Wrap(runSpacing: 10, spacing: 8, children: [
+          stat('Response', m.lastMs == null ? '—' : '${m.lastMs} ms'),
+          stat('Code', m.lastCode == null ? '—' : '${m.lastCode}'),
+          stat('Certificate', cert == null ? '—' : '$cert days', color: cert == null ? null : (cert <= 7 ? p.danger : cert <= 14 ? p.warning : p.success)),
+          stat('Headers', '${m.securityHeaders.length}/6'),
+          stat('Ext. scripts', '${m.externalScripts.length}'),
+          stat('Exposed files', '${m.exposed.length}', color: m.exposed.isEmpty ? p.success : p.danger),
+          stat('Uptime 24 h', pct(m.day.uptime),
+              color: m.day.uptime == null ? null : (m.day.uptime! >= 99.5 ? p.success : m.day.uptime! >= 95 ? p.warning : p.danger)),
+          stat('Uptime 7 d', pct(m.week.uptime)),
+          stat('Avg 24 h', m.day.avgMs == null ? '—' : '${m.day.avgMs} ms'),
+        ]),
+        const SizedBox(height: 10),
+        Text('Last check ${_when(m.lastCheckAt)} · next ${_when(m.nextCheckAt)}', style: p.ui(size: 11.5, color: p.textFaint)),
+        const SizedBox(height: 6),
+        Wrap(spacing: 6, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
+          for (final i in intervals)
+            ChoiceChip(
+              label: Text(_every(i), style: p.ui(size: 12)),
+              selected: m.intervalMin == i,
+              visualDensity: VisualDensity.compact,
+              showCheckmark: false,
+              onSelected: busy ? null : (_) => _monAction(m.host, () async => CyberMonitoring.save(m.host, intervalMin: i)),
+            ),
+        ]),
+        Row(children: [
+          Text('E-mail alerts', style: p.ui(size: 12.5, color: p.textMuted)),
+          Switch(value: m.emailAlerts, onChanged: busy ? null : (v) => _monAction(m.host, () async => CyberMonitoring.save(m.host, emailAlerts: v))),
+        ]),
+        Wrap(spacing: 8, runSpacing: 6, children: [
+          OutlinedButton.icon(
+            onPressed: busy || !m.enabled
+                ? null
+                : () => _monAction(m.host, () async {
+                      final (_, n) = await CyberMonitoring.checkNow(m.host);
+                      if (mounted) _snack(n == 0 ? '${m.host}: checked — no changes.' : '${m.host}: $n new alert${n == 1 ? '' : 's'}.');
+                    }),
+            icon: const Icon(Icons.play_circle_outline_rounded, size: 18),
+            label: const Text('Check now'),
+          ),
+          OutlinedButton.icon(
+            onPressed: busy ? null : () => _monAction(m.host, () async => CyberMonitoring.save(m.host, enabled: !m.enabled)),
+            icon: Icon(m.enabled ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 18),
+            label: Text(m.enabled ? 'Pause' : 'Resume'),
+          ),
+          TextButton.icon(
+            onPressed: busy
+                ? null
+                : () async {
+                    final ok = await showDialog<bool>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        backgroundColor: p.surface,
+                        title: Text('Stop monitoring ${m.host}?', style: p.title(size: 17)),
+                        content: Text('Checks and history for this site are removed. Alerts already sent stay in your list.', style: p.ui(color: p.textMuted)),
+                        actions: [
+                          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+                          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Remove')),
+                        ],
+                      ),
+                    );
+                    if (ok == true) await _monAction(m.host, () => CyberMonitoring.remove(m.host));
+                  },
+            icon: Icon(Icons.delete_outline_rounded, size: 18, color: p.textFaint),
+            label: Text('Remove', style: p.ui(size: 13, color: p.textFaint)),
+          ),
+        ]),
+      ]),
+    );
+  }
+
+  // ── Triage (3.14.0) ────────────────────────────────────────────────────────
+
+  Widget _triaged(NovaPalette p, ScanReport r, Finding f, Widget card) {
+    final t = CyberTriage.get(r, f);
+    final regression = CyberTriage.isRegression(r, f);
+    final status = t?.status ?? TriageStatus.open;
+    final color = switch (status) {
+      TriageStatus.confirmed => p.danger,
+      TriageStatus.falsePositive || TriageStatus.acceptedRisk => p.textFaint,
+      TriageStatus.fixed => p.success,
+      TriageStatus.open => p.textMuted,
+    };
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Padding(
+        padding: const EdgeInsets.only(top: 4, bottom: 2),
+        child: Row(children: [
+          Expanded(
+            child: Wrap(spacing: 6, runSpacing: 4, children: [
+              if (f.cvss.isNotEmpty) Tag('CVSS ${cvssScore(f.cvss).toStringAsFixed(1)} ${cvssRating(cvssScore(f.cvss))}', icon: Icons.speed_rounded),
+              if (regression) Tag('Regression', icon: Icons.replay_rounded, color: p.danger),
+            ]),
+          ),
+          PopupMenuButton<TriageStatus>(
+            tooltip: 'Triage this finding',
+            initialValue: status,
+            color: p.surface,
+            onSelected: (s) {
+              CyberTriage.set(r, f, s);
+              setState(() {});
+            },
+            itemBuilder: (_) => [for (final s in TriageStatus.values) PopupMenuItem(value: s, child: Text(s.label, style: p.ui(size: 13.5)))],
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.flag_outlined, size: 14, color: color),
+                const SizedBox(width: 4),
+                Text(status.label, style: p.ui(size: 11.5, color: color, weight: FontWeight.w600)),
+                Icon(Icons.arrow_drop_down_rounded, size: 16, color: color),
+              ]),
+            ),
+          ),
+        ]),
+      ),
+      Opacity(opacity: status == TriageStatus.falsePositive || status == TriageStatus.acceptedRisk ? 0.55 : 1, child: card),
     ]);
   }
 
@@ -912,8 +1567,8 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
 
   Widget _historyRow(NovaPalette p, List<ScanReport> list, int i) {
     final r = list[i];
-    final host = Uri.tryParse(r.target)?.host ?? r.target;
-    final prev = list.skip(i + 1).firstWhere((x) => (Uri.tryParse(x.target)?.host ?? '') == host && x.level == r.level, orElse: () => r);
+    final host = r.displayName;
+    final prev = list.skip(i + 1).firstWhere((x) => x.displayName == host && x.level == r.level, orElse: () => r);
     final delta = identical(prev, r) ? null : r.score - prev.score;
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -922,7 +1577,7 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
         onTap: () => setState(() {
           _report = r;
           _view = _View.scan;
-          _target.text = host;
+          if (r.level.isWeb) _target.text = host;
         }),
         leading: Container(
           width: 44,
@@ -933,7 +1588,7 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
         ),
         title: Text(host, maxLines: 1, overflow: TextOverflow.ellipsis, style: p.ui(size: 14, weight: FontWeight.w600)),
         subtitle: Text(
-          '${r.level == ScanLevel.full ? 'Full' : 'Quick'} · ${r.started.toLocal().toString().substring(0, 16)}'
+          '${r.level.label} · ${r.started.toLocal().toString().substring(0, 16)}'
           '${Severity.values.any((s) => s != Severity.info && r.count(s) > 0) ? '\n' : ''}'
           '${Severity.values.where((s) => s != Severity.info && r.count(s) > 0).map((s) => '${r.count(s)} ${s.label.toLowerCase()}').join(', ')}',
           style: p.ui(size: 12, color: p.textFaint),

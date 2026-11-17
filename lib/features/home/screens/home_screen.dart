@@ -9,6 +9,7 @@
 //   • Dynamic time-based subtitle (changes every 3 hours)
 
 import 'package:nova_x/core/widgets/windows_download_card.dart';
+import 'package:nova_x/features/devhub/devhub_screen.dart';
 import 'package:nova_x/features/auth/services/google_web_signin.dart';
 import 'package:nova_x/features/guide/guide_screen.dart';
 import 'package:nova_x/features/security/security_center_screen.dart';
@@ -1305,9 +1306,7 @@ class _HomeScreenState extends State<HomeScreen>
     final items = [
       {'icon': Icons.developer_mode_rounded,   'label': 'Dev Tools',
        'color': const Color(0xFF22C55E),
-       'fn': () => _push(BrowserView(
-             initialQuery: 'https://api.browser.t-lyfe.com.ng/devtools.html',
-             autoOpenDevTools: true))},
+       'fn': () => _push(const DevHubScreen())}, // 3.14.0 Developer Hub
       {'icon': Icons.code_rounded,             'label': 'X Coder',
        'color': const Color(0xFFF59E0B),
        'fn': () => _push(const CodeEditorScreen(sharedWorkspace: true))},
@@ -1893,8 +1892,7 @@ class _MenuSheet extends StatelessWidget {
       {'icon': Icons.screenshot_monitor_rounded, 'label': 'NOVA Capture', 'color': const Color(0xFFFF3B4E),
        'fn': () { Navigator.pop(context); onPush(const CaptureDashboard()); }},
       {'icon': Icons.developer_mode_rounded,    'label': 'Dev Tools',  'color': AppTheme.accentCyan,
-       'fn': () { Navigator.pop(context); onPush(const BrowserView(
-           initialQuery: 'https://api.browser.t-lyfe.com.ng/devtools.html', autoOpenDevTools: true)); }},
+       'fn': () { Navigator.pop(context); onPush(const DevHubScreen()); }}, // 3.14.0 Developer Hub
       {'icon': Icons.code_rounded,              'label': 'X Coder', 'color': const Color(0xFF00D4FF),
        'fn': () { Navigator.pop(context); onPush(const CodeEditorScreen(sharedWorkspace: true)); }},
       {'icon': Icons.person_off_outlined,       'label': 'Incognito',  'color': AppTheme.accentPurple,

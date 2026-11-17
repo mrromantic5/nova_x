@@ -550,7 +550,39 @@ class _ProfileScreenState extends State<ProfileScreen>
       const SizedBox(height: 28),
       _section('YOUR STATS', _buildStats()),
       const SizedBox(height: 28),
-      _section('BROWSER', _buildGoogleWebRow()),
+      _section('BROWSER', Column(children: [
+        _buildGoogleWebRow(),
+        const SizedBox(height: 8),
+        // 3.14.0: PC-only feature, shown with the Windows card.
+        Material(
+          color: AppTheme.bgCard,
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: () => WindowsOnly.show(context,
+                title: 'Account Containers', reason: 'On Windows, sign in to the same site with several accounts at once.'),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              child: Row(children: [
+                Container(
+                  width: 38, height: 38,
+                  decoration: BoxDecoration(color: const Color(0xFF38BDF8).withValues(alpha: 0.12), borderRadius: BorderRadius.circular(10)),
+                  child: const Icon(Icons.layers_outlined, color: Color(0xFF38BDF8), size: 20),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('Account Containers', style: GoogleFonts.inter(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 2),
+                    Text('Several accounts on one site at once', style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 12)),
+                  ]),
+                ),
+                const WindowsBadge(),
+              ]),
+            ),
+          ),
+        ),
+      ])),
       const SizedBox(height: 28),
       _section('NOVA X BUSINESS', _buildBizSection()),
       const SizedBox(height: 28),

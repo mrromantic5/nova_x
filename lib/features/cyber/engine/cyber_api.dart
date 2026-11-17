@@ -131,3 +131,163 @@ class CyberApi {
 
   static Future<void> revoke(String host) => _call('POST', 'revoke', {'host': host});
 }
+
+// ── 24/7 monitoring (server-side, cron on the NOVA X server) ─────────────────
+
+class MonitorStats {
+  MonitorStats({this.checks = 0, this.uptime, this.avgMs});
+  final int checks;
+  final double? uptime; // percent
+  final int? avgMs;
+
+  factory MonitorStats.fromJson(Object? j) {
+    final m = j is Map ? j : const {};
+    return MonitorStats(checks: (m['checks'] as num?)?.toInt() ?? 0, uptime: (m['uptime'] as num?)?.toDouble(), avgMs: (m['avg_ms'] as num?)?.toInt());
+  }
+}
+
+class SiteMonitor {
+  SiteMonitor({
+    required this.host,
+    required this.enabled,
+    required this.intervalMin,
+    required this.emailAlerts,
+    required this.status,
+    this.statusSince,
+    this.pausedReason,
+    this.lastCode,
+    this.lastMs,
+    this.certExpiresAt,
+    this.lastCheckAt,
+    this.nextCheckAt,
+    this.securityHeaders = const [],
+    this.externalScripts = const [],
+    this.exposed = const [],
+    MonitorStats? day,
+    MonitorStats? week,
+  })  : day = day ?? MonitorStats(),
+        week = week ?? MonitorStats();
+
+  final String host;
+  final bool enabled;
+  final int intervalMin;
+  final bool emailAlerts;
+  final String status; // pending | up | warn | down | paused
+  final DateTime? statusSince;
+  final String? pausedReason;
+  final int? lastCode;
+  final int? lastMs;
+  final DateTime? certExpiresAt;
+  final DateTime? lastCheckAt;
+  final DateTime? nextCheckAt;
+  final List<String> securityHeaders;
+  final List<String> externalScripts;
+  final List<String> exposed;
+  final MonitorStats day;
+  final MonitorStats week;
+
+  int? get certDaysLeft => certExpiresAt?.difference(DateTime.now()).inDays;
+
+  factory SiteMonitor.fromJson(Map<String, dynamic> j) {
+    List<String> list(Object? v) => [for (final x in (v as List? ?? const [])) '$x'];
+    DateTime? at(Object? v) => v == null ? null : DateTime.tryParse('$v')?.toLocal();
+    return SiteMonitor(
+      host: '${j['host']}',
+      enabled: j['enabled'] == true,
+      intervalMin: (j['interval_min'] as num?)?.toInt() ?? 15,
+      emailAlerts: j['email_alerts'] == true,
+      status: '${j['status'] ?? 'pending'}',
+      statusSince: at(j['status_since']),
+      pausedReason: j['paused_reason'] as String?,
+      lastCode: (j['last_code'] as num?)?.toInt(),
+      lastMs: (j['last_ms'] as num?)?.toInt(),
+      certExpiresAt: at(j['cert_expires_at']),
+      lastCheckAt: at(j['last_check_at']),
+      nextCheckAt: at(j['next_check_at']),
+      securityHeaders: list(j['security_headers']),
+      externalScripts: list(j['external_scripts']),
+      exposed: list(j['exposed']),
+      day: MonitorStats.fromJson(j['stats_24h']),
+      week: MonitorStats.fromJson(j['stats_7d']),
+    );
+  }
+}
+
+class MonitorEvent {
+  MonitorEvent({required this.id, required this.host, required this.kind, required this.severity, required this.title, required this.detail, this.createdAt, this.read = false, this.emailed = false});
+  final int id;
+  final String host;
+  final String kind;
+  final String severity; // critical | high | medium | low | info
+  final String title;
+  final String detail;
+  final DateTime? createdAt;
+  final bool read;
+  final bool emailed;
+
+  factory MonitorEvent.fromJson(Map<String, dynamic> j) => MonitorEvent(
+        id: (j['id'] as num).toInt(),
+        host: '${j['host']}',
+        kind: '${j['kind']}',
+        severity: '${j['severity']}',
+        title: '${j['title']}',
+        detail: '${j['detail'] ?? ''}',
+        createdAt: DateTime.tryParse('${j['created_at'] ?? ''}')?.toLocal(),
+        read: j['read'] == true,
+        emailed: j['emailed'] == true,
+      );
+}
+
+class MonitorOverview {
+  MonitorOverview(this.monitors, this.verifiedHosts, this.unread, this.limit, this.intervals);
+  final List<SiteMonitor> monitors;
+  final List<String> verifiedHosts;
+  final int unread;
+  final int limit;
+  final List<int> intervals;
+}
+
+/// Monitoring endpoints. Kept as top-level statics on [CyberMonitoring] so the
+/// existing [CyberApi] stays unchanged.
+class CyberMonitoring {
+  CyberMonitoring._();
+
+  static Future<MonitorOverview> overview() async {
+    final j = await CyberApi._call('GET', 'monitors');
+    return MonitorOverview(
+      [for (final m in (j['monitors'] as List? ?? const [])) SiteMonitor.fromJson(Map<String, dynamic>.from(m as Map))],
+      [for (final h in (j['verified_hosts'] as List? ?? const [])) '$h'],
+      (j['unread_events'] as num?)?.toInt() ?? 0,
+      (j['limit'] as num?)?.toInt() ?? 20,
+      [for (final i in (j['intervals'] as List? ?? const [5, 15, 60])) (i as num).toInt()],
+    );
+  }
+
+  static Future<SiteMonitor> save(String host, {bool? enabled, int? intervalMin, bool? emailAlerts}) async {
+    final j = await CyberApi._call('POST', 'monitors', {
+      'host': host,
+      if (enabled != null) 'enabled': enabled,
+      if (intervalMin != null) 'interval_min': intervalMin,
+      if (emailAlerts != null) 'email_alerts': emailAlerts,
+    });
+    return SiteMonitor.fromJson(Map<String, dynamic>.from(j['monitor'] as Map));
+  }
+
+  static Future<void> remove(String host) => CyberApi._call('POST', 'monitors-remove', {'host': host});
+
+  /// Runs a check on the server right now. Returns the updated monitor and how many alerts it raised.
+  static Future<(SiteMonitor, int)> checkNow(String host) async {
+    final j = await CyberApi._call('POST', 'monitors-check', {'host': host});
+    return (SiteMonitor.fromJson(Map<String, dynamic>.from(j['monitor'] as Map)), (j['new_events'] as num?)?.toInt() ?? 0);
+  }
+
+  static Future<(List<MonitorEvent>, int)> events({bool unreadOnly = false, int limit = 100}) async {
+    final j = await CyberApi._call('GET', 'monitor-events?limit=$limit${unreadOnly ? '&unread=1' : ''}');
+    return (
+      [for (final e in (j['events'] as List? ?? const [])) MonitorEvent.fromJson(Map<String, dynamic>.from(e as Map))],
+      (j['unread'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  static Future<void> markRead([List<int>? ids]) => CyberApi._call('POST', 'monitor-events-read', {if (ids != null) 'ids': ids});
+}

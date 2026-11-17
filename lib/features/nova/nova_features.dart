@@ -33,6 +33,7 @@ import '../nova_capture/screens/capture_dashboard.dart';
 import '../nova_capture/screens/capture_latest_screen.dart';
 import '../nova_capture/screens/capture_media_library.dart';
 import '../nova_capture/screens/recording_settings_screen.dart';
+import 'package:nova_x/features/devhub/devhub_screen.dart';
 import '../nova_capture/services/media_library_service.dart';
 
 class NovaFeatures {
@@ -78,7 +79,7 @@ class NovaFeatures {
         'nova_music' => const NovaMusicScreen(),
         'nova_network' => const NovaNetworkScreen(),
         'cyber' => const CyberScreen(),
-        'dev_tools' => const BrowserView(initialQuery: devToolsUrl, autoOpenDevTools: true),
+        'dev_tools' => const DevHubScreen(), // 3.14.0 Developer Hub
         'code_editor' => const CodeEditorScreen(sharedWorkspace: true),
         'business' => const BusinessScreen(),
         'customize' => const CustomizationScreen(),

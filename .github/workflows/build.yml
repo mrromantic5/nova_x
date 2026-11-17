@@ -95,6 +95,7 @@ jobs:
             lib/features/auth/services/google_auth.dart \
             lib/features/auth/services/google_web_signin.dart \
             lib/features/browser/browser_identity.dart \
+            lib/features/devhub \
             test/cyber \
             test/security \
             test/guide \
@@ -105,10 +106,11 @@ jobs:
             test/offline \
             test/auth \
             test/playback \
-            test/browser
+            test/browser \
+            test/devhub
 
       - name: NOVA unit tests
-        run: flutter test test/nova test/nova_capture test/xcoder test/offline test/auth test/playback test/browser test/cyber test/security test/guide test/pro
+        run: flutter test test/nova test/nova_capture test/xcoder test/offline test/auth test/playback test/browser test/cyber test/security test/guide test/pro test/devhub
 
       - name: Patch flutter_inappwebview ProGuard
         run: |

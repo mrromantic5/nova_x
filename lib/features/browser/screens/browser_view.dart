@@ -50,6 +50,7 @@ import 'package:nova_x/features/pro/pro_tab.dart';
 import 'package:nova_x/features/security/download_safety.dart';
 import 'package:nova_x/features/downloads/download_manager.dart';
 import 'package:nova_x/features/browser/browser_identity.dart';
+import 'package:nova_x/core/widgets/windows_download_card.dart';
 import 'package:nova_x/features/downloads/download_names.dart';
 import 'package:nova_x/features/downloads/screens/downloads_screen.dart';
 import 'package:nova_x/features/security/security_center_screen.dart';
@@ -77,6 +78,10 @@ class BrowserView extends StatefulWidget {
   /// kept (always opened as an incognito tab).
   final bool safeView;
 
+  /// 3.14.0 Developer Hub "Desktop view + DevTools": start with the desktop
+  /// site (desktop user agent) instead of the mobile one.
+  final bool desktopSite;
+
   const BrowserView({
     super.key,
     required this.initialQuery,
@@ -85,6 +90,7 @@ class BrowserView extends StatefulWidget {
     this.autoOpenDevTools = false,
     this.tabId,
     this.safeView = false,
+    this.desktopSite = false,
   });
 
   @override
@@ -308,6 +314,7 @@ class _BrowserViewState extends State<BrowserView>
   void initState() {
     super.initState();
     _tabId = widget.tabId;
+    _desktopMode = widget.desktopSite;
     TabsService.instance.ensureLoaded();
     final initial = _buildUrl(widget.initialQuery);
     _currentUrl   = initial;
@@ -1694,6 +1701,13 @@ return await new Promise(function (ok, bad) {
             () { Navigator.pop(context); _toggleDesktopMode(); },
             color: _desktopMode ? AppTheme.accentCyan : AppTheme.textSecondary,
           ),
+
+          // 3.14.0: PC-only, shown on tablets with the Windows card.
+          if (MediaQuery.of(context).size.shortestSide >= 600)
+            _menuTile(Icons.vertical_split_outlined, 'Split view (Windows)', () {
+              Navigator.pop(context);
+              WindowsOnly.show(context, title: 'Split view', reason: 'On Windows, view two pages side by side.');
+            }),
 
           if (!widget.incognito)
             _menuTile(

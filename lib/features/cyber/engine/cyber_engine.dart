@@ -15,6 +15,7 @@ import 'cyber_context.dart';
 import 'cyber_fixes.dart';
 import 'cyber_http.dart';
 import 'cyber_models.dart';
+import 'cyber_pipeline.dart';
 
 /// Hosts that are the user's own machine (full scan without server proof).
 bool isOwnMachine(String host) {
@@ -169,6 +170,7 @@ class CyberEngine {
       http.close();
       _http = null;
     }
+    CyberPipeline.apply(report); // 3.14.0: CVSS, dedupe, attack chains
     await CyberHistory.add(report);
     return report;
   }
@@ -236,19 +238,22 @@ class CyberReportWriter {
       ..writeln('| | |')
       ..writeln('|---|---|')
       ..writeln('| Target | ${r.target} |')
-      ..writeln('| Scan | ${r.level == ScanLevel.full ? 'Full (ownership verified)' : 'Quick (read-only)'} |')
+      ..writeln('| Scan | ${r.level.description} |')
       ..writeln('| Date | ${r.started.toUtc().toIso8601String()} |')
       ..writeln('| Score | **${r.score}/100 (${r.grade})** |')
       ..writeln('| Findings | ${Severity.values.where((s) => s != Severity.info).map((s) => '${r.count(s)} ${s.label.toLowerCase()}').join(' · ')} |')
       ..writeln('| Requests | ${r.requests} |')
       ..writeln('| Platform | ${r.tech.stack.join(', ')} |');
+    for (final e in r.facts.entries) {
+      b.writeln('| ${e.key} | ${e.value} |');
+    }
     if (r.stoppedEarly) b.writeln('\n> Scan stopped early: ${r.stopReason}');
     b.writeln('\n## Findings\n');
     for (final f in r.issues) {
       b
         ..writeln('### [${f.severity.label}] ${f.title}')
         ..writeln()
-        ..writeln('*${f.area.label}* · confidence: ${f.confidence}${f.refs.isEmpty ? '' : ' · ${f.refs.join(', ')}'}')
+        ..writeln('*${f.area.label}* · confidence: ${f.confidence}${f.cvss.isEmpty ? '' : ' · CVSS ${cvssScore(f.cvss).toStringAsFixed(1)} `${f.cvss}`'}${f.refs.isEmpty ? '' : ' · ${f.refs.join(', ')}'}')
         ..writeln();
       if (f.location.isNotEmpty) b.writeln('**Where:** ${f.location}\n');
       b
@@ -288,7 +293,7 @@ class CyberReportWriter {
     final rows = StringBuffer();
     for (final f in r.issues) {
       rows.write('<section class="f"><div class="h"><span class="sev" style="background:${colors[f.severity.name]}">${f.severity.label}</span>'
-          '<h3>${esc(f.title)}</h3></div><p class="meta">${esc(f.area.label)} · confidence ${esc(f.confidence)}${f.refs.isEmpty ? '' : ' · ${esc(f.refs.join(', '))}'}</p>'
+          '<h3>${esc(f.title)}</h3></div><p class="meta">${esc(f.area.label)} · confidence ${esc(f.confidence)}${f.cvss.isEmpty ? '' : ' · CVSS ${cvssScore(f.cvss).toStringAsFixed(1)}'}${f.refs.isEmpty ? '' : ' · ${esc(f.refs.join(', '))}'}</p>'
           '${f.location.isEmpty ? '' : '<p><b>Where:</b> ${esc(f.location)}</p>'}<p><b>Why it matters:</b> ${esc(f.impact)}</p>'
           '<pre>${esc(f.evidence)}</pre><p><b>Fix:</b> ${esc(f.fixSummary)}</p>');
       final g = fixFor(f.id);
@@ -301,7 +306,7 @@ class CyberReportWriter {
       rows.write('</section>');
     }
     return '''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>NOVA Cyber report — ${esc(Uri.tryParse(r.target)?.host ?? r.target)}</title>
+<title>NOVA Cyber report — ${esc(r.displayName)}</title>
 <style>
 body{font:15px/1.55 -apple-system,Segoe UI,Roboto,sans-serif;color:#101828;max-width:920px;margin:40px auto;padding:0 20px;background:#fff}
 h1{font-size:26px;margin:0 0 4px}.sub{color:#667085;margin:0 0 24px}
@@ -313,7 +318,8 @@ h1{font-size:26px;margin:0 0 4px}.sub{color:#667085;margin:0 0 24px}
 .meta{color:#667085;font-size:13px;margin:6px 0}pre{background:#f9fafb;border:1px solid #eaecf0;border-radius:8px;padding:10px;white-space:pre-wrap;word-break:break-word;font:12.5px/1.5 Consolas,monospace}
 footer{color:#98a2b3;font-size:12px;margin-top:40px}
 </style></head><body>
-<h1>Security report</h1><p class="sub">${esc(r.target)} · ${r.level == ScanLevel.full ? 'Full scan (ownership verified)' : 'Quick scan (read-only)'} · ${esc(r.started.toUtc().toIso8601String())}</p>
+<h1>Security report</h1><p class="sub">${esc(r.target)} · ${esc(r.level.description)} · ${esc(r.started.toUtc().toIso8601String())}</p>
+${r.facts.isEmpty ? '' : '<p class="meta">${r.facts.entries.map((e) => '<b>${esc(e.key)}:</b> ${esc(e.value)}').join(' · ')}</p>'}
 <div class="score"><div><div class="big">${r.score}</div><div class="grade">Grade ${r.grade}</div></div>
 <div class="counts">${Severity.values.where((s) => s != Severity.info).map((s) => '<span><b>${r.count(s)}</b> ${s.label.toLowerCase()}</span>').join()}<br><span>${r.requests} requests · ${esc(r.tech.stack.join(', '))}</span></div></div>
 ${r.stoppedEarly ? '<p><b>Stopped early:</b> ${esc(r.stopReason)}</p>' : ''}

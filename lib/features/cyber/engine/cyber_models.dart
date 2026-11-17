@@ -16,7 +16,7 @@ extension SeverityX on Severity {
       Severity.values.firstWhere((v) => v.name == s, orElse: () => Severity.info);
 }
 
-enum CheckArea { transport, headers, cookies, content, dependencies, dns, exposure, injection, access, server, code }
+enum CheckArea { transport, headers, cookies, content, dependencies, dns, exposure, injection, access, server, code, mobile, binary, chain }
 
 extension CheckAreaX on CheckArea {
   String get label => const [
@@ -31,11 +31,31 @@ extension CheckAreaX on CheckArea {
         'Access control',
         'Server configuration',
         'Source code',
+        'Mobile app',
+        'Native binary',
+        'Attack chains',
       ][index];
 }
 
 /// Which scan level found it.
-enum ScanLevel { quick, full, code }
+enum ScanLevel { quick, full, code, apk, binary }
+
+extension ScanLevelX on ScanLevel {
+  /// Short label for history rows and tags.
+  String get label => const ['Quick', 'Full', 'Code', 'Mobile app', 'Binary'][index];
+
+  /// Long label for report headers.
+  String get description => const [
+        'Quick scan (read-only)',
+        'Full scan (ownership verified)',
+        'Code scan (on this device)',
+        'Mobile app scan (ownership verified, static)',
+        'Native binary scan (static)',
+      ][index];
+
+  /// Website scans have a host; the others scan a file or folder.
+  bool get isWeb => this == ScanLevel.quick || this == ScanLevel.full;
+}
 
 /// One weakness (or a passed check, when [passed] is true).
 class Finding {
@@ -53,6 +73,7 @@ class Finding {
     this.confidence = 'firm',
     this.level = ScanLevel.quick,
     this.recheck,
+    this.cvss = '',
   });
 
   /// Stable id (used for fixes and re-checks), e.g. "hdr.csp.unsafe_inline".
@@ -85,6 +106,28 @@ class Finding {
   /// Re-runs just this check (set by the engine; not saved).
   final Future<List<Finding>> Function()? recheck;
 
+  /// CVSS 3.1 base vector (set by the findings pipeline), e.g.
+  /// "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H". Empty for passed checks
+  /// and notes.
+  final String cvss;
+
+  Finding copyWith({String? title, Severity? severity, String? evidence, String? location, String? cvss, List<String>? refs, String? confidence}) => Finding(
+        id: id,
+        title: title ?? this.title,
+        severity: severity ?? this.severity,
+        area: area,
+        passed: passed,
+        evidence: evidence ?? this.evidence,
+        location: location ?? this.location,
+        impact: impact,
+        fixSummary: fixSummary,
+        refs: refs ?? this.refs,
+        confidence: confidence ?? this.confidence,
+        level: level,
+        recheck: recheck,
+        cvss: cvss ?? this.cvss,
+      );
+
   Map<String, Object?> toJson() => {
         'id': id,
         'title': title,
@@ -98,6 +141,7 @@ class Finding {
         'refs': refs,
         'confidence': confidence,
         'level': level.name,
+        if (cvss.isNotEmpty) 'cvss': cvss,
       };
 
   static Finding fromJson(Map<String, dynamic> j) => Finding(
@@ -113,6 +157,7 @@ class Finding {
         refs: [for (final r in (j['refs'] as List? ?? const [])) '$r'],
         confidence: '${j['confidence'] ?? 'firm'}',
         level: ScanLevel.values.firstWhere((l) => l.name == j['level'], orElse: () => ScanLevel.quick),
+        cvss: '${j['cvss'] ?? ''}',
       );
 }
 
@@ -147,6 +192,14 @@ class ScanReport {
   bool stoppedEarly = false;
   String stopReason = '';
 
+  /// Facts shown in the report header for file scans (package, version,
+  /// signer, architecture…). Empty for website scans.
+  final Map<String, String> facts = {};
+
+  /// Short name for lists: the host for websites, the package / file name
+  /// for mobile and binary scans.
+  String get displayName => Uri.tryParse(target)?.host.isNotEmpty == true ? Uri.parse(target).host : target;
+
   List<Finding> get issues => findings.where((f) => !f.passed && f.severity != Severity.info).toList()
     ..sort((a, b) => a.severity.index.compareTo(b.severity.index));
   List<Finding> get notes => findings.where((f) => !f.passed && f.severity == Severity.info).toList();
@@ -155,16 +208,18 @@ class ScanReport {
   int count(Severity s) => findings.where((f) => !f.passed && f.severity == s).length;
 
   /// 100 minus weighted findings (each finding id counted once), floored at 0.
-  /// Any critical caps the score at 39; any high caps it at 69.
+  /// Any critical caps the score at 39; any high caps it at 69. Attack chains
+  /// combine findings that are already counted, so they don't lower the score.
   int get score {
     final seen = <String>{};
     var s = 100;
     for (final f in findings) {
-      if (f.passed || !seen.add(f.id)) continue;
+      if (f.passed || f.area == CheckArea.chain || !seen.add(f.id)) continue;
       s -= f.severity.weight;
     }
-    if (count(Severity.critical) > 0 && s > 39) s = 39;
-    if (count(Severity.high) > 0 && s > 69) s = 69;
+    bool any(Severity v) => findings.any((f) => !f.passed && f.area != CheckArea.chain && f.severity == v);
+    if (any(Severity.critical) && s > 39) s = 39;
+    if (any(Severity.high) && s > 69) s = 69;
     return s.clamp(0, 100);
   }
 
@@ -183,7 +238,7 @@ class ScanReport {
     final m = <CheckArea, int>{};
     final seen = <String>{};
     for (final f in findings) {
-      if (f.passed || !seen.add(f.id)) continue;
+      if (f.passed || f.area == CheckArea.chain || !seen.add(f.id)) continue;
       m[f.area] = (m[f.area] ?? 0) + f.severity.weight;
     }
     return m;
@@ -200,6 +255,7 @@ class ScanReport {
         'stopped': stoppedEarly,
         'stopReason': stopReason,
         'tech': tech.toJson(),
+        if (facts.isNotEmpty) 'facts': facts,
         'findings': [for (final f in findings) f.toJson()],
       };
 
@@ -220,6 +276,8 @@ class ScanReport {
       final v = tech['versions'];
       if (v is Map) v.forEach((k, val) => r.tech.versions['$k'] = '$val');
     }
+    final facts = j['facts'];
+    if (facts is Map) facts.forEach((k, v) => r.facts['$k'] = '$v');
     for (final f in (j['findings'] as List? ?? const [])) {
       if (f is Map) r.findings.add(Finding.fromJson(Map<String, dynamic>.from(f)));
     }

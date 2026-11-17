@@ -107,6 +107,8 @@ final List<CodeRule> codeRules = [
 const Set<String> _textExts = {
   'php', 'js', 'mjs', 'cjs', 'ts', 'jsx', 'tsx', 'py', 'dart', 'java', 'kt', 'go', 'rb', 'cs', 'html', 'htm', 'vue', 'svelte',
   'json', 'yml', 'yaml', 'env', 'ini', 'conf', 'config', 'xml', 'sh', 'ps1', 'sql', 'txt', 'properties', 'toml', 'twig', 'blade',
+  // dependency manifests and lockfiles
+  'lock', 'sum', 'mod', 'gradle', 'kts', 'csproj',
 };
 const Set<String> _skipDirs = {'node_modules', '.git', 'vendor', 'build', 'dist', '.dart_tool', '.next', '.nuxt', 'coverage', '__pycache__', '.venv', 'venv', '.idea', '.gradle', 'Pods'};
 
@@ -238,6 +240,13 @@ class CodeScanner {
           out.add(OsvPackage(m[1]!, 'npm', m[2]!));
         }
         res.manifests.add(rel);
+      } else {
+        // 3.14.0: Rust, Ruby, Go, Poetry, Pipenv, NuGet, Gradle, Maven.
+        final more = parseExtraManifest(name, text);
+        if (more.isNotEmpty) {
+          out.addAll(more);
+          res.manifests.add(rel);
+        }
       }
     } catch (_) {}
   }
@@ -331,4 +340,78 @@ class _CodeScan {
     onLog?.call('Done: ${res.files} files, ${res.packages} dependencies, ${res.findings.length} findings.');
     return res;
   }
+}
+
+/// Dependency manifests beyond npm / Composer / pip / Pub: Rust, Ruby, Go,
+/// Poetry, Pipenv, NuGet, Gradle and Maven. Pure, so it is unit-tested.
+List<OsvPackage> parseExtraManifest(String name, String text) {
+  final out = <OsvPackage>[];
+  final lower = name.toLowerCase();
+  try {
+    if (lower == 'cargo.lock' || lower == 'poetry.lock') {
+      final eco = lower == 'cargo.lock' ? 'crates.io' : 'PyPI';
+      for (final m in RegExp(r'\[\[package\]\]\s*\nname\s*=\s*"([^"]+)"\s*\nversion\s*=\s*"([^"]+)"').allMatches(text)) {
+        out.add(OsvPackage(m[1]!, eco, m[2]!));
+      }
+    } else if (lower == 'gemfile.lock') {
+      for (final m in RegExp(r'^    ([A-Za-z0-9_.\-]+) \(([0-9][^)\s]*)\)\s*$', multiLine: true).allMatches(text)) {
+        out.add(OsvPackage(m[1]!, 'RubyGems', m[2]!));
+      }
+    } else if (lower == 'go.sum') {
+      final seen = <String>{};
+      for (final m in RegExp(r'^(\S+) v([0-9][^\s/]*)(/go\.mod)? h1:', multiLine: true).allMatches(text)) {
+        final v = m[2]!.replaceFirst(RegExp(r'\+incompatible$'), '');
+        if (seen.add('${m[1]}@$v')) out.add(OsvPackage(m[1]!, 'Go', v));
+      }
+    } else if (lower == 'pipfile.lock') {
+      final j = jsonDecode(text) as Map;
+      for (final section in const ['default', 'develop']) {
+        final deps = j[section];
+        if (deps is! Map) continue;
+        deps.forEach((k, v) {
+          final ver = v is Map ? '${v['version'] ?? ''}' : '';
+          if (ver.startsWith('==')) out.add(OsvPackage('$k', 'PyPI', ver.substring(2)));
+        });
+      }
+    } else if (lower == 'packages.lock.json') {
+      final j = jsonDecode(text) as Map;
+      final fw = j['dependencies'];
+      if (fw is Map) {
+        for (final deps in fw.values) {
+          if (deps is! Map) continue;
+          deps.forEach((k, v) {
+            if (v is Map && v['resolved'] != null) out.add(OsvPackage('$k', 'NuGet', '${v['resolved']}'));
+          });
+        }
+      }
+    } else if (lower.endsWith('.csproj')) {
+      for (final m in RegExp(r'<PackageReference\s+Include="([^"]+)"\s+Version="([0-9][^"]*)"', caseSensitive: false).allMatches(text)) {
+        out.add(OsvPackage(m[1]!, 'NuGet', m[2]!));
+      }
+    } else if (lower == 'build.gradle' || lower == 'build.gradle.kts') {
+      for (final m in RegExp(r'''["']([A-Za-z0-9_.\-]+):([A-Za-z0-9_.\-]+):([0-9][A-Za-z0-9_.\-]*)["']''').allMatches(text)) {
+        out.add(OsvPackage('${m[1]}:${m[2]}', 'Maven', m[3]!));
+      }
+    } else if (lower == 'libs.versions.toml') {
+      final versions = <String, String>{};
+      final vs = RegExp(r'\[versions\]([\s\S]*?)(\n\[|$)').firstMatch(text);
+      if (vs != null) {
+        for (final m in RegExp(r'^\s*([A-Za-z0-9_.\-]+)\s*=\s*"([^"]+)"', multiLine: true).allMatches(vs[1]!)) {
+          versions[m[1]!] = m[2]!;
+        }
+      }
+      for (final m in RegExp(r'module\s*=\s*"([^":]+):([^"]+)"\s*,\s*version(\.ref)?\s*=\s*"([^"]+)"').allMatches(text)) {
+        final v = m[3] != null ? versions[m[4]!] : m[4];
+        if (v != null && RegExp(r'^[0-9]').hasMatch(v)) out.add(OsvPackage('${m[1]}:${m[2]}', 'Maven', v));
+      }
+      for (final m in RegExp(r'''=\s*"([A-Za-z0-9_.\-]+):([A-Za-z0-9_.\-]+):([0-9][A-Za-z0-9_.\-]*)"''').allMatches(text)) {
+        out.add(OsvPackage('${m[1]}:${m[2]}', 'Maven', m[3]!));
+      }
+    } else if (lower == 'pom.xml') {
+      for (final m in RegExp(r'<dependency>\s*<groupId>([^<]+)</groupId>\s*<artifactId>([^<]+)</artifactId>\s*<version>([0-9][^<$]*)</version>').allMatches(text)) {
+        out.add(OsvPackage('${m[1]!.trim()}:${m[2]!.trim()}', 'Maven', m[3]!.trim()));
+      }
+    }
+  } catch (_) {}
+  return out;
 }

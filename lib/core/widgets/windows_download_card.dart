@@ -131,3 +131,60 @@ class WindowsDownloadCard extends StatelessWidget {
     );
   }
 }
+
+/// 3.14.0: a small "Windows" chip shown next to features that only exist in
+/// NOVA X for Windows.
+class WindowsBadge extends StatelessWidget {
+  const WindowsBadge({super.key});
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: const Color(0xFF38BDF8).withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: const Color(0xFF38BDF8).withValues(alpha: 0.35)),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          const WindowsMark(size: 9),
+          const SizedBox(width: 4),
+          Text('Windows', style: GoogleFonts.inter(color: const Color(0xFF7DD3FC), fontSize: 10, fontWeight: FontWeight.w700)),
+        ]),
+      );
+}
+
+/// 3.14.0: what Android shows instead of a PC-only feature — a sheet with
+/// the feature's name, one line on what it does on Windows, and the
+/// Windows download card. Never a disabled or broken screen.
+class WindowsOnly {
+  WindowsOnly._();
+
+  static Future<void> show(BuildContext context, {required String title, required String reason}) {
+    return showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF0D1626),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (c) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Center(
+              child: Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
+            ),
+            const SizedBox(height: 16),
+            Row(children: [
+              Expanded(
+                child: Text(title, style: GoogleFonts.inter(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700)),
+              ),
+              const WindowsBadge(),
+            ]),
+            const SizedBox(height: 6),
+            Text('Available in NOVA X for Windows.', style: GoogleFonts.inter(color: Colors.white60, fontSize: 13)),
+            WindowsDownloadCard(reason: reason, margin: const EdgeInsets.fromLTRB(0, 14, 0, 4)),
+          ]),
+        ),
+      ),
+    );
+  }
+}

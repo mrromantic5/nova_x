@@ -96,6 +96,8 @@ jobs:
             lib/features/auth/services/google_web_signin.dart \
             lib/features/browser/browser_identity.dart \
             lib/features/devhub \
+            lib/features/pro/api_studio.dart \
+            lib/core/theme/nova_tokens.dart \
             test/cyber \
             test/security \
             test/guide \

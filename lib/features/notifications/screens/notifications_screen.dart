@@ -11,6 +11,8 @@ import 'package:video_player/video_player.dart';
 import 'package:nova_x/core/services/api_service.dart';
 import 'package:nova_x/core/services/platform_api.dart';
 import 'package:nova_x/features/support/screens/support_screen.dart';
+import 'package:nova_x/features/cyber/engine/cyber_api.dart';
+import 'package:nova_x/features/cyber/screens/cyber_screen.dart';
 
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
@@ -21,6 +23,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   List<AdvertModel> _adverts = [];
   // 3.9.0: personal notifications (replies from NOVA Support).
   List<InboxItem> _inbox = [];
+  // 3.14.0: NOVA Cyber monitoring alerts for the signed-in user's sites.
+  List<MonitorEvent> _cyber = [];
   bool _loading = true;
   bool _hasError = false;
 
@@ -32,7 +36,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   Future<void> _load() async {
     setState(() { _loading = true; _hasError = false; });
-    final inbox = _loadInbox();
+    final inbox = Future.wait([_loadInbox(), _loadCyber()]);
     try {
       final ads = await AdvertService.fetchAdverts();
       if (!mounted) return;
@@ -43,7 +47,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     } catch (_) {
       await inbox;
       if (!mounted) return;
-      setState(() { _loading = false; _hasError = _inbox.isEmpty; });
+      setState(() { _loading = false; _hasError = _inbox.isEmpty && _cyber.isEmpty; });
     }
   }
 
@@ -56,6 +60,106 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       // Seen here → the badge clears (items stay highlighted this time).
       if (r.unread > 0) PlatformApi.markInboxRead();
     } catch (_) {}
+  }
+
+  /// 3.14.0: alerts from NOVA Cyber 24/7 Monitoring (read from the server,
+  /// no extra push setup). Seen here → the badge clears.
+  Future<void> _loadCyber() async {
+    try {
+      if (!await ApiService.isLoggedIn()) return;
+      final (events, unread) = await CyberMonitoring.events(limit: 30);
+      if (!mounted) return;
+      _cyber = events;
+      if (unread > 0) unawaited(CyberMonitoring.markRead().catchError((_) {}));
+    } catch (_) {}
+  }
+
+  Future<void> _openCyber(MonitorEvent e) async {
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => const CyberScreen(openMonitoring: true)));
+  }
+
+  Color _cyberColor(String sev) => switch (sev) {
+        'critical' => AppTheme.danger,
+        'high' => const Color(0xFFE16F24),
+        'medium' => AppTheme.warning,
+        'low' => AppTheme.accentCyan,
+        _ => AppTheme.success,
+      };
+
+  IconData _cyberIcon(MonitorEvent e) => switch (e.kind) {
+        'down' => Icons.cloud_off_rounded,
+        'recovered' => Icons.cloud_done_rounded,
+        _ when e.kind.contains('cert') || e.kind.contains('tls') => Icons.lock_clock_rounded,
+        _ when e.kind.contains('exposed') => Icons.folder_open_rounded,
+        _ when e.kind.contains('dns') => Icons.dns_rounded,
+        _ => Icons.monitor_heart_rounded,
+      };
+
+  Widget _cyberCard(MonitorEvent e) {
+    final c = _cyberColor(e.severity);
+    final unread = !e.read;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+      child: Material(
+        color: AppTheme.bgCard,
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: () => _openCyber(e),
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: unread ? c.withValues(alpha: 0.6) : AppTheme.divider),
+            ),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Container(
+                width: 42, height: 42,
+                decoration: BoxDecoration(shape: BoxShape.circle, color: c.withValues(alpha: 0.16)),
+                child: Icon(_cyberIcon(e), color: c, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(children: [
+                    Expanded(
+                      child: Text(e.title, maxLines: 2, overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.inter(color: Colors.white, fontSize: 13.5,
+                              fontWeight: unread ? FontWeight.w800 : FontWeight.w600)),
+                    ),
+                    Container(
+                      margin: const EdgeInsets.only(left: 6),
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                      decoration: BoxDecoration(color: c.withValues(alpha: 0.16), borderRadius: BorderRadius.circular(10)),
+                      child: Text(e.severity.toUpperCase(), style: GoogleFonts.inter(
+                          color: c, fontSize: 9.5, fontWeight: FontWeight.w800)),
+                    ),
+                  ]),
+                  if (e.detail.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(e.detail, maxLines: 3, overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 12.5, height: 1.4)),
+                  ],
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    Icon(Icons.shield_outlined, color: AppTheme.accentCyan, size: 13),
+                    const SizedBox(width: 5),
+                    Flexible(
+                      child: Text(e.host, maxLines: 1, overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.inter(color: AppTheme.accentCyan, fontSize: 11, fontWeight: FontWeight.w700)),
+                    ),
+                    const Spacer(),
+                    if (e.createdAt != null)
+                      Text(_formatDateLabel(e.createdAt!),
+                          style: GoogleFonts.inter(color: AppTheme.textHint, fontSize: 10.5)),
+                  ]),
+                ]),
+              ),
+            ]),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _openInboxItem(InboxItem n) async {
@@ -205,6 +309,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   // ── Group adverts by date ─────────────────────────────────────────────────
   List<Object> get _grouped {
     final items = <Object>[];
+    if (_cyber.isNotEmpty) {
+      items.add('NOVA CYBER · MONITORING');
+      items.addAll(_cyber.take(20));
+    }
     if (_inbox.isNotEmpty) {
       items.add('FOR YOU · NOVA SUPPORT');
       items.addAll(_inbox.take(20));
@@ -270,7 +378,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         title: Text('Notifications', style: GoogleFonts.spaceGrotesk(
             color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800)),
         actions: [
-          if (_adverts.isNotEmpty || _inbox.isNotEmpty)
+          if (_adverts.isNotEmpty || _inbox.isNotEmpty || _cyber.isNotEmpty)
             IconButton(
               icon: const Icon(Icons.refresh_rounded,
                   color: AppTheme.textHint, size: 20),
@@ -287,7 +395,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               color: AppTheme.accentCyan))
           : _hasError
               ? _errorState()
-              : _adverts.isEmpty && _inbox.isEmpty
+              : _adverts.isEmpty && _inbox.isEmpty && _cyber.isEmpty
                   ? _emptyState()
                   : RefreshIndicator(
                       onRefresh: _load,
@@ -300,6 +408,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                           final item = _grouped[i];
                           if (item is String) return _dateHeader(item);
                           if (item is InboxItem) return _inboxCard(item);
+                          if (item is MonitorEvent) return _cyberCard(item);
                           return _advertCard(item as AdvertModel);
                         },
                       ),

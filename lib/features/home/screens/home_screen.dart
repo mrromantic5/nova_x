@@ -10,6 +10,7 @@
 
 import 'package:nova_x/core/widgets/windows_download_card.dart';
 import 'package:nova_x/features/devhub/devhub_screen.dart';
+import 'package:nova_x/features/cyber/engine/cyber_api.dart';
 import 'package:nova_x/features/auth/services/google_web_signin.dart';
 import 'package:nova_x/features/guide/guide_screen.dart';
 import 'package:nova_x/features/security/security_center_screen.dart';
@@ -91,7 +92,7 @@ class _HomeScreenState extends State<HomeScreen>
   // Speed Dial
   bool _searching   = false;
   bool _lensLoading  = false;
-  int  _notifBadge   = 0;   // unread adverts + support replies
+  int  _notifBadge   = 0;   // unread adverts + support replies + Cyber alerts
   StreamSubscription<RemoteMessage>? _pushSub; // 3.9.1: live badge
   int  _bizBadge     = 0;   // new (unseen) business count
   List<AdvertModel> _adverts = [];  // true while uploading image to Google
@@ -766,6 +767,10 @@ class _HomeScreenState extends State<HomeScreen>
     var inboxUnread = 0;
     try {
       if (await ApiService.isLoggedIn()) inboxUnread = (await PlatformApi.inbox()).unread;
+    } catch (_) {}
+    // 3.14.0: unread NOVA Cyber monitoring alerts count too.
+    try {
+      if (await ApiService.isLoggedIn()) inboxUnread += (await CyberMonitoring.events(unreadOnly: true, limit: 1)).$2;
     } catch (_) {}
     if (!mounted) return;
     setState(() {

@@ -1,29 +1,30 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'nova_tokens.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 class AppTheme {
   // ── Brand ────────────────────────────────────────────────────────────────
   static const Color primaryBlue  = Color(0xFF1E7BFF);
-  static const Color accentCyan   = Color(0xFF00D4FF);
+  static const Color accentCyan   = NovaTokens.accent;
   static const Color accentPurple = Color(0xFF7C4DFF);
 
   // ── Background layers ────────────────────────────────────────────────────
-  static const Color bgDark     = Color(0xFF07101E); // deepest canvas
-  static const Color bgCard     = Color(0xFF0F1E35); // card surface
-  static const Color bgElevated = Color(0xFF162846); // raised element
-  static const Color bgInput    = Color(0xFF0D1A2D); // input fields
+  static const Color bgDark     = NovaTokens.bg;          // deepest canvas (shared with Windows, 3.14.0)
+  static const Color bgCard     = NovaTokens.surface;     // card surface
+  static const Color bgElevated = NovaTokens.surfaceHigh; // raised element
+  static const Color bgInput    = NovaTokens.surfaceAlt;  // input fields
 
   // ── Text ────────────────────────────────────────────────────────────────
   static const Color textPrimary   = Color(0xFFFFFFFF);
-  static const Color textSecondary = Color(0xFFB0C4DE);
+  static const Color textSecondary = NovaTokens.textMuted;
   static const Color textHint      = Color(0xFF4A6A8A);
 
   // ── UI chrome ────────────────────────────────────────────────────────────
   static const Color divider   = Color(0xFF152236);
-  static const Color success   = Color(0xFF00C853);
-  static const Color warning   = Color(0xFFFFAB00);
-  static const Color danger    = Color(0xFFFF4444);
+  static const Color success   = NovaTokens.success;
+  static const Color warning   = NovaTokens.warning;
+  static const Color danger    = NovaTokens.danger;
   static const Color secure    = Color(0xFF00C853);
 
   // ── Glass ────────────────────────────────────────────────────────────────

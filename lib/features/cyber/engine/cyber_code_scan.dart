@@ -14,6 +14,7 @@ import 'dart:io';
 
 import 'cyber_models.dart';
 import 'cyber_osv.dart';
+import 'cyber_rulepacks.dart';
 import 'checks_quick.dart' show osvFinding;
 
 class CodeRule {
@@ -135,7 +136,7 @@ class CodeScanner {
 
   /// Scans a folder (desktop, or a folder in the app's own storage).
   static Future<CodeScanResult> scan(String folder, {void Function(String)? onLog}) async {
-    final s = _CodeScan(onLog);
+    final s = _CodeScan(onLog, await _rules(onLog));
     final root = Directory(folder);
 
     Future<void> walk(Directory d, int depth) async {
@@ -179,7 +180,7 @@ class CodeScanner {
   /// Scans files already in memory (Android: a picked .zip or picked files).
   /// Folders in [_skipDirs] (node_modules, vendor, .git…) are skipped.
   static Future<CodeScanResult> scanFiles(List<CodeFile> files, {String label = 'project', void Function(String)? onLog}) async {
-    final s = _CodeScan(onLog);
+    final s = _CodeScan(onLog, await _rules(onLog));
     onLog?.call('Reading $label…');
     for (final f in files) {
       if (s.res.files >= maxFiles) break;
@@ -201,6 +202,15 @@ class CodeScanner {
       if (s.res.files % 50 == 0) await Future<void>.delayed(Duration.zero); // keep the UI responsive
     }
     return s.finish();
+  }
+
+  /// Built-in rules + imported rule packs (3.14.0).
+  static Future<List<CodeRule>> _rules(void Function(String)? onLog) async {
+    await RulePacks.reload();
+    if (RulePacks.loaded.isNotEmpty) {
+      onLog?.call('Rule packs: ${RulePacks.loaded.map((p) => '${p.name} ${p.version} (${p.rules.length})').join(', ')}');
+    }
+    return [...codeRules, ...RulePacks.rules];
   }
 
   static void _manifest(String name, String text, List<OsvPackage> out, CodeScanResult res, String rel) {
@@ -254,8 +264,9 @@ class CodeScanner {
 
 /// Shared state of one code scan (folder or in-memory files).
 class _CodeScan {
-  _CodeScan(this.onLog);
+  _CodeScan(this.onLog, this.rules);
   final void Function(String)? onLog;
+  final List<CodeRule> rules;
   final res = CodeScanResult();
   final grouped = <String, List<String>>{}; // rule id → hits
   final pkgs = <OsvPackage>[];
@@ -279,7 +290,7 @@ class _CodeScan {
     if (res.files % 200 == 0) onLog?.call('Read ${res.files} files…');
     CodeScanner._manifest(lower, text, pkgs, res, rel);
     final lines = const LineSplitter().convert(text);
-    for (final rule in codeRules) {
+    for (final rule in rules) {
       if (rule.exts.isNotEmpty && !rule.exts.contains(effExt)) continue;
       for (var i = 0; i < lines.length; i++) {
         final line = lines[i];
@@ -297,7 +308,7 @@ class _CodeScan {
   }
 
   Future<CodeScanResult> finish() async {
-    for (final rule in codeRules) {
+    for (final rule in rules) {
       final hits = grouped[rule.id];
       if (hits == null) continue;
       res.findings.add(Finding(

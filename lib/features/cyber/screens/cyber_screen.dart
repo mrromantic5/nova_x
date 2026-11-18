@@ -34,6 +34,8 @@ import '../../ai/screens/ai_assistant_screen.dart';
 import '../../guide/guide_screen.dart';
 import '../engine/checks_full.dart';
 import '../engine/cyber_api.dart';
+import '../engine/cyber_audit.dart';
+import '../engine/cyber_storage.dart';
 import '../engine/cyber_code_scan.dart';
 import '../engine/cyber_engine.dart';
 import '../engine/cyber_models.dart';
@@ -42,11 +44,15 @@ import '../engine/zip_reader.dart';
 import '../ui/cyber_palette.dart';
 import '../ui/cyber_verify.dart';
 import '../ui/cyber_widgets.dart';
+import 'cyber_audit_screen.dart';
 
 enum _View { scan, sites, monitor, code, history }
 
 class CyberScreen extends StatefulWidget {
-  const CyberScreen({super.key, this.initialUrl = ''});
+  const CyberScreen({super.key, this.initialUrl = '', this.openMonitoring = false});
+
+  /// 3.14.0: open on the Monitoring tab (from a Notifications alert).
+  final bool openMonitoring;
 
   /// Opened from the browser: the site's address is filled in (not scanned
   /// until the user taps Run).
@@ -59,7 +65,7 @@ class CyberScreen extends StatefulWidget {
 class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
   static const _screen = MethodChannel('com.tlyfe.nova_x/default_browser');
 
-  _View _view = _View.scan;
+  late _View _view = widget.openMonitoring ? _View.monitor : _View.scan;
   final TextEditingController _target = TextEditingController();
   ScanLevel _level = ScanLevel.quick;
   bool _ports = true, _subdomains = true, _loginTest = false;
@@ -112,6 +118,7 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
     CyberTriage.init().then((_) {
       if (mounted) setState(() {});
     });
+    CyberStorage.init(); // audit log + rule packs (3.14.0)
     // Monitoring status + unread alerts (only while this screen is open;
     // e-mail alerts reach the user when the app is closed).
     _loadMonitoring(quiet: true);
@@ -213,6 +220,10 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
     });
     _keepAwake(true);
     _addLog('${_level == ScanLevel.full ? 'FULL SCAN (ownership verified)' : 'QUICK SCAN (read-only)'} — ${target.host}');
+    final scope = _level != ScanLevel.full
+        ? 'read-only'
+        : (pass == null ? 'own device / network' : 'verified owner');
+    unawaited(CyberAudit.log('scan.start', target.host, scope: scope, detail: _level.name));
     try {
       final r = await CyberEngine.instance.scan(
         target,
@@ -232,8 +243,10 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
           }
         },
       );
+      unawaited(CyberAudit.log('scan.done', target.host, scope: scope, detail: '${_level.name} score=${r.score} findings=${r.issues.length}'));
       if (mounted) setState(() => _report = r);
     } catch (e) {
+      unawaited(CyberAudit.log('scan.failed', target.host, scope: scope, detail: '$e'));
       if (mounted) setState(() => _error = '$e');
     } finally {
       _keepAwake(false);
@@ -356,6 +369,7 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
         bytes: Uint8List.fromList(utf8.encode(text)),
       );
       if (path == null) return;
+      unawaited(CyberAudit.log('export', r.displayName, detail: kind));
       _snack('Report saved');
     } catch (e) {
       _snack('Couldn\'t save the report: $e');
@@ -444,6 +458,7 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
       });
       rep.findings.addAll(processed);
       await CyberHistory.add(rep);
+      unawaited(CyberAudit.log('scan.done', name, scope: 'local project files', detail: 'code score=${rep.score} findings=${rep.issues.length}'));
       _code = res;
       _codeReport = rep;
     } catch (e) {
@@ -490,11 +505,22 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
             actions: [
               const Center(child: ReadMoreLink('cyber', compact: true)),
               PopupMenuButton<int>(
-                tooltip: 'More on Windows',
+                tooltip: 'More',
                 color: p.surface,
                 icon: Icon(Icons.more_vert_rounded, color: p.textMuted),
-                onSelected: (i) => WindowsOnly.show(context, title: _pcTools[i].$1, reason: _pcTools[i].$2),
+                onSelected: (i) => i < 0
+                    ? Navigator.push(context, MaterialPageRoute(builder: (_) => const CyberAuditScreen()))
+                    : WindowsOnly.show(context, title: _pcTools[i].$1, reason: _pcTools[i].$2),
                 itemBuilder: (_) => [
+                  PopupMenuItem(
+                    value: -1,
+                    child: Row(children: [
+                      Icon(Icons.fact_check_outlined, size: 18, color: p.textMuted),
+                      const SizedBox(width: 10),
+                      Text('Audit & rules', style: p.ui(size: 13.5)),
+                    ]),
+                  ),
+                  const PopupMenuDivider(),
                   for (var i = 0; i < _pcTools.length; i++)
                     PopupMenuItem(
                       value: i,
@@ -1312,6 +1338,7 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
                       ? null
                       : () {
                           final h = _addHost!;
+                          unawaited(CyberAudit.log('monitor.add', h, scope: 'verified site', detail: 'every $_addInterval min'));
                           _monAction(h, () async => CyberMonitoring.save(h, enabled: true, intervalMin: _addInterval, emailAlerts: true));
                         },
                   icon: const Icon(Icons.monitor_heart_outlined, size: 18),
@@ -1480,7 +1507,10 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
                         ],
                       ),
                     );
-                    if (ok == true) await _monAction(m.host, () => CyberMonitoring.remove(m.host));
+                    if (ok == true) {
+                      unawaited(CyberAudit.log('monitor.remove', m.host));
+                      await _monAction(m.host, () => CyberMonitoring.remove(m.host));
+                    }
                   },
             icon: Icon(Icons.delete_outline_rounded, size: 18, color: p.textFaint),
             label: Text('Remove', style: p.ui(size: 13, color: p.textFaint)),
@@ -1518,6 +1548,7 @@ class _CyberScreenState extends State<CyberScreen> with WidgetsBindingObserver {
             color: p.surface,
             onSelected: (s) {
               CyberTriage.set(r, f, s);
+              unawaited(CyberAudit.log('triage', r.displayName, detail: '${f.id} → ${s.name}'));
               setState(() {});
             },
             itemBuilder: (_) => [for (final s in TriageStatus.values) PopupMenuItem(value: s, child: Text(s.label, style: p.ui(size: 13.5)))],

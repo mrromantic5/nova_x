@@ -11,7 +11,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/nova_tokens.dart';
 
 class NovaPalette {
   const NovaPalette._();
@@ -19,21 +19,22 @@ class NovaPalette {
   static const NovaPalette instance = NovaPalette._();
 
   bool get dark => true;
-  Color get bg => AppTheme.bgDark;
-  Color get surface => AppTheme.bgCard;
-  Color get surfaceAlt => AppTheme.bgInput;
-  Color get surfaceHigh => AppTheme.bgElevated;
-  Color get border => const Color(0xFF1A2A44);
-  Color get borderStrong => const Color(0xFF2A3D5E);
-  Color get text => const Color(0xFFE8EDF5);
-  Color get textMuted => AppTheme.textSecondary;
-  Color get textFaint => const Color(0xFF61728D);
-  Color get accent => AppTheme.accentCyan;
-  Color get accentSoft => const Color(0xFF0C3550);
-  Color get onAccent => const Color(0xFF00121A);
-  Color get danger => const Color(0xFFFF5A5A);
-  Color get success => const Color(0xFF2BD47A);
-  Color get warning => const Color(0xFFFFB020);
+  // 3.14.0: one palette for Android and Windows (core/theme/nova_tokens.dart).
+  Color get bg => NovaTokens.bg;
+  Color get surface => NovaTokens.surface;
+  Color get surfaceAlt => NovaTokens.surfaceAlt;
+  Color get surfaceHigh => NovaTokens.surfaceHigh;
+  Color get border => NovaTokens.border;
+  Color get borderStrong => NovaTokens.borderStrong;
+  Color get text => NovaTokens.text;
+  Color get textMuted => NovaTokens.textMuted;
+  Color get textFaint => NovaTokens.textFaint;
+  Color get accent => NovaTokens.accent;
+  Color get accentSoft => NovaTokens.accentSoft;
+  Color get onAccent => NovaTokens.onAccent;
+  Color get danger => NovaTokens.danger;
+  Color get success => NovaTokens.success;
+  Color get warning => NovaTokens.warning;
 
   TextStyle ui({double size = 13.5, FontWeight weight = FontWeight.w400, Color? color, double? height, double? letterSpacing}) =>
       GoogleFonts.inter(fontSize: size, fontWeight: weight, color: color ?? text, height: height, letterSpacing: letterSpacing);

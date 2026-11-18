@@ -33,6 +33,7 @@ import '../cyber/ui/cyber_widgets.dart' show CodeBlock, Metric, Panel, kMono;
 import '../devguide/developer_guide_screen.dart';
 import '../devtools/screens/code_editor_screen.dart';
 import '../network/screens/nova_network_screen.dart';
+import '../pro/api_studio.dart';
 import '../pro/rules_page.dart';
 import 'devhub_net.dart';
 import 'devhub_toolbox.dart';
@@ -85,7 +86,6 @@ class _DevHubScreenState extends State<DevHubScreen> {
   String? _dnsError;
 
   static const String _appBuilderReason = 'On Windows, App Builder turns a site you own into a signed Android app (.apk / .aab).';
-  static const String _apiStudioReason = 'On Windows, API Studio is a full HTTP client with variables, history, saved requests and cURL import.';
   static const String _reconReason = 'On Windows, Recon Notebook keeps scope, passive recon and findings for your security reviews.';
 
   @override
@@ -520,9 +520,7 @@ class _DevHubScreenState extends State<DevHubScreen> {
         );
     final tiles = [
       tile(Icons.code_rounded, 'X Coder', 'Editor, terminal and preview', () => _push(const CodeEditorScreen(sharedWorkspace: true))),
-      tile(Icons.api_rounded, 'API Studio', 'HTTP client, variables, cURL',
-          () => WindowsOnly.show(context, title: 'API Studio', reason: _apiStudioReason),
-          tint: const Color(0xFF8B5CF6), windows: true),
+      tile(Icons.api_rounded, 'API Studio', 'HTTP client, variables, cURL', () => _push(const ApiStudioScreen()), tint: const Color(0xFF8B5CF6)),
       tile(Icons.security_rounded, 'NOVA Cyber', 'Website & code security', () => _push(const CyberScreen()), tint: const Color(0xFF6366F1)),
       tile(Icons.tune_rounded, 'Rewrite Rules', 'Redirect, block, inject CSS/JS', () => _push(const RulesScreen()), tint: const Color(0xFFF59E0B)),
       tile(Icons.speed_rounded, 'NOVA Network', 'Speed, latency, jitter', () => _push(const NovaNetworkScreen()), tint: const Color(0xFF10B981)),
